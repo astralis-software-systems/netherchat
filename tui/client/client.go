@@ -36,10 +36,11 @@ type memberInfo struct {
 
 // Client is a single connection to a Netherchat server, scoped to one room.
 type Client struct {
-	id   *crypto.Identity
-	room string
-	name string
-	url  string
+	id          *crypto.Identity
+	room        string
+	name        string
+	url         string
+	inviteToken string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -114,6 +115,7 @@ func (c *Client) Connect(dialCtx context.Context) error {
 		DisplayName:     c.name,
 		IdentityKey:     c.id.SignPub,
 		KXKey:           c.id.KXPub[:],
+		InviteToken:     c.inviteToken,
 	})
 	go c.readLoop()
 	return nil
@@ -143,6 +145,49 @@ func (c *Client) Send(text string) error {
 	})
 	c.emit(EvMessage{FromID: selfID, FromName: c.name, Text: text, Self: true, At: time.Now()})
 	return nil
+}
+
+// UseInviteToken sets the one-time invite token sent in Hello to join an
+// invite-only room. Call before Connect.
+func (c *Client) UseInviteToken(token string) { c.inviteToken = token }
+
+// Vanish rotates the room key forward (HKDF ratchet, deleting the old key) and
+// asks every other member to do the same and clear local history. Forward
+// secrecy: messages from before the vanish can no longer be decrypted by anyone
+// who discarded the prior key.
+func (c *Client) Vanish() {
+	c.ratchetForward()
+	c.enqueue(protocol.OpControl, protocol.Control{Action: protocol.ActionVanish, ByName: c.name})
+	c.emit(EvControl{Action: protocol.ActionVanish, ByName: c.name, Self: true})
+}
+
+// SetTTL broadcasts a client-side message display TTL (in seconds) for the room.
+func (c *Client) SetTTL(seconds int) {
+	c.enqueue(protocol.OpControl, protocol.Control{Action: protocol.ActionTTL, ByName: c.name, TTLSeconds: seconds})
+	c.emit(EvControl{Action: protocol.ActionTTL, ByName: c.name, Self: true, TTLSeconds: seconds})
+}
+
+// RequestInvite asks the server to mint a one-time invite token for this room.
+func (c *Client) RequestInvite() { c.enqueue(protocol.OpInviteRequest, protocol.InviteRequest{}) }
+
+// Exec asks the server to run an allow-listed command in this room.
+func (c *Client) Exec(command string) {
+	c.enqueue(protocol.OpExecRequest, protocol.ExecRequest{Command: command})
+}
+
+// ratchetForward advances the room key by one epoch and zeroes the old one.
+// Because the ratchet is a deterministic KDF, every member that applies it lands
+// on the same next key without any key exchange.
+func (c *Client) ratchetForward() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.rk == nil {
+		return
+	}
+	if next, err := c.rk.Ratchet(); err == nil {
+		c.rk.Zero()
+		c.rk = &next
+	}
 }
 
 // Events returns the stream of client events. Consumers should also select on
@@ -221,6 +266,14 @@ func (c *Client) handle(env protocol.Envelope) {
 		if err := env.Decode(&m); err == nil {
 			c.processMessage(m)
 		}
+	case protocol.OpServerMessage:
+		c.onServerMessage(env)
+	case protocol.OpControl:
+		c.onControl(env)
+	case protocol.OpExecResult:
+		c.onExecResult(env)
+	case protocol.OpInviteResult:
+		c.onInviteResult(env)
 	case protocol.OpError:
 		var e protocol.Error
 		if err := env.Decode(&e); err == nil {
@@ -252,7 +305,15 @@ func (c *Client) onWelcome(env protocol.Envelope) {
 	}
 	c.mu.Unlock()
 
-	c.emit(EvConnected{SelfID: w.YourID, YouAreFirst: w.YouAreFirst, Members: names})
+	c.emit(EvConnected{
+		SelfID:      w.YourID,
+		YouAreFirst: w.YouAreFirst,
+		Members:     names,
+		InviteOnly:  w.Policy.InviteOnly,
+		ExecEnabled: w.Policy.ExecEnabled,
+		Webhook:     w.Policy.Webhook,
+		TTLSeconds:  w.Policy.TTLSeconds,
+	})
 	if minted != nil {
 		c.emit(EvKeyReady{Epoch: minted.Epoch})
 	}
@@ -365,6 +426,50 @@ func (c *Client) processMessage(m protocol.Message) {
 		return
 	}
 	c.emit(EvMessage{FromID: m.FromID, FromName: sender.name, Text: string(pt), At: time.Now()})
+}
+
+func (c *Client) onServerMessage(env protocol.Envelope) {
+	var sm protocol.ServerMessage
+	if err := env.Decode(&sm); err != nil {
+		return
+	}
+	at := time.Now()
+	if sm.At > 0 {
+		at = time.Unix(sm.At, 0)
+	}
+	c.emit(EvServerMessage{Kind: sm.Kind, From: sm.From, Text: sm.Text, At: at})
+}
+
+func (c *Client) onControl(env protocol.Envelope) {
+	var ctrl protocol.Control
+	if err := env.Decode(&ctrl); err != nil {
+		return
+	}
+	if ctrl.Action == protocol.ActionVanish {
+		// Everyone advances the room key deterministically; no key exchange needed.
+		c.ratchetForward()
+	}
+	c.emit(EvControl{Action: ctrl.Action, ByName: ctrl.ByName, TTLSeconds: ctrl.TTLSeconds})
+}
+
+func (c *Client) onExecResult(env protocol.Envelope) {
+	var r protocol.ExecResult
+	if err := env.Decode(&r); err != nil {
+		return
+	}
+	c.emit(EvExecResult{Command: r.Command, Allowed: r.Allowed, Output: r.Output, Err: r.Err})
+}
+
+func (c *Client) onInviteResult(env protocol.Envelope) {
+	var r protocol.InviteResult
+	if err := env.Decode(&r); err != nil {
+		return
+	}
+	var exp time.Time
+	if r.Expires > 0 {
+		exp = time.Unix(r.Expires, 0)
+	}
+	c.emit(EvInvite{Room: r.Room, Token: r.Token, Expires: exp})
 }
 
 // addMemberLocked records a member; caller holds c.mu. Malformed keys are skipped.
