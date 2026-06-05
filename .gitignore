@@ -1,0 +1,35 @@
+# Build output
+/bin/
+/dist/
+/tmp/
+# Stray binaries built directly into the repo root. Anchored with a leading
+# slash so they do NOT match the cmd/netherchat and cmd/netherchat-server
+# SOURCE directories.
+/netherchat
+/netherchat-server
+*.exe
+*.test
+
+# Test / coverage
+*.out
+coverage.*
+
+# Local crypto material — identity keys must NEVER be committed
+*.key
+identity.json
+identity*.json
+
+# Local runtime / config overrides
+.env
+*.local.toml
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Web client (v2) dependencies
+web/node_modules/
+web/dist/

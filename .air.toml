@@ -1,0 +1,17 @@
+# air config for hot-reloading the Netherchat server during development.
+# `just dev` runs `air -c .air.toml`. See https://github.com/air-verse/air
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  # The .exe suffix is harmless on Unix; air adds/handles it on Windows.
+  cmd = "go build -o ./tmp/netherchat-server.exe ./cmd/netherchat-server"
+  bin = "./tmp/netherchat-server.exe"
+  args_bin = ["--addr", ":3000"]
+  include_ext = ["go"]
+  exclude_dir = ["tmp", "bin", "dist", "web", ".git"]
+  delay = 500
+  stop_on_root = true
+
+[log]
+  time = true

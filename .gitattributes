@@ -1,0 +1,22 @@
+# Normalize line endings. Default: let git decide for text, leave binary alone.
+* text=auto
+
+# Source and config: always LF in the repo.
+*.go      text eol=lf
+*.mod     text eol=lf
+*.sum     text eol=lf
+*.md      text eol=lf
+*.toml    text eol=lf
+*.json    text eol=lf
+*.yaml    text eol=lf
+*.yml     text eol=lf
+
+# Shell installers MUST be LF — a CRLF script breaks `curl ... | bash`.
+*.sh      text eol=lf
+*.bash    text eol=lf
+Dockerfile text eol=lf
+justfile  text eol=lf
+Makefile  text eol=lf
+
+# PowerShell installer stays CRLF (native to Windows hosts).
+*.ps1     text eol=crlf
