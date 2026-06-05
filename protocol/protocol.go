@@ -13,8 +13,13 @@ import "encoding/json"
 
 // Version is the protocol version advertised in Hello/Welcome. It exists from
 // day one so a future MLS-based key-agreement scheme (ARCHITECTURE_DECISION.md
-// §3) can be negotiated alongside the v1 NaCl scheme during migration.
-const Version = 1
+// §3) can be negotiated alongside the NaCl scheme during migration.
+//
+// v2 adds (additively, keeping the connection==room model): invite tokens on
+// Hello, room policy on Welcome, server-originated plaintext messages
+// (webhooks/system, OpServerMessage), control actions (OpControl), remote exec
+// (OpExecRequest/Result), and invite generation (OpInviteRequest/Result).
+const Version = 2
 
 // Op is the discriminator on the outer Envelope.
 type Op string
@@ -28,6 +33,14 @@ const (
 	OpKeyDeliver   Op = "key_deliver"   // distributor -> server -> target member
 	OpMessage      Op = "msg"           // sender -> server -> other members
 	OpError        Op = "error"         // server -> client
+
+	// v2 additions:
+	OpServerMessage Op = "server_msg"     // server -> clients: plaintext (webhook/system), NOT E2E
+	OpControl       Op = "control"        // bidirectional: room control actions (vanish, ttl)
+	OpExecRequest   Op = "exec_request"   // client -> server: run an allow-listed command
+	OpExecResult    Op = "exec_result"    // server -> client: command output
+	OpInviteRequest Op = "invite_request" // client -> server: mint an invite token for the room
+	OpInviteResult  Op = "invite_result"  // server -> client: the minted token
 )
 
 // Envelope is the outer frame for every message on the wire. Data holds the
@@ -68,17 +81,28 @@ type Hello struct {
 	DisplayName     string `json:"name"`
 	IdentityKey     []byte `json:"identity_key"`
 	KXKey           []byte `json:"kx_key"`
+	InviteToken     string `json:"invite_token,omitempty"` // required to join an invite-only room
+}
+
+// RoomPolicy is the server-advertised capability set for a room, sent in Welcome
+// so the client can tailor its UI (e.g. show whether /exec is permitted).
+type RoomPolicy struct {
+	InviteOnly  bool `json:"invite_only"`
+	ExecEnabled bool `json:"exec_enabled"`
+	Webhook     bool `json:"webhook"`
+	TTLSeconds  int  `json:"ttl_seconds,omitempty"`
 }
 
 // Welcome is the server's reply to Hello. Members lists everyone already in the
 // room (excluding the recipient). YouAreFirst is true when the room was empty,
 // meaning this client must mint the initial room key for epoch 0.
 type Welcome struct {
-	ProtocolVersion int      `json:"protocol_version"`
-	YourID          string   `json:"your_id"`
-	Room            string   `json:"room"`
-	Members         []Member `json:"members"`
-	YouAreFirst     bool     `json:"you_are_first"`
+	ProtocolVersion int        `json:"protocol_version"`
+	YourID          string     `json:"your_id"`
+	Room            string     `json:"room"`
+	Members         []Member   `json:"members"`
+	YouAreFirst     bool       `json:"you_are_first"`
+	Policy          RoomPolicy `json:"policy"`
 }
 
 // MemberJoined is broadcast when a new member enters the room.
