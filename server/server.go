@@ -16,6 +16,7 @@ import (
 	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/server/internal/api"
 	"github.com/salehkreiner/netherchat/server/internal/hub"
+	"github.com/salehkreiner/netherchat/server/internal/invite"
 	"github.com/salehkreiner/netherchat/server/internal/ws"
 )
 
@@ -26,8 +27,9 @@ func Handler(cfg config.Config, log *slog.Logger) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	h := hub.New()
-	transport := ws.NewServer(h, cfg, log)
+	h := hub.New(cfg, log)
+	invites := invite.New()
+	transport := ws.NewServer(h, cfg, invites, log)
 	rest := api.New(h, cfg, log)
 
 	mux := http.NewServeMux()

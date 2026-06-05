@@ -7,45 +7,57 @@
 package hub
 
 import (
+	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/salehkreiner/netherchat/protocol"
+	"github.com/salehkreiner/netherchat/server/config"
 )
 
 // Member is a connected participant from the hub's perspective. Send delivers an
 // envelope to the member's connection; it must be non-blocking and safe to call
-// from any goroutine (the transport layer guarantees this).
+// from any goroutine. Close terminates the connection (used by the TTL janitor).
 type Member struct {
-	Info protocol.Member
-	Send func(protocol.Envelope)
+	Info  protocol.Member
+	Send  func(protocol.Envelope)
+	Close func()
 }
 
 type room struct {
-	members map[string]*Member
-	order   []string // join order; index 0 is the oldest still-present member
+	members      map[string]*Member
+	order        []string // join order; index 0 is the oldest still-present member
+	lastActivity time.Time
 }
 
 // Hub is a thread-safe registry of rooms and their members.
 type Hub struct {
 	mu    sync.Mutex
 	rooms map[string]*room
+	cfg   config.Config
+	log   *slog.Logger
 }
 
-// New returns an empty hub.
-func New() *Hub { return &Hub{rooms: make(map[string]*room)} }
+// New returns a hub and starts the TTL janitor that expires idle rooms whose
+// config sets a ttl.
+func New(cfg config.Config, log *slog.Logger) *Hub {
+	if log == nil {
+		log = slog.Default()
+	}
+	h := &Hub{rooms: make(map[string]*room), cfg: cfg, log: log}
+	go h.janitor()
+	return h
+}
 
 // JoinResult tells the transport what follow-up actions to take after a member
-// joins: whom to show in the Welcome, whether this member must mint the room key
-// (YouAreFirst), and which existing member should distribute the current room
-// key to the newcomer (Distributor, nil when YouAreFirst).
+// joins.
 type JoinResult struct {
 	Existing    []protocol.Member
 	YouAreFirst bool
 	Distributor *Member
 }
 
-// Join adds a member to a room (creating the room if needed) and returns the
-// information the transport needs to complete the handshake.
+// Join adds a member to a room (creating the room if needed).
 func (h *Hub) Join(roomName string, m *Member) JoinResult {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -55,11 +67,9 @@ func (h *Hub) Join(roomName string, m *Member) JoinResult {
 		r = &room{members: make(map[string]*Member)}
 		h.rooms[roomName] = r
 	}
+	r.lastActivity = time.Now()
 
 	res := JoinResult{YouAreFirst: len(r.members) == 0}
-	// Snapshot existing members in join order, and pick the oldest as the
-	// key distributor. Doing this deterministically avoids a thundering herd of
-	// every existing member trying to wrap the key for the newcomer.
 	for _, id := range r.order {
 		if em := r.members[id]; em != nil {
 			res.Existing = append(res.Existing, em.Info)
@@ -74,12 +84,14 @@ func (h *Hub) Join(roomName string, m *Member) JoinResult {
 	return res
 }
 
-// Leave removes a member from a room and reports whether the room is now empty
-// (in which case it has been deleted and its state forgotten).
+// Leave removes a member and reports whether the room is now empty (deleted).
 func (h *Hub) Leave(roomName, memberID string) (roomEmpty bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.removeLocked(roomName, memberID)
+}
 
+func (h *Hub) removeLocked(roomName, memberID string) bool {
 	r := h.rooms[roomName]
 	if r == nil {
 		return true
@@ -98,6 +110,23 @@ func (h *Hub) Leave(roomName, memberID string) (roomEmpty bool) {
 	return false
 }
 
+// IsEmpty reports whether a room has no members (or does not exist).
+func (h *Hub) IsEmpty(roomName string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	r := h.rooms[roomName]
+	return r == nil || len(r.members) == 0
+}
+
+// Touch records activity in a room, resetting its idle timer.
+func (h *Hub) Touch(roomName string) {
+	h.mu.Lock()
+	if r := h.rooms[roomName]; r != nil {
+		r.lastActivity = time.Now()
+	}
+	h.mu.Unlock()
+}
+
 // Broadcast delivers env to every member of the room except exceptID.
 func (h *Hub) Broadcast(roomName, exceptID string, env protocol.Envelope) {
 	for _, send := range h.recipients(roomName, exceptID) {
@@ -105,8 +134,7 @@ func (h *Hub) Broadcast(roomName, exceptID string, env protocol.Envelope) {
 	}
 }
 
-// SendTo delivers env to a single member by ID. Reports whether the member was
-// found in the room.
+// SendTo delivers env to a single member by ID.
 func (h *Hub) SendTo(roomName, toID string, env protocol.Envelope) bool {
 	h.mu.Lock()
 	var send func(protocol.Envelope)
@@ -124,8 +152,6 @@ func (h *Hub) SendTo(roomName, toID string, env protocol.Envelope) bool {
 	return true
 }
 
-// recipients snapshots the send callbacks of a room's members (minus exceptID)
-// under lock, so the actual sends happen without holding the mutex.
 func (h *Hub) recipients(roomName, exceptID string) []func(protocol.Envelope) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -144,8 +170,7 @@ func (h *Hub) recipients(roomName, exceptID string) []func(protocol.Envelope) {
 	return out
 }
 
-// RoomStat is non-sensitive room metadata for the REST /rooms endpoint. It
-// deliberately exposes only a name and a member count — never message content.
+// RoomStat is non-sensitive room metadata for the REST /rooms endpoint.
 type RoomStat struct {
 	Name    string `json:"name"`
 	Members int    `json:"members"`
@@ -161,4 +186,60 @@ func (h *Hub) Stats() []RoomStat {
 		stats = append(stats, RoomStat{Name: name, Members: len(r.members)})
 	}
 	return stats
+}
+
+// janitor periodically expires idle rooms that have a configured TTL.
+func (h *Hub) janitor() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		h.expireIdleRooms()
+	}
+}
+
+func (h *Hub) expireIdleRooms() {
+	now := time.Now()
+
+	// Collect expired rooms and their members under lock; act outside it.
+	type victim struct {
+		name    string
+		members []*Member
+	}
+	var victims []victim
+
+	h.mu.Lock()
+	for name, r := range h.rooms {
+		ttl := h.cfg.Room(name).TTL.Std()
+		if ttl <= 0 {
+			continue
+		}
+		if now.Sub(r.lastActivity) <= ttl {
+			continue
+		}
+		v := victim{name: name}
+		for _, m := range r.members {
+			v.members = append(v.members, m)
+		}
+		victims = append(victims, v)
+		delete(h.rooms, name)
+	}
+	h.mu.Unlock()
+
+	for _, v := range victims {
+		h.log.Info("room expired (ttl)", "room", v.name, "members", len(v.members))
+		notice, _ := protocol.Encode(protocol.OpServerMessage, protocol.ServerMessage{
+			Kind: "system",
+			From: "server",
+			Text: "this room has expired (ttl) and is closing",
+			At:   now.Unix(),
+		})
+		for _, m := range v.members {
+			if m.Send != nil {
+				m.Send(notice)
+			}
+			if m.Close != nil {
+				m.Close()
+			}
+		}
+	}
 }
