@@ -43,7 +43,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck installer
-        run: shellcheck -s sh installer/install.sh
+        # -S warning: real bugs (word-splitting, undefined vars) fail the build;
+        # pedantic style/info notes do not.
+        run: shellcheck -s sh -S warning installer/install.sh
 
   docker:
     runs-on: ubuntu-latest
