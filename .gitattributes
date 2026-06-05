@@ -12,11 +12,12 @@
 *.yml     text eol=lf
 
 # Shell installers MUST be LF — a CRLF script breaks `curl ... | bash`.
-*.sh      text eol=lf
-*.bash    text eol=lf
-Dockerfile text eol=lf
-justfile  text eol=lf
-Makefile  text eol=lf
+*.sh         text eol=lf
+*.bash       text eol=lf
+Dockerfile*  text eol=lf
+.dockerignore text eol=lf
+justfile     text eol=lf
+Makefile     text eol=lf
 
 # PowerShell installer stays CRLF (native to Windows hosts).
 *.ps1     text eol=crlf
