@@ -1,6 +1,8 @@
 // Command netherchat is the Netherchat terminal client.
 //
 //	netherchat connect [ws://host:port] [--room general] [--name alice]
+//	netherchat send    <room> "message"        # or pipe stdin
+//	netherchat tail    <room>                   # stream decrypted messages
 //
 // All end-to-end encryption happens here, client-side. The server this connects
 // to is a blind relay that never sees plaintext.
@@ -26,6 +28,10 @@ func main() {
 	switch os.Args[1] {
 	case "connect":
 		connectCmd(os.Args[2:])
+	case "send":
+		sendCmd(os.Args[2:])
+	case "tail":
+		tailCmd(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("netherchat " + buildinfo.Version)
 	case "-h", "--help", "help":
@@ -42,8 +48,10 @@ func connectCmd(args []string) {
 	room := fs.String("room", "general", "room to join")
 	name := fs.String("name", defaultName(), "display name")
 	identity := fs.String("identity", "", "identity file path (default: per-user config dir)")
+	notify := fs.String("notify", "", "shell command to run on each new message (env: NETHERCHAT_ROOM/FROM/TEXT)")
+	invite := fs.String("invite", "", "one-time invite token for an invite-only room")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: netherchat connect [ws://host:port] [--room <name>] [--name <you>] [--identity <path>]")
+		fmt.Fprintln(os.Stderr, "usage: netherchat connect [ws://host:port] [--room <name>] [--name <you>] [--identity <path>] [--invite <token>] [--notify <cmd>]")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
@@ -52,28 +60,7 @@ func connectCmd(args []string) {
 	if url == "" {
 		url = "ws://localhost:3000"
 	}
-
-	idPath := *identity
-	if idPath == "" {
-		p, err := client.DefaultIdentityPath()
-		if err != nil {
-			fatal(fmt.Errorf("resolve identity path: %w", err))
-		}
-		idPath = p
-	}
-
-	c, err := client.New(url, *room, *name, idPath)
-	if err != nil {
-		fatal(err)
-	}
-
-	dialCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := c.Connect(dialCtx); err != nil {
-		fatal(fmt.Errorf("connect to %s: %w", url, err))
-	}
-
-	if err := app.Run(c, *room, *name, c.Fingerprint()); err != nil {
+	if err := app.Run(url, *name, resolveIdentity(*identity), *room, *notify, *invite); err != nil {
 		fatal(err)
 	}
 }
@@ -87,20 +74,53 @@ func defaultName() string {
 	return "anon"
 }
 
+func resolveIdentity(p string) string {
+	if p != "" {
+		return p
+	}
+	d, err := client.DefaultIdentityPath()
+	if err != nil {
+		fatal(fmt.Errorf("resolve identity path: %w", err))
+	}
+	return d
+}
+
+// dial connects a client core for the non-interactive modes.
+func dial(url, room, name, identity, invite string, timeout time.Duration) *client.Client {
+	c, err := client.New(url, room, name, resolveIdentity(identity))
+	if err != nil {
+		fatal(err)
+	}
+	if invite != "" {
+		c.UseInviteToken(invite)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := c.Connect(ctx); err != nil {
+		fatal(fmt.Errorf("connect to %s: %w", url, err))
+	}
+	return c
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, `netherchat — messaging that lives below the surface
 
 usage:
-  netherchat connect [ws://host:port] [flags]
+  netherchat connect [ws://host:port] [flags]   open the terminal UI
+  netherchat send    <room> "message"           send one message (or pipe stdin)
+  netherchat tail    <room>                      stream decrypted messages to stdout
 
-flags (connect):
-  --room <name>       room to join (default "general")
+common flags:
+  --server <url>      server URL (send/tail; default ws://localhost:3000)
+  --room <name>       room to join (connect)
   --name <you>        display name (default: $USER)
   --identity <path>   identity key file (default: per-user config dir)
+  --invite <token>    one-time invite token for an invite-only room
 
 examples:
   netherchat connect ws://localhost:3000 --room ops --name alice
-  netherchat connect wss://chat.example.com`)
+  echo "build failed on main" | netherchat send ops --server ws://localhost:3000
+  netherchat tail alerts | grep CRITICAL`)
 }
 
 func fatal(err error) {

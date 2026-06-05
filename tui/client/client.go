@@ -291,10 +291,10 @@ func (c *Client) onWelcome(env protocol.Envelope) {
 
 	c.mu.Lock()
 	c.selfID = w.YourID
-	names := make([]string, 0, len(w.Members))
+	members := make([]ConnMember, 0, len(w.Members))
 	for _, m := range w.Members {
 		c.addMemberLocked(m)
-		names = append(names, m.DisplayName)
+		members = append(members, ConnMember{ID: m.ID, Name: m.DisplayName})
 	}
 	var minted *crypto.RoomKey
 	if w.YouAreFirst {
@@ -308,7 +308,7 @@ func (c *Client) onWelcome(env protocol.Envelope) {
 	c.emit(EvConnected{
 		SelfID:      w.YourID,
 		YouAreFirst: w.YouAreFirst,
-		Members:     names,
+		Members:     members,
 		InviteOnly:  w.Policy.InviteOnly,
 		ExecEnabled: w.Policy.ExecEnabled,
 		Webhook:     w.Policy.Webhook,

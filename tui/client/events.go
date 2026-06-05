@@ -6,11 +6,17 @@ import "time"
 // test). Consumers receive these on Events() and stop when Done() is closed.
 type Event interface{ isEvent() }
 
+// ConnMember identifies an already-present room member.
+type ConnMember struct {
+	ID   string
+	Name string
+}
+
 // EvConnected is emitted once, after the server's Welcome is processed.
 type EvConnected struct {
 	SelfID      string
 	YouAreFirst bool
-	Members     []string // display names already present
+	Members     []ConnMember // members already present
 	InviteOnly  bool
 	ExecEnabled bool
 	Webhook     bool
