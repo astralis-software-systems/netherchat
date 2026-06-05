@@ -143,6 +143,32 @@ func TestExecAllowlist(t *testing.T) {
 	}
 }
 
+func TestHistoryReplay(t *testing.T) {
+	cfg := config.Default()
+	cfg.Persistence.Enabled = true // in-memory store (no path)
+	cfg.Persistence.History = 50
+	ts := httptest.NewServer(server.Handler(cfg, quietLogger()))
+	defer ts.Close()
+
+	a := connect(t, ts.URL, "general", "alice", "")
+	waitMatch[client.EvKeyReady](t, a, nil, 5*time.Second)
+	c := connect(t, ts.URL, "general", "carol", "")
+	waitMatch[client.EvKeyReady](t, c, nil, 5*time.Second)
+
+	a.Send("history one")
+	a.Send("history two")
+	// Confirm the server processed (hence stored) both before the next join.
+	waitMatch[client.EvMessage](t, c, func(m client.EvMessage) bool { return m.Text == "history one" }, 5*time.Second)
+	waitMatch[client.EvMessage](t, c, func(m client.EvMessage) bool { return m.Text == "history two" }, 5*time.Second)
+
+	// A late joiner receives the replayed ciphertext history and decrypts it with
+	// the still-live room key.
+	b := connect(t, ts.URL, "general", "bob", "")
+	waitMatch[client.EvKeyReady](t, b, nil, 5*time.Second)
+	waitMatch[client.EvMessage](t, b, func(m client.EvMessage) bool { return m.Text == "history one" }, 5*time.Second)
+	waitMatch[client.EvMessage](t, b, func(m client.EvMessage) bool { return m.Text == "history two" }, 5*time.Second)
+}
+
 func TestVanishKeepsClientsInSync(t *testing.T) {
 	ts := httptest.NewServer(server.Handler(config.Default(), quietLogger()))
 	defer ts.Close()

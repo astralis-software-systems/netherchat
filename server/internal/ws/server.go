@@ -21,6 +21,7 @@ import (
 	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/server/internal/hub"
 	"github.com/salehkreiner/netherchat/server/internal/invite"
+	"github.com/salehkreiner/netherchat/server/internal/store"
 	"golang.org/x/time/rate"
 )
 
@@ -38,15 +39,17 @@ type Server struct {
 	hub     *hub.Hub
 	cfg     config.Config
 	invites *invite.Store
+	store   store.Store // optional history persistence; nil when disabled
 	log     *slog.Logger
 }
 
-// NewServer constructs a transport bound to the given hub, config and invite store.
-func NewServer(h *hub.Hub, cfg config.Config, invites *invite.Store, log *slog.Logger) *Server {
+// NewServer constructs a transport bound to the given hub, config, invite store
+// and optional message store (nil to disable persistence).
+func NewServer(h *hub.Hub, cfg config.Config, invites *invite.Store, st store.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{hub: h, cfg: cfg, invites: invites, log: log}
+	return &Server{hub: h, cfg: cfg, invites: invites, store: st, log: log}
 }
 
 // HandleWS is the http.HandlerFunc for the WebSocket endpoint.
@@ -140,6 +143,16 @@ func (s *Server) serve(ctx context.Context, c *websocket.Conn) {
 			TTLSeconds:  int(policy.TTL.Std().Seconds()),
 		},
 	}))
+	// Replay recent history (ciphertext) to the newcomer. The client buffers
+	// these until its room key arrives, then decrypts what the current key
+	// covers. See store package docs for the (honest) limits.
+	if s.store != nil {
+		if hist, err := s.store.History(hello.Room, s.cfg.Persistence.History); err == nil {
+			for _, env := range hist {
+				cn.send(env)
+			}
+		}
+	}
 	s.hub.Broadcast(hello.Room, id, mustEncode(protocol.OpMemberJoined, protocol.MemberJoined{Member: member.Info}))
 	if res.Distributor != nil {
 		// Ask the oldest existing member to wrap the current room key for the newcomer.
@@ -181,7 +194,11 @@ func (s *Server) relay(room, fromID string, env protocol.Envelope) {
 			return
 		}
 		m.FromID = fromID
-		s.hub.Broadcast(room, fromID, mustEncode(protocol.OpMessage, m))
+		out := mustEncode(protocol.OpMessage, m)
+		s.hub.Broadcast(room, fromID, out)
+		if s.store != nil {
+			_ = s.store.Append(room, out)
+		}
 
 	case protocol.OpKeyDeliver:
 		var kd protocol.KeyDeliver
