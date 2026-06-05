@@ -1,0 +1,38 @@
+# Netherchat — team deployment via Docker Compose (R1).
+#
+#   docker compose up -d        # build + run the blind-relay server
+#   docker compose logs -f
+#   docker compose down
+#
+# Or skip the build and pull the published image by commenting out `build:`
+# and uncommenting the pinned `image:` tag.
+
+services:
+  netherchat:
+    build:
+      context: .
+      args:
+        VERSION: dev
+    image: astralis/netherchat:latest
+    container_name: netherchat
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+    # Hardening. The server is a blind relay that writes nothing to disk by
+    # default, so it runs with a read-only root filesystem, no Linux
+    # capabilities, and no privilege escalation. (HEALTHCHECK is baked into the
+    # image; see Dockerfile.)
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    # Optional local SQLite persistence (opt-in, local only — never cloud).
+    # Enable in netherchat.toml, then give the container somewhere to write:
+    # volumes:
+    #   - netherchat-data:/data
+
+# volumes:
+#   netherchat-data:

@@ -1,0 +1,11 @@
+# Keep the build context tiny: only Go sources and module files are needed.
+.git
+.github
+bin/
+dist/
+tmp/
+web/node_modules/
+web/dist/
+*.exe
+*.test
+*.out
