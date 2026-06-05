@@ -7,11 +7,9 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/salehkreiner/netherchat/buildinfo"
 	"github.com/salehkreiner/netherchat/server/internal/hub"
 )
-
-// Version is the server version string, overridable at build time via -ldflags.
-var Version = "0.1.0-m1"
 
 // API serves the REST endpoints.
 type API struct {
@@ -34,7 +32,7 @@ func (a *API) health(w http.ResponseWriter, _ *http.Request) {
 
 func (a *API) version(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version":  Version,
+		"version":  buildinfo.Version,
 		"protocol": 1,
 		"product":  "netherchat",
 	})

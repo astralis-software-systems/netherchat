@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/salehkreiner/netherchat/buildinfo"
 	"github.com/salehkreiner/netherchat/server/internal/api"
 	"github.com/salehkreiner/netherchat/server/internal/hub"
 	"github.com/salehkreiner/netherchat/server/internal/ws"
@@ -49,7 +50,7 @@ func Run(ctx context.Context, addr string, log *slog.Logger) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("netherchat server listening", "addr", addr, "version", api.Version)
+		log.Info("netherchat server listening", "addr", addr, "version", buildinfo.Version)
 		errCh <- srv.ListenAndServe()
 	}()
 

@@ -13,6 +13,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/salehkreiner/netherchat/buildinfo"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/ui/app"
 )
@@ -25,6 +26,8 @@ func main() {
 	switch os.Args[1] {
 	case "connect":
 		connectCmd(os.Args[2:])
+	case "version", "--version", "-v":
+		fmt.Println("netherchat " + buildinfo.Version)
 	case "-h", "--help", "help":
 		usage()
 	default:
