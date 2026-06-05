@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files need gofmt:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: build
+        run: go build ./...
+
+      - name: test (race detector)
+        run: go test -race ./...
+
+      - name: blind-relay boundary guard
+        run: go test ./tui/e2e/ -run TestServerBinaryDoesNotLinkClientCrypto -v
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck installer
+        run: shellcheck -s sh installer/install.sh
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build server image
+        run: docker build -t astralis/netherchat:ci .
+      - name: smoke test
+        run: |
+          docker run -d -p 3000:3000 --name nc-ci astralis/netherchat:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/health >/dev/null 2>&1; then ok=1; break; fi
+            sleep 0.5
+          done
+          if [ "${ok:-0}" != "1" ]; then echo "::error::server did not become healthy"; docker logs nc-ci; exit 1; fi
+          curl -fsS http://localhost:3000/version
+          docker rm -f nc-ci
