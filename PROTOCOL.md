@@ -1,6 +1,6 @@
 # PROTOCOL.md — Netherchat wire protocol
 
-**Protocol version: 1** · Status: M1 (subject to change before 1.0)
+**Protocol version: 2** · Status: M3 (subject to change before 1.0)
 
 This document specifies the Netherchat wire protocol so that third-party clients
 can be built. It reflects what is implemented today; the `protocol` Go package is
@@ -45,6 +45,16 @@ encoding of `[]byte`).
 | `key_deliver`   | client → server → one client   | a wrapped room key, routed to its target |
 | `msg`           | client → server → room         | an end-to-end-encrypted message |
 | `error`         | server → client                | error notification |
+| `server_msg`    | server → clients               | **plaintext** server-origin message (webhook/system/exec) — NOT E2E |
+| `control`       | client → server → room         | room control action: `vanish`, `ttl` |
+| `exec_request`  | client → server                | run an allow-listed command |
+| `exec_result`   | server → client                | command output |
+| `invite_request`| client → server                | mint a one-time invite token for the room |
+| `invite_result` | server → client                | the minted token |
+
+`hello` additionally carries an optional `invite_token` (required to join an
+invite-only room), and `welcome` carries a `policy` describing the room
+(`invite_only`, `exec_enabled`, `webhook`, `ttl_seconds`).
 
 ## 3. Identity
 
@@ -142,16 +152,16 @@ under a different identity or epoch.
 | Identity signatures    | Ed25519                                |
 | Key agreement / wrap   | X25519 + XSalsa20-Poly1305 (`nacl/box`)|
 | Message encryption     | XChaCha20-Poly1305                     |
-| Epoch ratchet (future) | HKDF-SHA256                            |
+| Epoch ratchet (/vanish)| HKDF-SHA256                            |
 | Fingerprint            | SHA-256 of the Ed25519 public key      |
 
 ## 8. Security properties & limits (honest)
 
 - **Server-blind content.** Room keys are never sent to the server; messages are
   only ever ciphertext to it; default zero persistence means nothing is retained.
-- **Forward secrecy** is provided at **epoch granularity** once epoch rotation +
-  old-key deletion are enabled — **not** per-message. This is weaker than Signal's
-  Double Ratchet or MLS, by design for v1.
+- **Forward secrecy** is provided at **epoch granularity**: `/vanish` ratchets the
+  room key forward and deletes the old one — **not** per-message. This is weaker
+  than Signal's Double Ratchet or MLS, by design for v1.
 - The group **key-distribution protocol is custom** (over audited primitives). It
   is the primary risk surface and is slated for external review before any paid
   tier. The migration target is **MLS (RFC 9420)**; the epoch model here is shaped
@@ -160,8 +170,30 @@ under a different identity or epoch.
 - **Metadata is not hidden.** The server sees room membership, message sizes, and
   timing. End-to-end encryption protects content, not metadata.
 
-## 9. Versioning
+## 9. v2 message types
+
+These are additive; the connection==room model is unchanged.
+
+- **`server_msg`** `{kind, from, text, at}` — a plaintext message that originates
+  at the server (`kind` is `webhook`, `system`, or `exec`). It is **not E2E** —
+  the server composes it, so the server can read it. Clients render it with a
+  clear "plaintext" marker. Inbound webhooks (`POST /webhook/<room>` with the
+  room's configured token) and `/exec` output arrive this way.
+- **`control`** `{action, by, by_name, ttl_seconds}` — relayed to the room.
+  `action: "vanish"` tells members to clear history and ratchet the room key
+  forward (deterministic HKDF — no key exchange). `action: "ttl"` sets a
+  client-side message display TTL.
+- **`exec_request`** `{command}` / **`exec_result`** `{command, allowed, output,
+  error}` — run an allow-listed command. The server runs it only if the exact
+  command string is in `[exec].allow` and the room has `exec_enabled`; there is no
+  shell and arguments are not interpreted. Every attempt is audit-logged.
+- **`invite_request`** / **`invite_result`** `{room, token, expires}` — a current
+  member mints a one-time token. Joining an `invite_only` room requires a valid
+  token in `hello.invite_token`; the first member into an empty invite-only room
+  bootstraps it.
+
+## 10. Versioning
 
 `protocol_version` is exchanged in `hello`/`welcome`. Incompatible changes bump it.
-A future MLS-based key-agreement scheme can be negotiated alongside v1 during
-migration.
+A future MLS-based key-agreement scheme can be negotiated alongside the NaCl
+scheme during migration.

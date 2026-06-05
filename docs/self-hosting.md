@@ -28,8 +28,46 @@ go build -o bin/ ./cmd/netherchat-server
 ./bin/netherchat-server --addr :3000
 ```
 
-Flags: `--addr` (listen address, default `:3000`), `--version`, `--healthcheck`
-(probe the local `/health` and exit 0/1 — used by the Docker `HEALTHCHECK`).
+Flags: `--config <path>` (load `netherchat.toml`), `--addr` (override the listen
+address), `--version`, `--healthcheck` (probe the local `/health` and exit 0/1 —
+used by the Docker `HEALTHCHECK`).
+
+## Configuration (`netherchat.toml`)
+
+Everything policy-related is config-as-code. Copy `netherchat.toml.example`,
+edit, and run `netherchat-server --config netherchat.toml`. It covers:
+
+- **`[limits]`** — per-connection message rate limit (token bucket).
+- **`[persistence]`** — opt-in local history (off by default). When enabled with
+  a `path`, uses a local pure-Go SQLite file; without a path, in-memory.
+  **Caveat:** the server stores only ciphertext and never holds a key, so history
+  is replayable to someone joining an *active* room but is unrecoverable after the
+  room empties, a `/vanish`, or a restart. See [`encryption.md`](encryption.md).
+- **`[exec]`** — `/exec` is **off by default**. When `enabled`, only the exact
+  commands in `allow` may run (no shell), and only in rooms with `exec_enabled`.
+  Every attempt is audit-logged.
+- **`[rooms.NAME]`** — per-room policy: `invite_only`, `webhook` + `webhook_token`,
+  `exec_enabled`, `ttl` (ephemeral rooms expire after inactivity).
+
+## Inbound webhooks
+
+Enable `webhook` + a `webhook_token` for a room, then POST to it. The message is
+plaintext and server-origin (NOT end-to-end encrypted — clients mark it as such):
+
+```bash
+curl -X POST https://chat.example.com/webhook/alerts \
+  -H "X-Netherchat-Token: <your webhook_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "deploy complete", "from": "ci-bot"}'
+```
+
+Rooms without a `webhook_token` reject all webhook posts (secure by default).
+
+## Invite-only rooms
+
+Mark a room `invite_only`. The first member into an empty such room bootstraps it
+and can mint one-time tokens with `/invite`; everyone after needs a token
+(`netherchat connect … --invite <token>`, or paste it in the TUI).
 
 ## Connecting clients
 

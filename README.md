@@ -14,13 +14,17 @@ doesn't look like it's from 1998.
 
 ---
 
-> **Status: M2.** Two terminal clients exchange end-to-end-encrypted messages
-> through the server; nothing is persisted and the server only ever relays
-> ciphertext. M2 adds the distribution story — a `FROM scratch` Docker image, a
-> one-line installer, and a release pipeline. UI polish, themes, slash commands,
-> webhooks, and the web client come in later milestones. See
+> **Status: M3.** A full terminal client: a multi-room sidebar with unread
+> counts, a member list, 8 instantly-switchable themes, slash commands with
+> autocomplete, inline code rendering, and invite QR codes. The server adds
+> config-as-code (`netherchat.toml`), inbound webhooks, one-time invite tokens,
+> ephemeral room TTLs, `/vanish` key rotation, opt-in `/exec`, per-connection
+> rate limiting, and optional local persistence. Plus Unix-friendly
+> `send`/`tail` for pipelines. The web client is the next milestone. See
 > [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md) for the founding design,
-> [`PROTOCOL.md`](PROTOCOL.md) for the wire format, and
+> [`PROTOCOL.md`](PROTOCOL.md) for the wire format,
+> [`docs/commands.md`](docs/commands.md) for commands/keys,
+> [`docs/encryption.md`](docs/encryption.md) for the honest crypto story, and
 > [`docs/self-hosting.md`](docs/self-hosting.md) to run a server.
 
 ## What's here
