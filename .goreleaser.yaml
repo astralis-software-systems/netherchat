@@ -1,5 +1,5 @@
 # GoReleaser — builds the release matrix, archives, checksums, Docker images and
-# Homebrew formula (R7). Validate with `goreleaser check`; dry-run with
+# Homebrew cask (R7). Validate with `goreleaser check`; dry-run with
 # `goreleaser release --snapshot --clean`.
 version: 2
 project_name: netherchat
@@ -57,55 +57,28 @@ changelog:
       - "^test:"
       - "^chore:"
 
-dockers:
-  - id: server-amd64
-    goos: linux
-    goarch: amd64
+dockers_v2:
+  - id: netherchat
     ids: [netherchat-server]
     dockerfile: Dockerfile.goreleaser
-    image_templates:
-      - "astralis/netherchat:{{ .Version }}-amd64"
-      - "astralis/netherchat:latest-amd64"
-    build_flag_templates:
-      - "--platform=linux/amd64"
+    images:
+      - astralis/netherchat
+    tags:
+      - "{{ .Version }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
 
-  - id: server-arm64
-    goos: linux
-    goarch: arm64
-    ids: [netherchat-server]
-    dockerfile: Dockerfile.goreleaser
-    image_templates:
-      - "astralis/netherchat:{{ .Version }}-arm64"
-      - "astralis/netherchat:latest-arm64"
-    build_flag_templates:
-      - "--platform=linux/arm64"
-
-docker_manifests:
-  - name_template: "astralis/netherchat:{{ .Version }}"
-    image_templates:
-      - "astralis/netherchat:{{ .Version }}-amd64"
-      - "astralis/netherchat:{{ .Version }}-arm64"
-  - name_template: "astralis/netherchat:latest"
-    image_templates:
-      - "astralis/netherchat:latest-amd64"
-      - "astralis/netherchat:latest-arm64"
-
-brews:
+homebrew_casks:
   - name: netherchat
     ids: [default]
     repository:
       owner: salehkreiner
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Formula
-    skip_upload: auto
     homepage: "https://github.com/salehkreiner/netherchat"
     description: "Self-hostable, end-to-end encrypted, real-time messaging for terminals"
-    install: |
-      bin.install "netherchat"
-      bin.install "netherchat-server"
-    test: |
-      system "#{bin}/netherchat", "version"
 
 release:
   github:
