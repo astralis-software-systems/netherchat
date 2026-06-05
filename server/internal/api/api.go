@@ -5,19 +5,28 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/salehkreiner/netherchat/buildinfo"
+	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/server/internal/hub"
 )
 
 // API serves the REST endpoints.
 type API struct {
 	hub *hub.Hub
+	cfg config.Config
+	log *slog.Logger
 }
 
-// New constructs an API bound to the hub.
-func New(h *hub.Hub) *API { return &API{hub: h} }
+// New constructs an API bound to the hub and config.
+func New(h *hub.Hub, cfg config.Config, log *slog.Logger) *API {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &API{hub: h, cfg: cfg, log: log}
+}
 
 // Register wires the REST routes onto the mux. Go 1.22+ method+path patterns.
 func (a *API) Register(mux *http.ServeMux) {

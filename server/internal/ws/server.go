@@ -16,7 +16,9 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/salehkreiner/netherchat/protocol"
+	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/server/internal/hub"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -28,15 +30,16 @@ const (
 // Server relays WebSocket connections through a hub.
 type Server struct {
 	hub *hub.Hub
+	cfg config.Config
 	log *slog.Logger
 }
 
-// NewServer constructs a transport bound to the given hub.
-func NewServer(h *hub.Hub, log *slog.Logger) *Server {
+// NewServer constructs a transport bound to the given hub and config.
+func NewServer(h *hub.Hub, cfg config.Config, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{hub: h, log: log}
+	return &Server{hub: h, cfg: cfg, log: log}
 }
 
 // HandleWS is the http.HandlerFunc for the WebSocket endpoint.
@@ -116,11 +119,17 @@ func (s *Server) serve(ctx context.Context, c *websocket.Conn) {
 	}
 	s.log.Info("member joined", "room", hello.Room, "id", id, "name", hello.DisplayName, "first", res.YouAreFirst)
 
-	// 4. Relay loop.
+	// 4. Relay loop, with a per-connection token-bucket rate limit on
+	// user-originated content frames.
+	limiter := rate.NewLimiter(rate.Limit(s.cfg.Limits.MessagesPerSecond), s.cfg.Limits.Burst)
 	for {
 		var env protocol.Envelope
 		if err := wsjson.Read(ctx, c, &env); err != nil {
 			break
+		}
+		if env.Type == protocol.OpMessage && !limiter.Allow() {
+			cn.send(mustEncode(protocol.OpError, protocol.Error{Code: "rate_limited", Message: "slow down"}))
+			continue
 		}
 		s.relay(hello.Room, id, env)
 	}

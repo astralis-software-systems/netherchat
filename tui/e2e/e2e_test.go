@@ -23,6 +23,7 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/server"
+	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/internal/crypto"
 )
@@ -72,7 +73,7 @@ func newClient(t *testing.T, url, name string) *client.Client {
 }
 
 func TestEndToEndThroughBlindRelay(t *testing.T) {
-	ts := httptest.NewServer(server.Handler(quietLogger()))
+	ts := httptest.NewServer(server.Handler(config.Default(), quietLogger()))
 	defer ts.Close()
 
 	// Alice connects first and mints the room key.

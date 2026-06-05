@@ -1,0 +1,47 @@
+# netherchat.toml — Netherchat server configuration (config-as-code).
+# Copy to netherchat.toml and run:  netherchat-server --config netherchat.toml
+# Every field is optional; the defaults below are what the server uses with no
+# config at all.
+
+[server]
+addr = ":3000"
+# For wss:// you usually terminate TLS at a reverse proxy. To serve TLS directly,
+# set both of these (PEM files):
+# tls_cert = "/etc/netherchat/cert.pem"
+# tls_key  = "/etc/netherchat/key.pem"
+
+[limits]
+# Per-connection inbound message rate limit (token bucket).
+messages_per_second = 20
+burst = 40
+
+[persistence]
+# Off by default — the server is purely in-memory and rooms evaporate when empty.
+# When enabled, ONLY ciphertext is stored (the server still cannot read it), in a
+# local SQLite file. Never cloud.
+enabled = false
+# path = "netherchat.db"
+# history = 100          # messages replayed to a client when it joins
+
+[exec]
+# Remote /exec is the most dangerous feature and is OFF by default. Even when
+# enabled, ONLY the exact commands listed here may run (never arbitrary shell),
+# and only in rooms with exec_enabled = true below. Every run is audit-logged.
+enabled = false
+# allow = ["uptime", "df -h", "systemctl status netherchat"]
+
+# --- Rooms -------------------------------------------------------------------
+# Rooms are created on demand with open defaults. Define a room here only to set
+# policy. The table key is the room name.
+
+[rooms.general]
+# defaults: open, no webhook, no ttl
+
+[rooms.ops]
+invite_only = true        # joining requires a one-time invite token (/invite)
+exec_enabled = true       # /exec may run here (still gated by [exec] above)
+
+[rooms.alerts]
+webhook = true            # accept POST /webhook/alerts
+webhook_token = "change-me-to-a-long-random-secret"  # required in X-Netherchat-Token
+ttl = "24h"               # ephemeral: the room is cleared after this much inactivity

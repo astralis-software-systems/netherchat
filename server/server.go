@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/salehkreiner/netherchat/buildinfo"
+	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/server/internal/api"
 	"github.com/salehkreiner/netherchat/server/internal/hub"
 	"github.com/salehkreiner/netherchat/server/internal/ws"
@@ -21,13 +22,13 @@ import (
 // Handler builds the HTTP handler (WebSocket relay at /ws plus the read-only
 // REST endpoints) backed by a fresh in-memory hub. Each call returns an
 // independent server with its own room state — convenient for tests.
-func Handler(log *slog.Logger) http.Handler {
+func Handler(cfg config.Config, log *slog.Logger) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
 	h := hub.New()
-	transport := ws.NewServer(h, log)
-	rest := api.New(h)
+	transport := ws.NewServer(h, cfg, log)
+	rest := api.New(h, cfg, log)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", transport.HandleWS)
@@ -35,22 +36,22 @@ func Handler(log *slog.Logger) http.Handler {
 	return mux
 }
 
-// Run starts the server on addr and blocks until ctx is cancelled, then shuts
-// down gracefully.
-func Run(ctx context.Context, addr string, log *slog.Logger) error {
+// Run starts the server on cfg.Server.Addr and blocks until ctx is cancelled,
+// then shuts down gracefully.
+func Run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if log == nil {
 		log = slog.Default()
 	}
 	srv := &http.Server{
-		Addr:              addr,
-		Handler:           Handler(log),
+		Addr:              cfg.Server.Addr,
+		Handler:           Handler(cfg, log),
 		ReadHeaderTimeout: 10 * time.Second,
 		// No WriteTimeout: WebSocket connections are long-lived.
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("netherchat server listening", "addr", addr, "version", buildinfo.Version)
+		log.Info("netherchat server listening", "addr", cfg.Server.Addr, "version", buildinfo.Version)
 		errCh <- srv.ListenAndServe()
 	}()
 

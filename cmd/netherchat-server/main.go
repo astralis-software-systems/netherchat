@@ -18,37 +18,53 @@ import (
 
 	"github.com/salehkreiner/netherchat/buildinfo"
 	"github.com/salehkreiner/netherchat/server"
+	"github.com/salehkreiner/netherchat/server/config"
 )
 
 func main() {
-	addr := flag.String("addr", ":3000", "address to listen on, e.g. :3000")
+	configPath := flag.String("config", "", "path to netherchat.toml (optional)")
+	addr := flag.String("addr", "", "listen address override, e.g. :3000")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	healthcheck := flag.Bool("healthcheck", false, "probe the local /health endpoint and exit 0/1 (used by Docker HEALTHCHECK)")
 	flag.Parse()
 
-	switch {
-	case *showVersion:
+	if *showVersion {
 		fmt.Println("netherchat-server " + buildinfo.Version)
 		return
-	case *healthcheck:
-		os.Exit(runHealthcheck(*addr))
 	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
+	cfg := config.Default()
+	if *configPath != "" {
+		loaded, err := config.Load(*configPath)
+		if err != nil {
+			log.Error("failed to load config", "path", *configPath, "err", err)
+			os.Exit(1)
+		}
+		cfg = loaded
+		log.Info("loaded config", "path", *configPath, "rooms", len(cfg.Rooms))
+	}
+	if *addr != "" {
+		cfg.Server.Addr = *addr
+	}
+
+	if *healthcheck {
+		os.Exit(runHealthcheck(cfg.Server.Addr))
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := server.Run(ctx, *addr, log); err != nil {
+	if err := server.Run(ctx, cfg, log); err != nil {
 		log.Error("server error", "err", err)
 		os.Exit(1)
 	}
 }
 
-// runHealthcheck performs a localhost GET /health against the same port the
-// server listens on. It is compiled into the binary so the FROM-scratch image
-// (which has no shell or curl) can still declare a HEALTHCHECK. Returns a
-// process exit code.
+// runHealthcheck performs a localhost GET /health against the configured port.
+// It is compiled into the binary so the FROM-scratch image (no shell, no curl)
+// can declare a HEALTHCHECK. Returns a process exit code.
 func runHealthcheck(addr string) int {
 	_, port, err := net.SplitHostPort(addr)
 	if err != nil || port == "" {
