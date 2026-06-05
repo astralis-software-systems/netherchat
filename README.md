@@ -14,11 +14,14 @@ doesn't look like it's from 1998.
 
 ---
 
-> **Status: M1.** Two terminal clients can exchange end-to-end-encrypted messages
-> through the server. Nothing is persisted; the server only ever relays
-> ciphertext. UI polish, themes, slash commands, webhooks, and the web client
-> come in later milestones. See [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)
-> for the founding design and [`PROTOCOL.md`](PROTOCOL.md) for the wire format.
+> **Status: M2.** Two terminal clients exchange end-to-end-encrypted messages
+> through the server; nothing is persisted and the server only ever relays
+> ciphertext. M2 adds the distribution story — a `FROM scratch` Docker image, a
+> one-line installer, and a release pipeline. UI polish, themes, slash commands,
+> webhooks, and the web client come in later milestones. See
+> [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md) for the founding design,
+> [`PROTOCOL.md`](PROTOCOL.md) for the wire format, and
+> [`docs/self-hosting.md`](docs/self-hosting.md) to run a server.
 
 ## What's here
 
@@ -33,7 +36,34 @@ The encryption code lives under `tui/internal/crypto`, which Go's internal-packa
 rule makes **unreachable from the server**. "The server cannot read your messages"
 is therefore a property of the build graph, verified in CI — not a marketing line.
 
-## Quick start
+## Install
+
+**Client — macOS / Linux:**
+
+```bash
+curl -fsSL https://netherchat.com/install | bash
+# pin a version:
+curl -fsSL https://netherchat.com/install | bash -s -- --version 0.2.0
+```
+
+**Client — Windows (PowerShell):**
+
+```powershell
+irm https://netherchat.com/install.ps1 | iex
+```
+
+**Server — Docker:**
+
+```bash
+docker run -p 3000:3000 astralis/netherchat
+# or, for a team:
+docker compose up -d
+```
+
+> The installers pull pre-built binaries from GitHub Releases, so they work once
+> the first version is tagged. Until then (or any time), build from source below.
+
+## From source
 
 Requires Go 1.26+ (and optionally [`just`](https://just.systems) for the dev tasks).
 
