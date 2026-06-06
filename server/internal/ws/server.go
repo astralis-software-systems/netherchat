@@ -11,8 +11,6 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
-	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -31,8 +29,6 @@ const (
 	sendBuffer     = 64      // per-connection outbound queue depth
 	writeTimeout   = 10 * time.Second
 	inviteTTL      = 24 * time.Hour
-	execTimeout    = 10 * time.Second
-	execOutputCap  = 8 << 10 // 8 KiB of command output
 )
 
 // Server relays WebSocket connections through a hub.
@@ -144,10 +140,9 @@ func (s *Server) serve(ctx context.Context, c *websocket.Conn) {
 		Members:         res.Existing,
 		YouAreFirst:     res.YouAreFirst,
 		Policy: protocol.RoomPolicy{
-			InviteOnly:  pol.InviteOnly,
-			ExecEnabled: pol.ExecEnabled,
-			Webhook:     pol.Webhook,
-			TTLSeconds:  pol.TTLSeconds,
+			InviteOnly: pol.InviteOnly,
+			Webhook:    pol.Webhook,
+			TTLSeconds: pol.TTLSeconds,
 		},
 	}))
 	// Replay recent history (ciphertext) to the newcomer. The client buffers
@@ -236,12 +231,16 @@ func (s *Server) relay(room, fromID string, env protocol.Envelope) {
 			Room: room, Token: token, Expires: expUnix,
 		}))
 
-	case protocol.OpExecRequest:
-		var er protocol.ExecRequest
-		if err := env.Decode(&er); err != nil {
+	case protocol.OpExecRequest, protocol.OpExecResult:
+		// Edge exec: the relay treats exec requests/results exactly like chat
+		// messages — opaque E2E envelopes it fans out to the room. It never sees
+		// the command, never runs anything (FEATURE_ROADMAP_FREE.md §0.1).
+		var m protocol.Message
+		if err := env.Decode(&m); err != nil {
 			return
 		}
-		go s.runExec(room, fromID, er.Command)
+		m.FromID = fromID
+		s.hub.Broadcast(room, fromID, mustEncode(env.Type, m))
 
 	case protocol.OpBreakGlass:
 		var bg protocol.BreakGlass
@@ -291,27 +290,24 @@ func (s *Server) handleBreakGlass(fromRoom, fromID string, bg protocol.BreakGlas
 // effectivePolicy is the room policy actually enforced for a connection, after
 // overlaying any ephemeral (break-glass) room on top of static config.
 type effectivePolicy struct {
-	InviteOnly  bool
-	ExecEnabled bool
-	Webhook     bool
-	TTLSeconds  int
+	InviteOnly bool
+	Webhook    bool
+	TTLSeconds int
 }
 
 // roomPolicy resolves the effective policy for a room. Ephemeral war rooms are
-// always invite-only with a hard remaining TTL and no exec/webhook surface; all
-// other rooms use their static netherchat.toml policy.
+// always invite-only with a hard remaining TTL and no webhook surface; all other
+// rooms use their static netherchat.toml policy.
 func (s *Server) roomPolicy(room string) effectivePolicy {
 	cfg := s.cfg.Room(room)
 	pol := effectivePolicy{
-		InviteOnly:  cfg.InviteOnly,
-		ExecEnabled: cfg.ExecEnabled && s.cfg.Exec.Enabled,
-		Webhook:     cfg.Webhook,
-		TTLSeconds:  int(cfg.TTL.Std().Seconds()),
+		InviteOnly: cfg.InviteOnly,
+		Webhook:    cfg.Webhook,
+		TTLSeconds: int(cfg.TTL.Std().Seconds()),
 	}
 	if s.ephemeral != nil {
 		if er, ok := s.ephemeral.Get(room); ok {
 			pol.InviteOnly = true
-			pol.ExecEnabled = false
 			pol.Webhook = false
 			pol.TTLSeconds = 0
 			if rem := int(time.Until(er.Deadline).Seconds()); rem > 0 {
@@ -320,43 +316,6 @@ func (s *Server) roomPolicy(room string) effectivePolicy {
 		}
 	}
 	return pol
-}
-
-// runExec runs an allow-listed command on behalf of a member. The requested
-// command must EXACTLY match an entry in [exec].allow and the room must have
-// exec_enabled; there is no shell and arguments are not interpreted. Every
-// attempt is audit-logged.
-func (s *Server) runExec(room, fromID, command string) {
-	allowed := s.cfg.ExecAllowed(room, command)
-	s.log.Info("exec request", "room", room, "by", fromID, "command", command, "allowed", allowed)
-
-	result := protocol.ExecResult{Command: command, Allowed: allowed}
-	if !allowed {
-		result.Err = "command not permitted (must be listed in [exec].allow and the room must set exec_enabled)"
-		s.hub.SendTo(room, fromID, mustEncode(protocol.OpExecResult, result))
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
-	defer cancel()
-	parts := strings.Fields(command)
-	out, err := exec.CommandContext(ctx, parts[0], parts[1:]...).CombinedOutput()
-	if len(out) > execOutputCap {
-		out = append(out[:execOutputCap:execOutputCap], []byte("\n…(truncated)")...)
-	}
-	result.Output = string(out)
-	if err != nil {
-		result.Err = err.Error()
-	}
-	s.hub.SendTo(room, fromID, mustEncode(protocol.OpExecResult, result))
-
-	// Share the run with the rest of the room for ops transparency.
-	s.hub.Broadcast(room, fromID, mustEncode(protocol.OpServerMessage, protocol.ServerMessage{
-		Kind: "exec",
-		From: "exec",
-		Text: "$ " + command + "\n" + result.Output,
-		At:   time.Now().Unix(),
-	}))
 }
 
 // conn owns the write side of a single WebSocket. All writes go through the

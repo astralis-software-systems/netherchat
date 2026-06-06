@@ -18,7 +18,6 @@ type EvConnected struct {
 	YouAreFirst bool
 	Members     []ConnMember // members already present
 	InviteOnly  bool
-	ExecEnabled bool
 	Webhook     bool
 	TTLSeconds  int
 }
@@ -40,12 +39,29 @@ type EvControl struct {
 	TTLSeconds int
 }
 
-// EvExecResult is the result of an /exec request this client made.
+// EvExecRequest is a decrypted, signature-verified edge-exec request seen in the
+// room (someone ran /exec). The TUI shows it; a netherchat agent acts on it.
+type EvExecRequest struct {
+	ID              string
+	Cmd             string
+	FromID          string
+	FromName        string
+	FromFingerprint string // ssh fingerprint of the requester's identity key
+	Self            bool   // true for our own request (local echo)
+	At              time.Time
+}
+
+// EvExecResult is a decrypted, signature-verified edge-exec result posted by an
+// agent. FromFingerprint identifies the host identity that ran the command.
 type EvExecResult struct {
-	Command string
-	Allowed bool
-	Output  string
-	Err     string
+	ID              string
+	Cmd             string
+	Allowed         bool
+	ExitCode        int
+	Output          string
+	FromName        string
+	FromFingerprint string
+	At              time.Time
 }
 
 // EvInvite carries a minted invite token in response to /invite.
@@ -101,6 +117,7 @@ func (EvKeyReady) isEvent()      {}
 func (EvMessage) isEvent()       {}
 func (EvServerMessage) isEvent() {}
 func (EvControl) isEvent()       {}
+func (EvExecRequest) isEvent()   {}
 func (EvExecResult) isEvent()    {}
 func (EvInvite) isEvent()        {}
 func (EvBreakGlass) isEvent()    {}

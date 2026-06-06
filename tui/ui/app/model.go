@@ -28,6 +28,8 @@ type Model struct {
 	url, name, identityPath, notifyCmd string
 	webURL                             string // base URL of the web join client, for /break-glass links
 	fingerprint                        string
+	source                             string       // where the identity came from (ssh-agent, key file, generated)
+	trust                              []TrustEntry // client-side identity pins from netherchat.toml
 
 	cmds  *command.Set
 	theme theme.Theme
@@ -51,11 +53,13 @@ type Model struct {
 
 // Run connects to the initial room and runs the TUI. invite is the one-time
 // token for the initial room (empty for open rooms). webURL is the base URL of
-// the browser join client, used to build /break-glass invite links.
-func Run(url, name, identityPath, room, notifyCmd, invite, webURL string) error {
+// the browser join client, used to build /break-glass invite links. trust holds
+// the client-side identity pins parsed from netherchat.toml.
+func Run(url, name, identityPath, room, notifyCmd, invite, webURL string, trust []TrustEntry) error {
 	m := newModel(url, name, identityPath, room, notifyCmd)
 	m.initialInvite = invite
 	m.webURL = webURL
+	m.trust = trust
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
@@ -186,6 +190,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncViewport()
 		}
 		return m, tickEvery()
+
+	case whoisFetchMsg:
+		switch {
+		case msg.err != nil:
+			m.addError(fmt.Sprintf("  keys for @%s: fetch failed (%v)", msg.handle, msg.err))
+		case msg.found:
+			m.addSystem(fmt.Sprintf("  @%s: fingerprint FOUND among %d published key(s) at %s ✓", msg.handle, msg.count, msg.url))
+		default:
+			m.addSystem(fmt.Sprintf("  @%s: fingerprint NOT in %d published key(s) at %s ✗", msg.handle, msg.count, msg.url))
+		}
+		return m, nil
 	}
 
 	var cmd tea.Cmd
@@ -286,6 +301,7 @@ func (m *Model) onRoomConnected(msg roomConnectedMsg) tea.Cmd {
 	r.connected = true
 	if m.fingerprint == "" {
 		m.fingerprint = msg.c.Fingerprint()
+		m.source = msg.c.Source()
 	}
 	return listenRoom(msg.name, msg.c)
 }
@@ -300,7 +316,7 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 	switch e := ev.(type) {
 	case client.EvConnected:
 		r.connected = true
-		r.execEnabled, r.inviteOnly, r.webhook = e.ExecEnabled, e.InviteOnly, e.Webhook
+		r.inviteOnly, r.webhook = e.InviteOnly, e.Webhook
 		if e.TTLSeconds > 0 {
 			r.ttl = time.Duration(e.TTLSeconds) * time.Second
 		}
@@ -369,19 +385,26 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 			}
 		}
 
-	case client.EvExecResult:
-		if !e.Allowed {
-			r.appendError("exec denied: " + e.Command + "  (" + e.Err + ")")
-		} else {
-			txt := "$ " + e.Command
-			if out := strings.TrimRight(e.Output, "\n"); out != "" {
-				txt += "\n" + out
-			}
-			if e.Err != "" {
-				txt += "\n[error] " + e.Err
-			}
-			r.appendLine(line{at: time.Now(), kind: lineServer, from: "exec", text: txt})
+	case client.EvExecRequest:
+		who := e.FromName
+		if e.Self {
+			who = "you"
 		}
+		r.appendLine(line{at: e.At, kind: lineExec, from: who + " requested", text: e.Cmd})
+
+	case client.EvExecResult:
+		var head string
+		if !e.Allowed {
+			head = e.Cmd + " → denied (not in agent runbook)"
+		} else {
+			head = fmt.Sprintf("%s → exit %d", e.Cmd, e.ExitCode)
+		}
+		head += "  " + shortFpr(e.FromFingerprint)
+		txt := head
+		if out := strings.TrimRight(e.Output, "\n"); out != "" {
+			txt += "\n" + out
+		}
+		r.appendLine(line{at: e.At, kind: lineExec, from: "exec", text: txt})
 
 	case client.EvInvite:
 		r.appendLine(line{at: time.Now(), kind: lineRaw, text: m.renderInvite(name, e)})
@@ -717,6 +740,9 @@ func (m *Model) renderLine(l line) string {
 		return m.wrap(ts + m.st(m.theme.Accent2).Bold(true).Render(l.from+": ") + m.inlineCode(l.text))
 	case lineServer:
 		tag := m.st(m.theme.Warn).Render("⚙ " + l.from + " (plaintext) ")
+		return m.wrap(ts + tag + m.inlineCode(l.text))
+	case lineExec:
+		tag := m.st(m.theme.Accent2).Bold(true).Render("⚡ " + l.from + " ")
 		return m.wrap(ts + tag + m.inlineCode(l.text))
 	default: // lineMessage
 		return m.wrap(ts + m.user(l.from) + m.st(m.theme.Text).Render(": ") + m.inlineCode(l.text))

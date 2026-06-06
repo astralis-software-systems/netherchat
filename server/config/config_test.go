@@ -18,9 +18,6 @@ func TestDefault(t *testing.T) {
 	if c.Persistence.Enabled {
 		t.Error("persistence should default off")
 	}
-	if c.Exec.Enabled {
-		t.Error("exec should default off")
-	}
 }
 
 func TestLoad(t *testing.T) {
@@ -31,18 +28,18 @@ addr = ":9000"
 [limits]
 messages_per_second = 5
 
-[exec]
-enabled = true
-allow = ["uptime", "df -h"]
-
 [rooms.ops]
 invite_only = true
-exec_enabled = true
 
 [rooms.alerts]
 webhook = true
 webhook_token = "secret"
 ttl = "24h"
+
+[[trust]]
+handle = "alice"
+fpr = "SHA256:Hk3abc"
+keys_url = "https://github.com/alice.keys"
 `
 	path := filepath.Join(t.TempDir(), "netherchat.toml")
 	if err := os.WriteFile(path, []byte(toml), 0o644); err != nil {
@@ -74,26 +71,13 @@ ttl = "24h"
 	if !c.Room("nonexistent").InviteOnly == false {
 		// zero value: open room
 	}
-}
 
-func TestExecAllowed(t *testing.T) {
-	c := Default()
-	c.Exec.Enabled = true
-	c.Exec.Allow = []string{"uptime"}
-	c.Rooms = map[string]RoomConfig{"ops": {ExecEnabled: true}}
-
-	if !c.ExecAllowed("ops", "uptime") {
-		t.Error("uptime should be allowed in ops")
+	// [[trust]] parses (client-side only; the relay ignores it).
+	if len(c.Trust) != 1 {
+		t.Fatalf("trust entries = %d, want 1", len(c.Trust))
 	}
-	if c.ExecAllowed("ops", "rm -rf /") {
-		t.Error("non-allowlisted command must be rejected")
-	}
-	if c.ExecAllowed("general", "uptime") {
-		t.Error("exec must be rejected in a room without exec_enabled")
-	}
-
-	c.Exec.Enabled = false
-	if c.ExecAllowed("ops", "uptime") {
-		t.Error("exec must be rejected when globally disabled")
+	if c.Trust[0].Handle != "alice" || c.Trust[0].Fpr != "SHA256:Hk3abc" ||
+		c.Trust[0].KeysURL != "https://github.com/alice.keys" {
+		t.Errorf("trust entry = %+v", c.Trust[0])
 	}
 }

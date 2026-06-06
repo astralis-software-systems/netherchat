@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"path/filepath"
 	"testing"
 )
@@ -33,9 +34,6 @@ func TestIdentitySaveLoadRoundTrip(t *testing.T) {
 		t.Fatal("expected created=false on second call")
 	}
 
-	if !bytes.Equal(id.SignPriv, loaded.SignPriv) {
-		t.Error("sign private key changed across save/load")
-	}
 	if !bytes.Equal(id.SignPub, loaded.SignPub) {
 		t.Error("sign public key changed across save/load")
 	}
@@ -47,6 +45,16 @@ func TestIdentitySaveLoadRoundTrip(t *testing.T) {
 	}
 	if id.Fingerprint() != loaded.Fingerprint() {
 		t.Error("fingerprint not stable across save/load")
+	}
+
+	// The reloaded identity must still be able to sign verifiably (the private
+	// signing key survived the round-trip).
+	sig, err := loaded.Sign([]byte("round-trip"))
+	if err != nil {
+		t.Fatalf("Sign after reload: %v", err)
+	}
+	if !ed25519.Verify(loaded.SignPub, []byte("round-trip"), sig) {
+		t.Error("signature from reloaded identity does not verify")
 	}
 }
 

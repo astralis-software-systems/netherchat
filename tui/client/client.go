@@ -11,9 +11,13 @@ package client
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,8 +57,15 @@ type Client struct {
 	mu      sync.Mutex
 	selfID  string
 	members map[string]memberInfo
-	rk      *crypto.RoomKey    // current room key; nil until established
-	pending []protocol.Message // messages received before the key arrived
+	rk      *crypto.RoomKey // current room key; nil until established
+	pending []pendingFrame  // E2E frames received before the key arrived
+}
+
+// pendingFrame is an encrypted frame (message or exec request/result) buffered
+// until the room key is established, then replayed.
+type pendingFrame struct {
+	op protocol.Op
+	m  protocol.Message
 }
 
 // DefaultIdentityPath returns the per-user identity file location. Exposed here
@@ -62,11 +73,13 @@ type Client struct {
 // it without touching crypto types.
 func DefaultIdentityPath() (string, error) { return crypto.DefaultIdentityPath() }
 
-// New creates a client, loading (or creating) the local identity at
-// identityPath. This is the constructor the cmd layer uses, since it never
-// exposes a crypto type across the internal boundary.
+// New creates a client, resolving the operator's identity via the BYO-key
+// cascade (crypto.ResolveIdentity): an explicit identityPath, else ssh-agent,
+// else ~/.ssh/id_ed25519(_sk), else the generated key. This is the constructor
+// the cmd layer uses, since it never exposes a crypto type across the internal
+// boundary.
 func New(serverURL, room, name, identityPath string) (*Client, error) {
-	id, _, err := crypto.LoadOrCreateIdentity(identityPath)
+	id, err := crypto.ResolveIdentity(identityPath)
 	if err != nil {
 		return nil, fmt.Errorf("load identity: %w", err)
 	}
@@ -124,6 +137,17 @@ func (c *Client) Connect(dialCtx context.Context) error {
 // Send encrypts text under the current room key, transmits it, and emits a local
 // echo. It errors if the room key is not yet established.
 func (c *Client) Send(text string) error {
+	if err := c.sealAndSend(protocol.OpMessage, []byte(text)); err != nil {
+		return err
+	}
+	c.emit(EvMessage{FromID: c.SelfID(), FromName: c.name, Text: text, Self: true, At: time.Now()})
+	return nil
+}
+
+// sealAndSend encrypts plaintext under the current room key, signs it, and sends
+// it as the given opcode (a Message envelope). Used for chat messages and for the
+// E2E-encrypted edge-exec request/result frames.
+func (c *Client) sealAndSend(op protocol.Op, plaintext []byte) error {
 	c.mu.Lock()
 	rk := c.rk
 	selfID := c.selfID
@@ -131,19 +155,11 @@ func (c *Client) Send(text string) error {
 	if rk == nil {
 		return errors.New("room key not established yet")
 	}
-
-	nonce, ct, sig, err := c.id.SealMessage(*rk, selfID, []byte(text))
+	nonce, ct, sig, err := c.id.SealMessage(*rk, selfID, plaintext)
 	if err != nil {
 		return err
 	}
-	c.enqueue(protocol.OpMessage, protocol.Message{
-		FromID:     selfID,
-		Epoch:      rk.Epoch,
-		Nonce:      nonce,
-		Ciphertext: ct,
-		Signature:  sig,
-	})
-	c.emit(EvMessage{FromID: selfID, FromName: c.name, Text: text, Self: true, At: time.Now()})
+	c.enqueue(op, protocol.Message{FromID: selfID, Epoch: rk.Epoch, Nonce: nonce, Ciphertext: ct, Signature: sig})
 	return nil
 }
 
@@ -177,9 +193,36 @@ func (c *Client) BreakGlass(invitees []string, ttlSeconds int) {
 	c.enqueue(protocol.OpBreakGlass, protocol.BreakGlass{Invitees: invitees, TTLSeconds: ttlSeconds})
 }
 
-// Exec asks the server to run an allow-listed command in this room.
-func (c *Client) Exec(command string) {
-	c.enqueue(protocol.OpExecRequest, protocol.ExecRequest{Command: command})
+// RequestExec sends an end-to-end-encrypted, signed exec request naming a runbook
+// action for an agent to run, and emits a local echo. It returns the request id
+// (to correlate the result), or an error if the room key is not yet established.
+// The relay only ever sees ciphertext; it does not run anything.
+func (c *Client) RequestExec(cmd string) (string, error) {
+	id := newRequestID()
+	body, _ := json.Marshal(protocol.ExecRequestBody{ID: id, Cmd: cmd})
+	if err := c.sealAndSend(protocol.OpExecRequest, body); err != nil {
+		return "", err
+	}
+	c.emit(EvExecRequest{
+		ID: id, Cmd: cmd, FromID: c.SelfID(), FromName: c.name,
+		FromFingerprint: c.Fingerprint(), Self: true, At: time.Now(),
+	})
+	return id, nil
+}
+
+// PostExecResult sends an end-to-end-encrypted, signed exec result. Used by
+// `netherchat agent` after it runs (or denies) a command on its own host.
+func (c *Client) PostExecResult(id, cmd string, allowed bool, exitCode int, output string) error {
+	b, _ := json.Marshal(protocol.ExecResultBody{
+		ID: id, Cmd: cmd, Allowed: allowed, ExitCode: exitCode, Output: output,
+	})
+	return c.sealAndSend(protocol.OpExecResult, b)
+}
+
+func newRequestID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 // ratchetForward advances the room key by one epoch and zeroes the old one.
@@ -211,8 +254,27 @@ func (c *Client) SelfID() string {
 	return c.selfID
 }
 
-// Fingerprint returns this client's identity fingerprint.
+// Fingerprint returns this client's identity fingerprint (ssh-keygen format).
 func (c *Client) Fingerprint() string { return c.id.Fingerprint() }
+
+// Source returns where this client's identity came from (e.g. "ssh-agent",
+// "~/.ssh/id_ed25519", "generated").
+func (c *Client) Source() string { return c.id.Source }
+
+// LookupMember returns the SSH fingerprint of the first connected member whose
+// display name matches name (case-insensitive). Display names are cosmetic and
+// not unique; /whois reports the fingerprint so identity is judged by key, not
+// name.
+func (c *Client) LookupMember(name string) (id, fingerprint string, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for mid, m := range c.members {
+		if strings.EqualFold(m.name, name) {
+			return mid, crypto.Fingerprint(m.signPub), true
+		}
+	}
+	return "", "", false
+}
 
 // Close ends the session and closes the connection.
 func (c *Client) Close() error {
@@ -268,17 +330,15 @@ func (c *Client) handle(env protocol.Envelope) {
 		c.onKeyRequest(env)
 	case protocol.OpKeyDeliver:
 		c.onKeyDeliver(env)
-	case protocol.OpMessage:
+	case protocol.OpMessage, protocol.OpExecRequest, protocol.OpExecResult:
 		var m protocol.Message
 		if err := env.Decode(&m); err == nil {
-			c.processMessage(m)
+			c.handleEncrypted(env.Type, m)
 		}
 	case protocol.OpServerMessage:
 		c.onServerMessage(env)
 	case protocol.OpControl:
 		c.onControl(env)
-	case protocol.OpExecResult:
-		c.onExecResult(env)
 	case protocol.OpInviteResult:
 		c.onInviteResult(env)
 	case protocol.OpBreakGlassResult:
@@ -319,12 +379,12 @@ func (c *Client) onWelcome(env protocol.Envelope) {
 		YouAreFirst: w.YouAreFirst,
 		Members:     members,
 		InviteOnly:  w.Policy.InviteOnly,
-		ExecEnabled: w.Policy.ExecEnabled,
 		Webhook:     w.Policy.Webhook,
 		TTLSeconds:  w.Policy.TTLSeconds,
 	})
 	if minted != nil {
 		c.emit(EvKeyReady{Epoch: minted.Epoch})
+		c.replayPending()
 	}
 }
 
@@ -403,30 +463,28 @@ func (c *Client) onKeyDeliver(env protocol.Envelope) {
 	}
 	c.mu.Lock()
 	c.rk = &rk
-	pending := c.pending
-	c.pending = nil
 	c.mu.Unlock()
 
 	c.emit(EvKeyReady{Epoch: rk.Epoch})
-	for _, m := range pending {
-		c.processMessage(m)
-	}
+	c.replayPending()
 }
 
-func (c *Client) processMessage(m protocol.Message) {
+// handleEncrypted decrypts and verifies an E2E frame (chat message or exec
+// request/result) and emits the corresponding event. Frames that arrive before
+// the room key is established are buffered and replayed by replayPending.
+func (c *Client) handleEncrypted(op protocol.Op, m protocol.Message) {
 	c.mu.Lock()
 	rk := c.rk
-	sender, known := c.members[m.FromID]
 	if rk == nil {
-		// Key not established yet — buffer and replay once it arrives.
-		c.pending = append(c.pending, m)
+		c.pending = append(c.pending, pendingFrame{op: op, m: m})
 		c.mu.Unlock()
 		return
 	}
+	sender, known := c.members[m.FromID]
 	c.mu.Unlock()
 
 	if !known {
-		c.emit(EvError{Err: fmt.Errorf("message from unknown member %s", m.FromID)})
+		c.emit(EvError{Err: fmt.Errorf("%s from unknown member %s", op, m.FromID)})
 		return
 	}
 	pt, err := crypto.OpenMessage(*rk, sender.signPub, m.FromID, m.Epoch, m.Nonce, m.Ciphertext, m.Signature)
@@ -434,7 +492,40 @@ func (c *Client) processMessage(m protocol.Message) {
 		c.emit(EvError{Err: fmt.Errorf("decrypt from %s: %w", sender.name, err)})
 		return
 	}
-	c.emit(EvMessage{FromID: m.FromID, FromName: sender.name, Text: string(pt), At: time.Now()})
+	now := time.Now()
+	fpr := crypto.Fingerprint(sender.signPub)
+	switch op {
+	case protocol.OpMessage:
+		c.emit(EvMessage{FromID: m.FromID, FromName: sender.name, Text: string(pt), At: now})
+	case protocol.OpExecRequest:
+		var body protocol.ExecRequestBody
+		if json.Unmarshal(pt, &body) == nil {
+			c.emit(EvExecRequest{
+				ID: body.ID, Cmd: body.Cmd, FromID: m.FromID, FromName: sender.name,
+				FromFingerprint: fpr, At: now,
+			})
+		}
+	case protocol.OpExecResult:
+		var body protocol.ExecResultBody
+		if json.Unmarshal(pt, &body) == nil {
+			c.emit(EvExecResult{
+				ID: body.ID, Cmd: body.Cmd, Allowed: body.Allowed, ExitCode: body.ExitCode,
+				Output: body.Output, FromName: sender.name, FromFingerprint: fpr, At: now,
+			})
+		}
+	}
+}
+
+// replayPending decrypts and emits any frames buffered before the room key
+// arrived. Called once the key is established.
+func (c *Client) replayPending() {
+	c.mu.Lock()
+	pending := c.pending
+	c.pending = nil
+	c.mu.Unlock()
+	for _, f := range pending {
+		c.handleEncrypted(f.op, f.m)
+	}
 }
 
 func (c *Client) onServerMessage(env protocol.Envelope) {
@@ -459,14 +550,6 @@ func (c *Client) onControl(env protocol.Envelope) {
 		c.ratchetForward()
 	}
 	c.emit(EvControl{Action: ctrl.Action, ByName: ctrl.ByName, TTLSeconds: ctrl.TTLSeconds})
-}
-
-func (c *Client) onExecResult(env protocol.Envelope) {
-	var r protocol.ExecResult
-	if err := env.Decode(&r); err != nil {
-		return
-	}
-	c.emit(EvExecResult{Command: r.Command, Allowed: r.Allowed, Output: r.Output, Err: r.Err})
 }
 
 func (c *Client) onInviteResult(env protocol.Envelope) {

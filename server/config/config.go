@@ -12,13 +12,26 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// Config is the full server configuration.
+// Config is the full server configuration. The [[trust]] table is the one
+// exception to "server config": it is read only by CLIENTS for identity pinning
+// (/whois). The relay never reads, forwards, or participates in trust decisions —
+// trust is evaluated entirely client-side (FEATURE_ROADMAP_FREE.md §1.1).
 type Config struct {
 	Server      ServerConfig          `toml:"server"`
 	Limits      LimitsConfig          `toml:"limits"`
 	Persistence PersistenceConfig     `toml:"persistence"`
-	Exec        ExecConfig            `toml:"exec"`
 	Rooms       map[string]RoomConfig `toml:"rooms"`
+	Trust       []TrustEntry          `toml:"trust"`
+}
+
+// TrustEntry pins a handle to a fingerprint and/or a published key source. Both
+// fields are independently optional: fpr-only warns on mismatch and never
+// fetches; keys_url-only fetches on /whois and never auto-pins; both does both;
+// neither is just a display-name alias. Evaluated client-side only.
+type TrustEntry struct {
+	Handle  string `toml:"handle"`
+	Fpr     string `toml:"fpr"`      // optional: a pinned "SHA256:…" fingerprint
+	KeysURL string `toml:"keys_url"` // optional: e.g. https://github.com/<handle>.keys
 }
 
 type ServerConfig struct {
@@ -42,19 +55,14 @@ type PersistenceConfig struct {
 	History int    `toml:"history"` // messages to replay to a client on join
 }
 
-// ExecConfig gates the remote /exec feature. Disabled by default; even when
-// enabled, only the exact commands in Allow may run (never arbitrary shell),
-// and only in rooms whose RoomConfig.ExecEnabled is true.
-type ExecConfig struct {
-	Enabled bool     `toml:"enabled"`
-	Allow   []string `toml:"allow"`
-}
-
 // RoomConfig is per-room policy. Rooms absent from the config are created on
 // demand with the zero value (open, no webhook, no TTL).
+//
+// Note: there is deliberately NO server-side exec policy. Command execution is an
+// edge concern handled by `netherchat agent` against its own local allowlist; a
+// blind relay must never run commands (FEATURE_ROADMAP_FREE.md §0.1).
 type RoomConfig struct {
 	InviteOnly   bool     `toml:"invite_only"`
-	ExecEnabled  bool     `toml:"exec_enabled"`
 	Webhook      bool     `toml:"webhook"`
 	WebhookToken string   `toml:"webhook_token"`
 	TTL          Duration `toml:"ttl"`
@@ -81,7 +89,6 @@ func Default() Config {
 		Server:      ServerConfig{Addr: ":3000"},
 		Limits:      LimitsConfig{MessagesPerSecond: 20, Burst: 40},
 		Persistence: PersistenceConfig{Enabled: false, History: 100},
-		Exec:        ExecConfig{Enabled: false},
 		Rooms:       map[string]RoomConfig{},
 	}
 }
@@ -122,16 +129,3 @@ func (c *Config) normalize() {
 // Room returns the policy for a room (the zero value — fully open — if the room
 // is not configured).
 func (c Config) Room(name string) RoomConfig { return c.Rooms[name] }
-
-// ExecAllowed reports whether the given command may run in the given room.
-func (c Config) ExecAllowed(room, command string) bool {
-	if !c.Exec.Enabled || !c.Room(room).ExecEnabled {
-		return false
-	}
-	for _, allowed := range c.Exec.Allow {
-		if allowed == command {
-			return true
-		}
-	}
-	return false
-}

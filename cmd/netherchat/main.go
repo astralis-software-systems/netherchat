@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/salehkreiner/netherchat/buildinfo"
+	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/ui/app"
 )
@@ -32,6 +33,8 @@ func main() {
 		sendCmd(os.Args[2:])
 	case "tail":
 		tailCmd(os.Args[2:])
+	case "agent":
+		agentCmd(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("netherchat " + buildinfo.Version)
 	case "-h", "--help", "help":
@@ -47,12 +50,13 @@ func connectCmd(args []string) {
 	fs := flag.NewFlagSet("connect", flag.ExitOnError)
 	room := fs.String("room", "general", "room to join")
 	name := fs.String("name", defaultName(), "display name")
-	identity := fs.String("identity", "", "identity file path (default: per-user config dir)")
+	identity := fs.String("identity", "", "identity key: an OpenSSH/age key file (default: ssh-agent → ~/.ssh/id_ed25519 → generated)")
 	notify := fs.String("notify", "", "shell command to run on each new message (env: NETHERCHAT_ROOM/FROM/TEXT)")
 	invite := fs.String("invite", "", "one-time invite token for an invite-only room")
 	webURL := fs.String("web-url", "", "base URL of the browser join client for /break-glass links (default: derived from the server URL)")
+	configPath := fs.String("config", "", "netherchat.toml for trust pinning (default: ./netherchat.toml if present)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: netherchat connect [ws://host:port] [--room <name>] [--name <you>] [--identity <path>] [--invite <token>] [--web-url <url>] [--notify <cmd>]")
+		fmt.Fprintln(os.Stderr, "usage: netherchat connect [ws://host:port] [--room <name>] [--name <you>] [--identity <path>] [--invite <token>] [--web-url <url>] [--config <toml>] [--notify <cmd>]")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
@@ -61,9 +65,32 @@ func connectCmd(args []string) {
 	if url == "" {
 		url = "ws://localhost:3000"
 	}
-	if err := app.Run(url, *name, resolveIdentity(*identity), *room, *notify, *invite, *webURL); err != nil {
+	if err := app.Run(url, *name, *identity, *room, *notify, *invite, *webURL, loadTrust(*configPath)); err != nil {
 		fatal(err)
 	}
+}
+
+// loadTrust reads the client-side [[trust]] pins from netherchat.toml. Trust is a
+// purely client-side concern; a missing or unreadable file just means no pins.
+func loadTrust(path string) []app.TrustEntry {
+	if path == "" {
+		if _, err := os.Stat("netherchat.toml"); err == nil {
+			path = "netherchat.toml"
+		}
+	}
+	if path == "" {
+		return nil
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "netherchat: warning: could not read %s for trust pinning: %v\n", path, err)
+		return nil
+	}
+	out := make([]app.TrustEntry, 0, len(cfg.Trust))
+	for _, t := range cfg.Trust {
+		out = append(out, app.TrustEntry{Handle: t.Handle, Fpr: t.Fpr, KeysURL: t.KeysURL})
+	}
+	return out
 }
 
 func defaultName() string {
@@ -75,20 +102,10 @@ func defaultName() string {
 	return "anon"
 }
 
-func resolveIdentity(p string) string {
-	if p != "" {
-		return p
-	}
-	d, err := client.DefaultIdentityPath()
-	if err != nil {
-		fatal(fmt.Errorf("resolve identity path: %w", err))
-	}
-	return d
-}
-
-// dial connects a client core for the non-interactive modes.
+// dial connects a client core for the non-interactive modes. An empty identity
+// path means "use the BYO-key cascade" (ssh-agent → key file → generated).
 func dial(url, room, name, identity, invite string, timeout time.Duration) *client.Client {
-	c, err := client.New(url, room, name, resolveIdentity(identity))
+	c, err := client.New(url, room, name, identity)
 	if err != nil {
 		fatal(err)
 	}
@@ -110,12 +127,13 @@ usage:
   netherchat connect [ws://host:port] [flags]   open the terminal UI
   netherchat send    <room> "message"           send one message (or pipe stdin)
   netherchat tail    <room>                      stream decrypted messages to stdout
+  netherchat agent   --room <room> --allow runbook.toml   run an edge-exec agent
 
 common flags:
   --server <url>      server URL (send/tail; default ws://localhost:3000)
   --room <name>       room to join (connect)
   --name <you>        display name (default: $USER)
-  --identity <path>   identity key file (default: per-user config dir)
+  --identity <path>   OpenSSH/age key file (default: ssh-agent → ~/.ssh/id_ed25519 → generated)
   --invite <token>    one-time invite token for an invite-only room
 
 examples:

@@ -45,10 +45,10 @@ encoding of `[]byte`).
 | `key_deliver`   | client → server → one client   | a wrapped room key, routed to its target |
 | `msg`           | client → server → room         | an end-to-end-encrypted message |
 | `error`         | server → client                | error notification |
-| `server_msg`    | server → clients               | **plaintext** server-origin message (webhook/system/exec) — NOT E2E |
+| `server_msg`    | server → clients               | **plaintext** server-origin message (webhook/system) — NOT E2E |
 | `control`       | client → server → room         | room control action: `vanish`, `ttl` |
-| `exec_request`  | client → server                | run an allow-listed command |
-| `exec_result`   | server → client                | command output |
+| `exec_request`  | member → server → room         | E2E-signed edge-exec request (carries a `msg` envelope) |
+| `exec_result`   | agent → server → room          | E2E-signed edge-exec result (carries a `msg` envelope) |
 | `invite_request`| client → server                | mint a one-time invite token for the room |
 | `invite_result` | server → client                | the minted token |
 | `break_glass`        | client → server           | create an ephemeral war room + mint one-time join links |
@@ -56,16 +56,31 @@ encoding of `[]byte`).
 
 `hello` additionally carries an optional `invite_token` (required to join an
 invite-only room), and `welcome` carries a `policy` describing the room
-(`invite_only`, `exec_enabled`, `webhook`, `ttl_seconds`).
+(`invite_only`, `webhook`, `ttl_seconds`). There is no exec capability in the
+policy: command execution is an edge concern, never a server policy (§9).
 
-## 3. Identity
+## 3. Identity (bring your own key)
 
-Each client has a long-term identity, generated once and stored locally:
+Each client's identity is an **Ed25519** key it already has — an OpenSSH key file,
+ssh-agent, an age seed, or (last resort) a generated key. Load precedence:
+`--identity` → `SSH_AUTH_SOCK` → `~/.ssh/id_ed25519` → `~/.ssh/id_ed25519_sk` →
+`~/.config/netherchat/identity.json` → generate.
 
-- **Ed25519** keypair — signs messages; its SHA-256 is the displayed *fingerprint*.
-- **X25519** keypair — receives wrapped room keys.
+- **Ed25519** key — signs messages; the *fingerprint* is `ssh.FingerprintSHA256`
+  over the SSH wire encoding, i.e. **byte-identical to `ssh-keygen -lf`**
+  (`SHA256:<base64>`), so it can be compared against a published key.
+- **X25519** key — receives wrapped room keys. It is **derived from the Ed25519
+  key** (RFC 8032 → RFC 7748 conversion) for file/generated keys; for ssh-agent
+  keys (which cannot perform X25519) it is derived from a deterministic agent
+  signature over a fixed domain string, so the SSH private key never leaves the
+  agent.
 
-Only public keys ever leave the client. There is no escrow and no recovery.
+Only public keys ever leave the client. The relay never holds a private key and
+cannot impersonate anyone. There is no escrow and no recovery.
+
+Trust is pinned **client-side** in `netherchat.toml` (`[[trust]]` with `handle`,
+optional `fpr`, optional `keys_url`) and resolved by `/whois` — the relay never
+participates in any trust decision.
 
 ## 4. Handshake
 
@@ -177,18 +192,23 @@ under a different identity or epoch.
 These are additive; the connection==room model is unchanged.
 
 - **`server_msg`** `{kind, from, text, at}` — a plaintext message that originates
-  at the server (`kind` is `webhook`, `system`, or `exec`). It is **not E2E** —
-  the server composes it, so the server can read it. Clients render it with a
-  clear "plaintext" marker. Inbound webhooks (`POST /webhook/<room>` with the
-  room's configured token) and `/exec` output arrive this way.
+  at the server (`kind` is `webhook` or `system`). It is **not E2E** — the server
+  composes it, so the server can read it. Clients render it with a clear
+  "plaintext" marker. Inbound webhooks (`POST /webhook/<room>` with the room's
+  configured token) arrive this way.
 - **`control`** `{action, by, by_name, ttl_seconds}` — relayed to the room.
   `action: "vanish"` tells members to clear history and ratchet the room key
   forward (deterministic HKDF — no key exchange). `action: "ttl"` sets a
   client-side message display TTL.
-- **`exec_request`** `{command}` / **`exec_result`** `{command, allowed, output,
-  error}` — run an allow-listed command. The server runs it only if the exact
-  command string is in `[exec].allow` and the room has `exec_enabled`; there is no
-  shell and arguments are not interpreted. Every attempt is audit-logged.
+- **`exec_request`** / **`exec_result`** — **edge execution** (the relay never
+  runs anything). Both carry a `msg` envelope: the plaintext sealed under the room
+  key is `{id, cmd}` for a request and `{id, cmd, allowed, exit_code, output}` for
+  a result. A member's `/exec <cmd>` seals and signs a request; a `netherchat
+  agent` on the operator's own host decrypts it, matches `cmd` against its local
+  runbook allowlist (mapping it to a fixed command line — no shell, no
+  caller-supplied args), runs it with a timeout, and seals + signs a result back.
+  Every attempt is logged locally on the agent host. The relay sees only
+  ciphertext and fans these out exactly like `msg`.
 - **`invite_request`** / **`invite_result`** `{room, token, expires}` — a current
   member mints a one-time token. Joining an `invite_only` room requires a valid
   token in `hello.invite_token`; the first member into an empty invite-only room

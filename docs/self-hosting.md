@@ -43,11 +43,15 @@ edit, and run `netherchat-server --config netherchat.toml`. It covers:
   **Caveat:** the server stores only ciphertext and never holds a key, so history
   is replayable to someone joining an *active* room but is unrecoverable after the
   room empties, a `/vanish`, or a restart. See [`encryption.md`](encryption.md).
-- **`[exec]`** — `/exec` is **off by default**. When `enabled`, only the exact
-  commands in `allow` may run (no shell), and only in rooms with `exec_enabled`.
-  Every attempt is audit-logged.
 - **`[rooms.NAME]`** — per-room policy: `invite_only`, `webhook` + `webhook_token`,
-  `exec_enabled`, `ttl` (ephemeral rooms expire after inactivity).
+  `ttl` (ephemeral rooms expire after inactivity).
+- **`[[trust]]`** — client-side identity pins (`handle`, `fpr`, `keys_url`) read by
+  clients for `/whois`. The relay never reads them. See [`commands.md`](commands.md).
+
+There is no server-side `/exec`: command execution moved to the **edge**. A blind
+relay must never run commands, so `/exec` sends a signed, end-to-end-encrypted
+request that a `netherchat agent` on your own host runs against its own runbook
+allowlist (see [`commands.md`](commands.md)). The relay only ever routes ciphertext.
 
 ## Inbound webhooks
 

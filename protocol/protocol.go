@@ -37,8 +37,8 @@ const (
 	// v2 additions:
 	OpServerMessage Op = "server_msg"     // server -> clients: plaintext (webhook/system), NOT E2E
 	OpControl       Op = "control"        // bidirectional: room control actions (vanish, ttl)
-	OpExecRequest   Op = "exec_request"   // client -> server: run an allow-listed command
-	OpExecResult    Op = "exec_result"    // server -> client: command output
+	OpExecRequest   Op = "exec_request"   // member -> room: E2E-signed edge-exec request (carries a Message)
+	OpExecResult    Op = "exec_result"    // agent -> room: E2E-signed edge-exec result (carries a Message)
 	OpInviteRequest Op = "invite_request" // client -> server: mint an invite token for the room
 	OpInviteResult  Op = "invite_result"  // server -> client: the minted token
 
@@ -91,12 +91,12 @@ type Hello struct {
 }
 
 // RoomPolicy is the server-advertised capability set for a room, sent in Welcome
-// so the client can tailor its UI (e.g. show whether /exec is permitted).
+// so the client can tailor its UI. There is deliberately no exec capability here:
+// command execution is an edge concern, never a server policy (§0.1).
 type RoomPolicy struct {
-	InviteOnly  bool `json:"invite_only"`
-	ExecEnabled bool `json:"exec_enabled"`
-	Webhook     bool `json:"webhook"`
-	TTLSeconds  int  `json:"ttl_seconds,omitempty"`
+	InviteOnly bool `json:"invite_only"`
+	Webhook    bool `json:"webhook"`
+	TTLSeconds int  `json:"ttl_seconds,omitempty"`
 }
 
 // Welcome is the server's reply to Hello. Members lists everyone already in the

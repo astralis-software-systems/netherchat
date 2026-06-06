@@ -29,7 +29,8 @@ func buildCommands() *command.Set {
 		command.Command{Name: "vanish", Help: "rotate the room key and clear history"},
 		command.Command{Name: "ttl", Args: "<dur|off>", Help: "set a message display TTL",
 			Complete: func(p string) []string { return command.FilterPrefix([]string{"off", "10m", "1h", "24h"}, p) }},
-		command.Command{Name: "exec", Args: "<command>", Help: "run an allow-listed command on the server"},
+		command.Command{Name: "exec", Args: "<action>", Help: "request an edge agent run a runbook action (signed, E2E)"},
+		command.Command{Name: "whois", Args: "[@handle]", Help: "show an identity's fingerprint, pin status, and published-key match"},
 		command.Command{Name: "join", Args: "<room>", Help: "join another room"},
 		command.Command{Name: "leave", Help: "leave the current room"},
 		command.Command{Name: "clear", Help: "clear the current room view"},
@@ -84,10 +85,14 @@ func (m *Model) runCommand(input string) tea.Cmd {
 			break
 		}
 		if arg == "" {
-			m.addError("usage: /exec <command>")
+			m.addError("usage: /exec <action>   (a runbook action a netherchat agent allows)")
 			break
 		}
-		r.client.Exec(arg)
+		if _, err := r.client.RequestExec(arg); err != nil {
+			m.addError(err.Error())
+		}
+	case "whois":
+		return m.runWhois(arg)
 	case "join":
 		if arg == "" {
 			m.addError("usage: /join <room>")
@@ -159,6 +164,14 @@ func (m *Model) runTTL(r *room, arg string) {
 	}
 }
 
+// sourceLabel describes where the identity key came from, for /whoami and /whois.
+func (m *Model) sourceLabel() string {
+	if m.source == "" {
+		return "(connecting…)"
+	}
+	return m.source
+}
+
 func (m *Model) helpText() string {
 	var b strings.Builder
 	b.WriteString("commands:\n")
@@ -176,6 +189,7 @@ func (m *Model) helpText() string {
 func (m *Model) whoamiText(r *room) string {
 	var b strings.Builder
 	b.WriteString("fingerprint: " + m.fingerprint + "\n")
+	b.WriteString("identity:    " + m.sourceLabel() + "\n")
 	b.WriteString("name:        " + m.name + "\n")
 	b.WriteString("server:      " + m.url + "\n")
 	if r != nil {
@@ -191,9 +205,6 @@ func (m *Model) whoamiText(r *room) string {
 		}
 		if r.webhook {
 			caps = append(caps, "webhook")
-		}
-		if r.execEnabled {
-			caps = append(caps, "exec")
 		}
 		if len(caps) > 0 {
 			b.WriteString("policy:      " + strings.Join(caps, ", "))

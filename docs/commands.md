@@ -9,12 +9,13 @@ Type these in the message box. Tab completes command names and arguments.
 | `/help` | List all commands. |
 | `/theme <name>` | Switch theme instantly. Names: `nether`, `abyss`, `ember`, `ghost`, `sprinkles`, `dracula`, `gruvbox`, `solarized`. |
 | `/font` | Show the recommended terminal font for the current theme (advisory — a TUI cannot change the terminal font; the web client honors fonts directly). |
-| `/whoami` | Show your identity fingerprint, the room, encryption status, and room policy. |
+| `/whoami` | Show your identity: ssh-keygen-format fingerprint, where the key came from (ssh-agent / key file / generated), room, and encryption status. |
+| `/whois [@handle]` | Show an identity's fingerprint, pin status (`pinned ✓` / `unpinned ✗`), and — if a `keys_url` is configured — whether it matches a published key. No argument shows your own identity. See below. |
 | `/invite` | Mint a one-time invite token for the current room and display it as a QR code. |
 | `/break-glass --invite a,b --ttl 4h` | Stand up an ephemeral, invite-only **war room** with a hard TTL and a one-time browser join link for each named person. See below. |
 | `/vanish` | Rotate the room key forward (HKDF ratchet) and clear history for everyone — messages from before are no longer decryptable. |
 | `/ttl <dur\|off>` | Set a client-side message display TTL (e.g. `/ttl 1h`, `/ttl off`). |
-| `/exec <command>` | Run an allow-listed command on the server (must be enabled in `netherchat.toml`). |
+| `/exec <action>` | Send a signed, E2E-encrypted request for a `netherchat agent` to run a runbook action on its own host. The relay never runs anything. See below. |
 | `/join <room>` | Join another room (opens a new tab in the sidebar). |
 | `/leave` | Leave the current room. |
 | `/clear` | Clear the current room view locally. |
@@ -61,6 +62,81 @@ browser guest and terminal users share the same room transparently.
 To serve it on the same origin as the relay, build `web/` (`npm run build`) and
 have your reverse proxy serve the static `dist/` and map the clean path
 `/join → /join.html` (one rewrite rule), while proxying `/ws` to the relay.
+
+## Identity — bring your own key
+
+Your identity is an Ed25519 key you already have. On connect, Netherchat resolves
+one in this order:
+
+1. `--identity <path>` — an OpenSSH private key file *or* an age identity file.
+2. `SSH_AUTH_SOCK` — your **ssh-agent**'s first Ed25519 key (signing is delegated
+   to the agent; the private key never enters the Netherchat process).
+3. `~/.ssh/id_ed25519`
+4. `~/.ssh/id_ed25519_sk` (hardware-backed)
+5. `~/.config/netherchat/identity.json` (a previously generated key)
+6. otherwise, generate a fresh ephemeral key (last resort).
+
+`/whoami` prints the fingerprint in the **exact `ssh-keygen -lf` format**, so you
+can compare it directly:
+
+```
+$ ssh-keygen -lf ~/.ssh/id_ed25519
+256 SHA256:Hk3xyzABCDEF... you@host (ED25519)
+$ netherchat connect …   # then type /whoami → fingerprint: SHA256:Hk3xyzABCDEF...
+```
+
+The X25519 key that wraps room keys is **derived from the same Ed25519 key**
+(RFC 8032 → RFC 7748), so one key is your whole identity. The relay never holds a
+private key and cannot impersonate anyone.
+
+## `/whois` — verify a peer against their published keys
+
+`/whois @alice` looks up the connected member named `alice`, prints their
+fingerprint and pin status, and (if configured) fetches their published keys
+**client-side** — Astralis runs nothing. Pin in `netherchat.toml` (read only by
+clients; the relay never sees it):
+
+```toml
+[[trust]]
+handle   = "alice"
+fpr      = "SHA256:Hk3..."                  # optional: pin a fingerprint
+keys_url = "https://github.com/alice.keys"  # optional: a published-key source
+```
+
+- `fpr` only → warn if a key doesn't match; never fetch.
+- `keys_url` only → fetch on `/whois`; never auto-pin.
+- both → fetch *and* verify against the pin.
+- neither → just a display-name alias.
+
+The 3 a.m. move: someone joins as `oncall-2`, you `/whois @oncall-2`, and confirm
+their fingerprint against `github.com/oncall-2.keys` they published months ago —
+trusting a key, not the server, the network, or an account directory.
+
+Point at a specific config with `--config <toml>` (default: `./netherchat.toml`).
+
+## `/exec` and `netherchat agent` — edge execution
+
+The relay **never** runs commands (a blind relay that can `exec` is a
+contradiction). Instead, `/exec drain` produces a signed, end-to-end-encrypted
+`EXEC_REQUEST` in the room. A `netherchat agent` running on **your own** host
+matches it against **its own** local allowlist, runs it, and posts a signed result
+back. The relay only ever routes ciphertext.
+
+```bash
+netherchat agent --room ops --allow runbook.toml --server ws://chat.example.com
+```
+
+```toml
+# runbook.toml — the allowlist lives on the agent host, never on the relay.
+[[allow]]
+cmd     = "drain"
+command = "/usr/local/bin/drain.sh"   # fixed command line; no shell, no caller args
+timeout = "60s"
+```
+
+Then from the TUI: `/exec drain`. Every attempt (allowed or denied) is logged
+locally on the agent host, attributed to the requester's key fingerprint, and the
+result is a signed E2E message everyone in the room can verify.
 
 ## Keys
 

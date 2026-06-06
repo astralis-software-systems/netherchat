@@ -28,19 +28,28 @@ type ServerMessage struct {
 	At   int64  `json:"at"` // unix seconds
 }
 
-// ExecRequest asks the server to run an allow-listed command. The command must
-// exactly match an entry in the server's [exec].allow list, and the room must
-// have exec_enabled. There is no shell; arguments are not interpreted.
-type ExecRequest struct {
-	Command string `json:"command"`
+// ExecRequestBody and ExecResultBody are the END-TO-END-ENCRYPTED plaintexts of
+// OpExecRequest / OpExecResult. Both opcodes carry a Message on the wire (sealed
+// under the room key, Ed25519-signed); the relay only ever sees ciphertext and
+// never runs anything. Execution happens at the edge: a `netherchat agent` on the
+// operator's own host matches the request against its own allowlist, runs it, and
+// posts a signed result back (FEATURE_ROADMAP_FREE.md §0.1 / §2.1).
+
+// ExecRequestBody names an action a room member is asking an agent to run. The
+// agent maps Cmd to a concrete command via its local runbook — callers never
+// supply a raw command line.
+type ExecRequestBody struct {
+	ID  string `json:"id"`  // correlates a result back to this request
+	Cmd string `json:"cmd"` // the runbook action name, e.g. "drain"
 }
 
-// ExecResult is the outcome of an ExecRequest.
-type ExecResult struct {
-	Command string `json:"command"`
-	Allowed bool   `json:"allowed"`
-	Output  string `json:"output,omitempty"`
-	Err     string `json:"error,omitempty"`
+// ExecResultBody is an agent's signed reply to an ExecRequestBody.
+type ExecResultBody struct {
+	ID       string `json:"id"`
+	Cmd      string `json:"cmd"`
+	Allowed  bool   `json:"allowed"`             // false = not in the agent's runbook (denied)
+	ExitCode int    `json:"exit_code,omitempty"` // process exit code when run
+	Output   string `json:"output,omitempty"`    // combined stdout/stderr (capped)
 }
 
 // InviteRequest asks the server to mint a one-time invite token for the

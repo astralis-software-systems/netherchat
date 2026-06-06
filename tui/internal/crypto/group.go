@@ -105,7 +105,10 @@ func (id *Identity) SealMessage(rk RoomKey, fromID string, plaintext []byte) (no
 		return nil, nil, nil, fmt.Errorf("nonce: %w", err)
 	}
 	ciphertext = aead.Seal(nil, nonce, plaintext, epochAD(rk.Epoch))
-	signature = ed25519.Sign(id.SignPriv, protocol.SigningBytes(fromID, rk.Epoch, nonce, ciphertext))
+	signature, err = id.Sign(protocol.SigningBytes(fromID, rk.Epoch, nonce, ciphertext))
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("sign message: %w", err)
+	}
 	return nonce, ciphertext, signature, nil
 }
 

@@ -40,12 +40,9 @@ func connect(t *testing.T, url, room, name, token string) *client.Client {
 
 func featureConfig() config.Config {
 	c := config.Default()
-	c.Exec.Enabled = true
-	c.Exec.Allow = []string{"go version"}
 	c.Rooms = map[string]config.RoomConfig{
 		"alerts": {Webhook: true, WebhookToken: "secret"},
 		"vault":  {InviteOnly: true},
-		"ops":    {ExecEnabled: true},
 	}
 	return c
 }
@@ -182,26 +179,53 @@ func TestBreakGlassWarRoom(t *testing.T) {
 	}
 }
 
-func TestExecAllowlist(t *testing.T) {
-	ts := httptest.NewServer(server.Handler(featureConfig(), quietLogger()))
+// TestEdgeExecThroughBlindRelay proves the §0.1 redesign: an exec request is an
+// E2E-signed message, the relay only routes ciphertext, and an agent (any room
+// member) runs it on its own host and posts a signed result back — attributable
+// by key fingerprint end to end.
+func TestEdgeExecThroughBlindRelay(t *testing.T) {
+	ts := httptest.NewServer(server.Handler(config.Default(), quietLogger()))
 	defer ts.Close()
 
-	c := connect(t, ts.URL, "ops", "operator", "")
-	waitMatch[client.EvConnected](t, c, nil, 5*time.Second)
+	// The agent joins first and holds the room key.
+	agent := connect(t, ts.URL, "ops", "agent@bastion", "")
+	waitMatch[client.EvKeyReady](t, agent, nil, 5*time.Second)
 
-	c.Exec("go version")
-	r := waitMatch[client.EvExecResult](t, c, func(r client.EvExecResult) bool { return r.Command == "go version" }, 8*time.Second)
-	if !r.Allowed {
-		t.Fatalf("`go version` should be allowed: %+v", r)
-	}
-	if !strings.Contains(r.Output, "go version") {
-		t.Errorf("exec output = %q", r.Output)
+	// An operator joins and requests a runbook action.
+	op := connect(t, ts.URL, "ops", "alice", "")
+	waitMatch[client.EvKeyReady](t, op, nil, 5*time.Second)
+
+	id, err := op.RequestExec("drain")
+	if err != nil {
+		t.Fatalf("request exec: %v", err)
 	}
 
-	c.Exec("rm -rf /")
-	bad := waitMatch[client.EvExecResult](t, c, func(r client.EvExecResult) bool { return r.Command == "rm -rf /" }, 8*time.Second)
-	if bad.Allowed {
-		t.Fatal("`rm -rf /` must be rejected — not on the allowlist")
+	// The agent receives the signed request, attributed to alice by fingerprint.
+	req := waitMatch[client.EvExecRequest](t, agent, func(e client.EvExecRequest) bool {
+		return !e.Self && e.Cmd == "drain"
+	}, 5*time.Second)
+	if req.ID != id {
+		t.Fatalf("request id mismatch: got %s want %s", req.ID, id)
+	}
+	if req.FromName != "alice" {
+		t.Errorf("requester name = %q", req.FromName)
+	}
+	if !strings.HasPrefix(req.FromFingerprint, "SHA256:") {
+		t.Errorf("requester fingerprint = %q (want ssh format)", req.FromFingerprint)
+	}
+
+	// The agent runs it locally (simulated here) and posts a signed result.
+	if err := agent.PostExecResult(req.ID, req.Cmd, true, 0, "node drained"); err != nil {
+		t.Fatalf("post exec result: %v", err)
+	}
+
+	// The operator receives the decrypted, attributed result.
+	res := waitMatch[client.EvExecResult](t, op, func(e client.EvExecResult) bool { return e.ID == id }, 5*time.Second)
+	if !res.Allowed || res.ExitCode != 0 || res.Output != "node drained" || res.Cmd != "drain" {
+		t.Fatalf("exec result = %+v", res)
+	}
+	if !strings.HasPrefix(res.FromFingerprint, "SHA256:") {
+		t.Errorf("result host fingerprint = %q", res.FromFingerprint)
 	}
 }
 

@@ -1,0 +1,25 @@
+# runbook.toml — the allowlist for a `netherchat agent`.
+#
+#   netherchat agent --room ops --allow runbook.toml [--server ws://host:3000]
+#
+# The agent runs on YOUR host (a bastion, a deploy box — never the relay). It
+# watches a room for signed /exec requests and runs ONLY the actions listed here.
+# Each action maps a short name (what people type after /exec) to a fixed command
+# line. There is no shell and callers cannot supply arguments — the command,
+# including any args, is fixed here. Every attempt (allowed or denied) is logged
+# locally on this host, attributed to the requester's key fingerprint.
+
+[[allow]]
+cmd     = "drain"
+command = "/usr/local/bin/drain.sh"
+timeout = "60s"
+
+[[allow]]
+cmd     = "rollback-canary"
+command = "/usr/local/bin/rollback.sh canary"
+timeout = "30s"
+
+# [[allow]]
+# cmd     = "status"
+# command = "systemctl status netherchat"
+# timeout = "10s"

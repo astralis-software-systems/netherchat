@@ -26,8 +26,10 @@ func TestGenInteropVector(t *testing.T) {
 	for i := range seed {
 		seed[i] = byte(i + 1) // 0x01..0x20, fixed
 	}
-	signPriv := ed25519.NewKeyFromSeed(seed[:])
-	id := &Identity{SignPriv: signPriv, SignPub: signPriv.Public().(ed25519.PublicKey)}
+	id, err := identityFromEd25519(ed25519.NewKeyFromSeed(seed[:]), "vector")
+	if err != nil {
+		t.Fatalf("identity: %v", err)
+	}
 
 	rk := RoomKey{Epoch: 7}
 	for i := range rk.Key {

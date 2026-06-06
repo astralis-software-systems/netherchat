@@ -13,7 +13,8 @@ const (
 	lineMessage lineKind = iota // E2E message from another member
 	lineSelf                    // our own E2E message
 	lineSystem                  // local notices (joins/leaves/status)
-	lineServer                  // webhook/system/exec output — NOT E2E
+	lineServer                  // webhook/system output — NOT E2E (plaintext marker)
+	lineExec                    // edge-exec request/result — E2E, signed, attributable
 	lineError
 	lineRaw // pre-rendered multi-line block (e.g. an invite QR), not wrapped
 )
@@ -39,9 +40,8 @@ type room struct {
 	keyReady  bool
 	connected bool
 
-	execEnabled bool
-	inviteOnly  bool
-	webhook     bool
+	inviteOnly bool
+	webhook    bool
 
 	ttl    time.Duration // client-side message display TTL (0 = none)
 	failed bool
@@ -82,7 +82,7 @@ func (r *room) pruneExpired(now time.Time) bool {
 	kept := make([]line, 0, len(r.lines))
 	changed := false
 	for _, l := range r.lines {
-		content := l.kind == lineMessage || l.kind == lineSelf || l.kind == lineServer
+		content := l.kind == lineMessage || l.kind == lineSelf || l.kind == lineServer || l.kind == lineExec
 		if content && now.Sub(l.at) > r.ttl {
 			changed = true
 			continue

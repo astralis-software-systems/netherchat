@@ -23,12 +23,10 @@ enabled = false
 # path = "netherchat.db"
 # history = 100          # messages replayed to a client when it joins
 
-[exec]
-# Remote /exec is the most dangerous feature and is OFF by default. Even when
-# enabled, ONLY the exact commands listed here may run (never arbitrary shell),
-# and only in rooms with exec_enabled = true below. Every run is audit-logged.
-enabled = false
-# allow = ["uptime", "df -h", "systemctl status netherchat"]
+# NOTE: there is deliberately no server-side [exec]. A blind relay must never run
+# commands. /exec is an EDGE feature: it sends a signed, E2E-encrypted request the
+# relay only routes as ciphertext, and a `netherchat agent` on your OWN host runs
+# it against its own runbook allowlist. See runbook.toml.example.
 
 # --- Rooms -------------------------------------------------------------------
 # Rooms are created on demand with open defaults. Define a room here only to set
@@ -39,9 +37,24 @@ enabled = false
 
 [rooms.ops]
 invite_only = true        # joining requires a one-time invite token (/invite)
-exec_enabled = true       # /exec may run here (still gated by [exec] above)
 
 [rooms.alerts]
 webhook = true            # accept POST /webhook/alerts
 webhook_token = "change-me-to-a-long-random-secret"  # required in X-Netherchat-Token
 ttl = "24h"               # ephemeral: the room is cleared after this much inactivity
+
+# --- Trust (CLIENT-SIDE ONLY) ------------------------------------------------
+# [[trust]] entries are read by CLIENTS for /whois identity pinning. The relay
+# never reads them and never participates in any trust decision. Both fields are
+# independently optional: fpr-only pins a fingerprint (warns on mismatch);
+# keys_url-only fetches published keys on /whois (never auto-pins); both does
+# both; neither is just a display-name alias.
+
+[[trust]]
+handle   = "alice"
+fpr      = "SHA256:Hk3xyzABCDEF..."          # from: ssh-keygen -lf ~/.ssh/id_ed25519
+keys_url = "https://github.com/alice.keys"   # canonical published-key source
+
+[[trust]]
+handle   = "oncall-2"
+keys_url = "https://github.com/oncall-2.keys"  # fetch on /whois; no pin

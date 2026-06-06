@@ -18,8 +18,10 @@ doesn't look like it's from 1998.
 > counts, a member list, 8 instantly-switchable themes, slash commands with
 > autocomplete, inline code rendering, and invite QR codes. The server adds
 > config-as-code (`netherchat.toml`), inbound webhooks, one-time invite tokens,
-> ephemeral room TTLs, `/vanish` key rotation, opt-in `/exec`, per-connection
-> rate limiting, and optional local persistence. Plus Unix-friendly
+> ephemeral room TTLs, `/vanish` key rotation, bring-your-own-key identity
+> (SSH / age / ssh-agent) with `/whois` verification, edge-executed `/exec` via
+> `netherchat agent`, per-connection rate limiting, and optional local
+> persistence. Plus Unix-friendly
 > `send`/`tail` for pipelines. The web client is the next milestone. See
 > [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md) for the founding design,
 > [`PROTOCOL.md`](PROTOCOL.md) for the wire format,
@@ -84,9 +86,11 @@ just build            # or: go build -o bin/ ./cmd/...
 ```
 
 Type in either client and the message appears, decrypted, in the other. Your
-identity key is generated on first run and stored in your per-user config dir
-(`%AppData%\netherchat` / `~/.config/netherchat`). **There is no recovery if you
-lose it** — that's by design.
+identity is the Ed25519 key you already have — ssh-agent, `~/.ssh/id_ed25519`, or
+an age key (else a generated one in your per-user config dir). `/whoami` shows a
+fingerprint in exact `ssh-keygen -lf` format; `/whois @peer` verifies a coworker
+against their published `github.com/<user>.keys`. The relay never holds a private
+key, and **there is no recovery if you lose yours** — that's by design.
 
 Keys (TUI): `Enter` send · `PgUp`/`PgDn` or mouse wheel scroll · `Esc`/`Ctrl+C` quit.
 
