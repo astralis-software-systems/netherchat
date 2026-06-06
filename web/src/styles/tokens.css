@@ -1,0 +1,97 @@
+/* Netherchat design tokens + reset. Theme colors (--bg, --text, --accent, …) are
+   set on :root at runtime by applyTheme(); the values here are the `nether`
+   defaults so the first paint is already on-brand before JS runs. Surfaces,
+   borders and states are DERIVED from the theme palette with color-mix(), so all
+   eight themes get coherent depth without hand-tuning each one. */
+
+:root {
+  /* theme palette (default: nether — overridden at runtime) */
+  --bg: #0a0a12;
+  --text: #e2e0f0;
+  --muted: #7c6fa0;
+  --accent: #7c3aed;
+  --accent2: #a78bfa;
+  --success: #8be9a8;
+  --warn: #f0c674;
+  --error: #ff6b6b;
+
+  --font-ui: "Space Grotesk", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Code", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
+
+  /* derived surfaces / lines / states */
+  --surface: color-mix(in srgb, var(--bg) 93%, var(--text));
+  --surface-2: color-mix(in srgb, var(--bg) 87%, var(--text));
+  --surface-3: color-mix(in srgb, var(--bg) 80%, var(--text));
+  --border: color-mix(in srgb, var(--text) 12%, transparent);
+  --border-strong: color-mix(in srgb, var(--text) 24%, transparent);
+  --hover: color-mix(in srgb, var(--text) 7%, transparent);
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 45%, transparent);
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-xs: 6px;
+  --shadow: 0 18px 50px -18px rgba(0, 0, 0, 0.7);
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+input,
+textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+code,
+pre {
+  font-family: var(--font-mono);
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* thin, themed scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}

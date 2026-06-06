@@ -59,7 +59,7 @@ irm https://netherchat.com/install.ps1 | iex
 **Server — Docker:**
 
 ```bash
-docker run -p 3000:3000 astralis/netherchat
+docker run -p 3000:3000 salkreiner/netherchat
 # or, for a team:
 docker compose up -d
 ```

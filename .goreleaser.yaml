@@ -62,7 +62,7 @@ dockers_v2:
     ids: [netherchat-server]
     dockerfile: Dockerfile.goreleaser
     images:
-      - astralis/netherchat
+      - salkreiner/netherchat
     tags:
       - "{{ .Version }}"
       - latest

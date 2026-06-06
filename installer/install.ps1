@@ -6,7 +6,7 @@
     Downloads the netherchat client for your architecture from GitHub releases,
     verifies its SHA-256, installs it to %LOCALAPPDATA%\Programs\netherchat, and
     adds that directory to your user PATH. The server is run via Docker
-    (astralis/netherchat), so this installs the client only.
+    (salkreiner/netherchat), so this installs the client only.
 .EXAMPLE
     irm https://netherchat.com/install.ps1 | iex
 .EXAMPLE
@@ -130,5 +130,5 @@ Write-Host ''
 Write-Host "Netherchat $ver installed." -ForegroundColor Magenta -NoNewline
 Write-Host '  Messaging that lives below the surface.'
 Write-Host "  Connect:      netherchat connect ws://localhost:3000 --name $env:USERNAME"
-Write-Host '  Run a server: docker run -p 3000:3000 astralis/netherchat'
+Write-Host '  Run a server: docker run -p 3000:3000 salkreiner/netherchat'
 Write-Host ''

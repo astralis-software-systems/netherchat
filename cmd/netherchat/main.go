@@ -50,8 +50,9 @@ func connectCmd(args []string) {
 	identity := fs.String("identity", "", "identity file path (default: per-user config dir)")
 	notify := fs.String("notify", "", "shell command to run on each new message (env: NETHERCHAT_ROOM/FROM/TEXT)")
 	invite := fs.String("invite", "", "one-time invite token for an invite-only room")
+	webURL := fs.String("web-url", "", "base URL of the browser join client for /break-glass links (default: derived from the server URL)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: netherchat connect [ws://host:port] [--room <name>] [--name <you>] [--identity <path>] [--invite <token>] [--notify <cmd>]")
+		fmt.Fprintln(os.Stderr, "usage: netherchat connect [ws://host:port] [--room <name>] [--name <you>] [--identity <path>] [--invite <token>] [--web-url <url>] [--notify <cmd>]")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
@@ -60,7 +61,7 @@ func connectCmd(args []string) {
 	if url == "" {
 		url = "ws://localhost:3000"
 	}
-	if err := app.Run(url, *name, resolveIdentity(*identity), *room, *notify, *invite); err != nil {
+	if err := app.Run(url, *name, resolveIdentity(*identity), *room, *notify, *invite, *webURL); err != nil {
 		fatal(err)
 	}
 }

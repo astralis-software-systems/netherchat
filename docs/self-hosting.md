@@ -10,7 +10,7 @@ disk and makes no outbound network calls.
 ### Docker (recommended)
 
 ```bash
-docker run -p 3000:3000 astralis/netherchat
+docker run -p 3000:3000 salkreiner/netherchat
 ```
 
 ### Docker Compose (teams)
@@ -121,7 +121,7 @@ cloud.)
 Tag a release (`git tag v0.2.0 && git push origin v0.2.0`) to trigger the release
 workflow. It needs these repository secrets:
 
-- `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` — to push `astralis/netherchat`
+- `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` — to push `salkreiner/netherchat`
 - `HOMEBREW_TAP_TOKEN` — a PAT with write access to your Homebrew tap repo
 
 Zero telemetry, always. The server never phones home.

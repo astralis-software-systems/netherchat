@@ -13,7 +13,7 @@ services:
       context: .
       args:
         VERSION: dev
-    image: astralis/netherchat:latest
+    image: salkreiner/netherchat:latest
     container_name: netherchat
     ports:
       - "3000:3000"

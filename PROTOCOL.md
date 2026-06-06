@@ -51,6 +51,8 @@ encoding of `[]byte`).
 | `exec_result`   | server → client                | command output |
 | `invite_request`| client → server                | mint a one-time invite token for the room |
 | `invite_result` | server → client                | the minted token |
+| `break_glass`        | client → server           | create an ephemeral war room + mint one-time join links |
+| `break_glass_result` | server → client           | the new room name, deadline, host token, and per-invitee tokens |
 
 `hello` additionally carries an optional `invite_token` (required to join an
 invite-only room), and `welcome` carries a `policy` describing the room
@@ -197,3 +199,44 @@ These are additive; the connection==room model is unchanged.
 `protocol_version` is exchanged in `hello`/`welcome`. Incompatible changes bump it.
 A future MLS-based key-agreement scheme can be negotiated alongside the NaCl
 scheme during migration.
+
+## 11. Break-glass war rooms
+
+Additive over v2 (no version bump — older clients simply never send `break_glass`).
+A connected member can stand up an **ephemeral, invite-only room** that vanishes at
+a hard deadline — the incident war room.
+
+```json
+"break_glass": {
+  "invitees":    ["alice", "bob"],   // one one-time link is minted per name (server caps the count)
+  "ttl_seconds": 14400               // hard room lifetime; server clamps to [60, 604800]
+}
+```
+
+The server creates a room with a generated, unguessable name (`war-<hex>`), marks
+it invite-only with an absolute deadline of now + TTL, and replies to the
+requester only:
+
+```json
+"break_glass_result": {
+  "room":        "war-3f9a2b71",
+  "ttl_seconds": 14400,
+  "expires":     1749230400,          // unix seconds (hard deadline)
+  "host_token":  "<one-time token>",  // for the creator to join without racing invitees for the bootstrap slot
+  "invites": [
+    { "name": "alice", "token": "<one-time token>" },
+    { "name": "bob",   "token": "<one-time token>" }
+  ]
+}
+```
+
+Each token is a normal one-time invite (§9) scoped to the new room and expiring
+with it. Clients embed them in `/join?room=<room>&token=<token>` links for the
+browser join client. Joining is the ordinary invite-only flow: the room is
+admitted via `hello.invite_token`, and `welcome.policy` reports `invite_only:true`
+with `ttl_seconds` carrying the **remaining** lifetime. When the deadline passes
+the server closes the room — every member receives a plaintext `server_msg`
+(kind `system`) and is disconnected. Nothing about the room is persisted.
+
+Ephemeral rooms are blind-relayed exactly like any other: the server holds only
+the room name, deadline, and routing metadata — never a key or any plaintext.

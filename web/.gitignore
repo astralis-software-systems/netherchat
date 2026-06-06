@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.local
+.vite/
+
+# Self-hosted brand fonts are fetched on demand (see fonts/README.md); the
+# binaries are not committed.
+public/fonts/*.woff2

@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en" data-theme="nether">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Netherchat — messaging that lives below the surface</title>
+    <meta
+      name="description"
+      content="Netherchat is a self-hostable, end-to-end encrypted, real-time messaging system. A blind-relay server that cannot read your messages, a terminal client that doesn't look like 1998, and a browser client for everyone else."
+    />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta property="og:title" content="Netherchat" />
+    <meta property="og:description" content="Messaging that lives below the surface. Self-hostable, end-to-end encrypted." />
+    <meta property="og:type" content="website" />
+    <script type="module" src="/src/landing/landing.ts"></script>
+  </head>
+  <body class="lp">
+    <!-- ===================================================== nav ========= -->
+    <header class="lp-nav">
+      <a class="lp-brand" href="/">
+        <svg width="28" height="28" viewBox="0 0 32 32" fill="none" class="lp-glyph" aria-hidden="true">
+          <defs>
+            <linearGradient id="lpg" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="var(--accent2)" />
+              <stop offset="1" stop-color="var(--accent)" />
+            </linearGradient>
+          </defs>
+          <g stroke="url(#lpg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 25 L8 9" />
+            <path d="M8 9 L24 23" />
+            <path d="M24 23 L24 7" />
+            <path d="M8 9 C8 5.5 12 5.5 11 9" />
+            <path d="M24 23 C24 26.5 20 26.5 21 23" />
+          </g>
+          <g fill="var(--accent)">
+            <circle cx="8" cy="25.2" r="1.9" />
+            <circle cx="24" cy="6.8" r="1.9" />
+            <circle cx="11" cy="9" r="1.3" />
+            <circle cx="21" cy="23" r="1.3" />
+          </g>
+        </svg>
+        <span>netherchat</span>
+      </a>
+      <nav class="lp-nav-links">
+        <a href="#features">Features</a>
+        <a href="#security">Security</a>
+        <a href="#selfhost">Self-host</a>
+        <a href="https://github.com/salehkreiner/netherchat" rel="noreferrer">GitHub</a>
+      </nav>
+      <div class="lp-nav-right">
+        <div class="lp-themepicker" data-themepicker></div>
+        <a class="lp-btn lp-btn-primary" href="/app/">Open app</a>
+      </div>
+    </header>
+
+    <!-- ==================================================== hero ========= -->
+    <main>
+      <section class="lp-hero">
+        <div class="lp-hero-copy">
+          <div class="lp-eyebrow">Astralis Software Systems</div>
+          <h1>Messaging that lives<br /><span class="lp-grad">below the surface</span></h1>
+          <p class="lp-lede">
+            Self-hostable, end-to-end encrypted, real-time messaging. A blind-relay server that
+            <em>cannot read your messages</em> — proven by the build graph, not a promise. A terminal client
+            that doesn't look like it's from 1998, and a browser client for everyone else.
+          </p>
+          <div class="lp-cta">
+            <a class="lp-btn lp-btn-primary lp-btn-lg" href="/app/">Open the web app →</a>
+            <a class="lp-btn lp-btn-ghost lp-btn-lg" href="https://github.com/salehkreiner/netherchat" rel="noreferrer">
+              View on GitHub
+            </a>
+          </div>
+          <div class="lp-snippet">
+            <code><span class="lp-prompt">$</span> curl -fsSL https://netherchat.com/install | bash</code>
+            <button class="lp-copy" data-copy="curl -fsSL https://netherchat.com/install | bash">copy</button>
+          </div>
+          <p class="lp-fineprint">macOS · Linux · Windows (WSL2) · or <code>docker run -p 3000:3000 salkreiner/netherchat</code></p>
+        </div>
+
+        <!-- faux client, rendered live (no screenshot), themed -->
+        <div class="lp-hero-art" aria-hidden="true">
+          <div class="lp-window">
+            <div class="lp-window-bar">
+              <span class="lp-dot"></span><span class="lp-dot"></span><span class="lp-dot"></span>
+              <span class="lp-window-title"># ops</span>
+              <span class="lp-enc">🔒 end-to-end encrypted · epoch 0</span>
+            </div>
+            <div class="lp-window-body">
+              <div class="lp-msg"><span class="lp-u lp-u1">deploy</span><span class="lp-srvtag">webhook · not encrypted</span><br />ci: build #4821 passed on main</div>
+              <div class="lp-msg"><span class="lp-u lp-u2">alice</span> shipping it. <span class="lp-inline">/vanish</span> after?</div>
+              <div class="lp-msg"><span class="lp-u lp-u3">bob</span> yep. keys rotate, history clears.</div>
+              <div class="lp-msg lp-self"><span class="lp-u lp-u4">you</span> <code class="lp-code">kubectl rollout status deploy/api</code></div>
+            </div>
+            <div class="lp-window-input"><span class="lp-prompt">/</span> theme&nbsp;<span class="lp-cursor">▌</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================ trust ========= -->
+      <section class="lp-trust" id="security">
+        <h2 class="lp-section-title">“We cannot read your messages.” Said literally.</h2>
+        <p class="lp-section-sub">
+          The encryption lives in the client. The server is a blind relay — it routes ciphertext and sealed key
+          blobs it has no key to open.
+        </p>
+        <div class="lp-trust-grid">
+          <article class="lp-card">
+            <div class="lp-card-ico">⛓️</div>
+            <h3>Enforced by the build graph</h3>
+            <p>
+              The crypto package lives under <code>tui/internal</code>; Go's rules make it physically unreachable from
+              the server binary. CI fails if that ever changes. It's a property of the import graph, not marketing.
+            </p>
+          </article>
+          <article class="lp-card">
+            <div class="lp-card-ico">🔑</div>
+            <h3>Keys never touch the server</h3>
+            <p>
+              Identities are generated and stored on each device. Room keys are wrapped per-recipient with
+              <code>nacl/box</code> and relayed as opaque blobs. No escrow, no recovery — by design.
+            </p>
+          </article>
+          <article class="lp-card">
+            <div class="lp-card-ico">📡</div>
+            <h3>Zero telemetry, zero persistence</h3>
+            <p>
+              No analytics, no phone-home, ever. By default nothing is written to disk — rooms evaporate when empty.
+              A Wireshark capture shows ciphertext only.
+            </p>
+          </article>
+        </div>
+        <p class="lp-honest">
+          Honest about limits: forward secrecy is per-epoch (not per-message), and the group key-distribution layer is
+          custom over audited primitives — slated for external review before any paid tier, with MLS (RFC 9420) as the
+          migration target. See <a href="https://github.com/salehkreiner/netherchat/blob/main/docs/encryption.md" rel="noreferrer">encryption.md</a>.
+        </p>
+      </section>
+
+      <!-- ============================================== features ======== -->
+      <section class="lp-features" id="features">
+        <h2 class="lp-section-title">Built for developers first</h2>
+        <p class="lp-section-sub">Designed to scale to everyone else without compromising the developer experience.</p>
+        <div class="lp-feature-grid">
+          <article class="lp-feature">
+            <h3>End-to-end encrypted</h3>
+            <p>X25519 + XChaCha20-Poly1305 + Ed25519, audited pure-Go and WebCrypto-grade primitives. The same crypto in the terminal and the browser.</p>
+          </article>
+          <article class="lp-feature">
+            <h3>One static binary</h3>
+            <p>No runtime, no dependencies. A ~7&nbsp;MB <code>FROM scratch</code> image, or a single binary per platform. <code>curl … | bash</code> and you're done.</p>
+          </article>
+          <article class="lp-feature">
+            <h3>Terminal &amp; browser</h3>
+            <p>A modern TUI for power users and this web client for everyone else — both speak one documented wire protocol to the same server.</p>
+          </article>
+          <article class="lp-feature">
+            <h3>Eight themes, instant</h3>
+            <p><code>nether</code>, <code>abyss</code>, <code>ember</code>, <code>ghost</code>, <code>sprinkles</code>, <code>dracula</code>, <code>gruvbox</code>, <code>solarized</code> — switch with no reload. Try the picker above.</p>
+          </article>
+          <article class="lp-feature">
+            <h3>Pipes &amp; webhooks</h3>
+            <p><code>echo "deploy done" | netherchat send #ops</code>. Every room gets an inbound webhook for CI and alerts.</p>
+          </article>
+          <article class="lp-feature">
+            <h3>Ephemeral by default</h3>
+            <p><code>/vanish</code> rotates the room key and clears history. Room TTLs, one-time invite tokens, invite-only rooms.</p>
+          </article>
+        </div>
+      </section>
+
+      <!-- =============================================== self-host ======= -->
+      <section class="lp-selfhost" id="selfhost">
+        <h2 class="lp-section-title">Run it yourself in one line</h2>
+        <div class="lp-steps">
+          <div class="lp-step">
+            <div class="lp-step-n">1</div>
+            <div>
+              <h3>Start the relay</h3>
+              <div class="lp-snippet lp-snippet-block">
+                <code><span class="lp-prompt">$</span> docker run -p 3000:3000 salkreiner/netherchat</code>
+                <button class="lp-copy" data-copy="docker run -p 3000:3000 salkreiner/netherchat">copy</button>
+              </div>
+            </div>
+          </div>
+          <div class="lp-step">
+            <div class="lp-step-n">2</div>
+            <div>
+              <h3>Install the terminal client</h3>
+              <div class="lp-snippet lp-snippet-block">
+                <code><span class="lp-prompt">$</span> curl -fsSL https://netherchat.com/install | bash</code>
+                <button class="lp-copy" data-copy="curl -fsSL https://netherchat.com/install | bash">copy</button>
+              </div>
+            </div>
+          </div>
+          <div class="lp-step">
+            <div class="lp-step-n">3</div>
+            <div>
+              <h3>…or just open the web app</h3>
+              <p class="lp-muted">
+                Serve this client next to your relay behind one origin and your team chats from the browser — no install,
+                no CLI. <a href="/app/">Open the app →</a>
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================== themes =========== -->
+      <section class="lp-themes">
+        <h2 class="lp-section-title">Make it yours</h2>
+        <div class="lp-theme-strip" data-theme-strip></div>
+      </section>
+    </main>
+
+    <!-- ==================================================== footer ====== -->
+    <footer class="lp-footer">
+      <div class="lp-footer-brand">
+        <svg width="20" height="20" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <g stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 25 L8 9" /><path d="M8 9 L24 23" /><path d="M24 23 L24 7" />
+          </g>
+        </svg>
+        <span>netherchat</span>
+      </div>
+      <p class="lp-muted">Messaging that lives below the surface. © <span data-year></span> Astralis Software Systems, LLC.</p>
+      <nav class="lp-footer-links">
+        <a href="https://github.com/salehkreiner/netherchat" rel="noreferrer">GitHub</a>
+        <a href="https://github.com/salehkreiner/netherchat/blob/main/PROTOCOL.md" rel="noreferrer">Protocol</a>
+        <a href="https://github.com/salehkreiner/netherchat/blob/main/docs/self-hosting.md" rel="noreferrer">Self-hosting</a>
+        <a href="/app/">Web app</a>
+      </nav>
+    </footer>
+  </body>
+</html>

@@ -15,6 +15,7 @@ import (
 	"github.com/salehkreiner/netherchat/buildinfo"
 	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/server/internal/api"
+	"github.com/salehkreiner/netherchat/server/internal/ephemeral"
 	"github.com/salehkreiner/netherchat/server/internal/hub"
 	"github.com/salehkreiner/netherchat/server/internal/invite"
 	"github.com/salehkreiner/netherchat/server/internal/store"
@@ -35,7 +36,11 @@ func handlerWithStore(cfg config.Config, st store.Store, log *slog.Logger) http.
 	}
 	h := hub.New(cfg, log)
 	invites := invite.New()
-	transport := ws.NewServer(h, cfg, invites, st, log)
+	// Ephemeral (break-glass) war rooms: invite-only, hard TTL. The registry's
+	// janitor closes each room through the hub when its deadline passes.
+	eph := ephemeral.New(log)
+	eph.Start(h.ExpireRoom)
+	transport := ws.NewServer(h, cfg, invites, eph, st, log)
 	rest := api.New(h, cfg, log)
 
 	mux := http.NewServeMux()

@@ -1,0 +1,26 @@
+{
+  "name": "@netherchat/web",
+  "private": true,
+  "version": "0.4.0",
+  "description": "Netherchat web: landing page + the thin link-join client for ephemeral, end-to-end encrypted rooms",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run",
+    "test:node": "vite-node scripts/interop-check.ts"
+  },
+  "dependencies": {
+    "@noble/ciphers": "^1.2.1",
+    "@noble/hashes": "^1.7.1",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.42",
+    "typescript": "~5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.8"
+  }
+}

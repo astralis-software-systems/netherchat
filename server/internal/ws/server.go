@@ -19,6 +19,7 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/server/config"
+	"github.com/salehkreiner/netherchat/server/internal/ephemeral"
 	"github.com/salehkreiner/netherchat/server/internal/hub"
 	"github.com/salehkreiner/netherchat/server/internal/invite"
 	"github.com/salehkreiner/netherchat/server/internal/store"
@@ -36,20 +37,22 @@ const (
 
 // Server relays WebSocket connections through a hub.
 type Server struct {
-	hub     *hub.Hub
-	cfg     config.Config
-	invites *invite.Store
-	store   store.Store // optional history persistence; nil when disabled
-	log     *slog.Logger
+	hub       *hub.Hub
+	cfg       config.Config
+	invites   *invite.Store
+	ephemeral *ephemeral.Registry
+	store     store.Store // optional history persistence; nil when disabled
+	log       *slog.Logger
 }
 
-// NewServer constructs a transport bound to the given hub, config, invite store
-// and optional message store (nil to disable persistence).
-func NewServer(h *hub.Hub, cfg config.Config, invites *invite.Store, st store.Store, log *slog.Logger) *Server {
+// NewServer constructs a transport bound to the given hub, config, invite store,
+// ephemeral-room registry, and optional message store (nil to disable
+// persistence).
+func NewServer(h *hub.Hub, cfg config.Config, invites *invite.Store, eph *ephemeral.Registry, st store.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{hub: h, cfg: cfg, invites: invites, store: st, log: log}
+	return &Server{hub: h, cfg: cfg, invites: invites, ephemeral: eph, store: st, log: log}
 }
 
 // HandleWS is the http.HandlerFunc for the WebSocket endpoint.
@@ -97,10 +100,14 @@ func (s *Server) serve(ctx context.Context, c *websocket.Conn) {
 		return
 	}
 
-	// 2. Enforce invite-only policy before admitting the connection. The token is
+	// 2. Resolve the effective room policy. A dynamically-created break-glass war
+	// room overrides static config: it is always invite-only, never exec/webhook,
+	// and carries a hard remaining TTL.
+	pol := s.roomPolicy(hello.Room)
+
+	// Enforce invite-only policy before admitting the connection. The token is
 	// one-time: redeeming it here consumes it.
-	policy := s.cfg.Room(hello.Room)
-	if policy.InviteOnly {
+	if pol.InviteOnly {
 		// A valid one-time token always admits. Otherwise the first member into
 		// an empty room bootstraps it (and can then /invite others); once the
 		// room is established, newcomers need a token.
@@ -137,10 +144,10 @@ func (s *Server) serve(ctx context.Context, c *websocket.Conn) {
 		Members:         res.Existing,
 		YouAreFirst:     res.YouAreFirst,
 		Policy: protocol.RoomPolicy{
-			InviteOnly:  policy.InviteOnly,
-			ExecEnabled: policy.ExecEnabled && s.cfg.Exec.Enabled,
-			Webhook:     policy.Webhook,
-			TTLSeconds:  int(policy.TTL.Std().Seconds()),
+			InviteOnly:  pol.InviteOnly,
+			ExecEnabled: pol.ExecEnabled,
+			Webhook:     pol.Webhook,
+			TTLSeconds:  pol.TTLSeconds,
 		},
 	}))
 	// Replay recent history (ciphertext) to the newcomer. The client buffers
@@ -236,9 +243,83 @@ func (s *Server) relay(room, fromID string, env protocol.Envelope) {
 		}
 		go s.runExec(room, fromID, er.Command)
 
+	case protocol.OpBreakGlass:
+		var bg protocol.BreakGlass
+		if err := env.Decode(&bg); err != nil {
+			return
+		}
+		s.handleBreakGlass(room, fromID, bg)
+
 	default:
 		s.log.Debug("ignoring unknown opcode", "type", env.Type)
 	}
+}
+
+// handleBreakGlass stands up an ephemeral, invite-only war room with a hard TTL
+// and mints one-time tokens: one per named invitee, plus a host token for the
+// creator so they never lose the bootstrap slot to an invitee who clicks first.
+// The result is routed back to the requesting connection; the creator then joins
+// the new room. The room and all its tokens expire together at the deadline.
+func (s *Server) handleBreakGlass(fromRoom, fromID string, bg protocol.BreakGlass) {
+	ttl := ephemeral.ClampTTL(time.Duration(bg.TTLSeconds) * time.Second)
+	room := s.ephemeral.Create(ttl, fromID)
+
+	// Tokens live exactly as long as the room.
+	hostToken, _ := s.invites.Generate(room.Name, ttl)
+	invitees := bg.Invitees
+	if len(invitees) > ephemeral.MaxInvitees {
+		invitees = invitees[:ephemeral.MaxInvitees]
+	}
+	invites := make([]protocol.BreakGlassInvite, 0, len(invitees))
+	for _, name := range invitees {
+		token, _ := s.invites.Generate(room.Name, ttl)
+		invites = append(invites, protocol.BreakGlassInvite{Name: name, Token: token})
+	}
+
+	s.log.Info("break-glass war room created", "room", room.Name, "by", fromID,
+		"invitees", len(invites), "ttl", ttl.String())
+
+	s.hub.SendTo(fromRoom, fromID, mustEncode(protocol.OpBreakGlassResult, protocol.BreakGlassResult{
+		Room:       room.Name,
+		TTLSeconds: int(ttl.Seconds()),
+		Expires:    room.Deadline.Unix(),
+		HostToken:  hostToken,
+		Invites:    invites,
+	}))
+}
+
+// effectivePolicy is the room policy actually enforced for a connection, after
+// overlaying any ephemeral (break-glass) room on top of static config.
+type effectivePolicy struct {
+	InviteOnly  bool
+	ExecEnabled bool
+	Webhook     bool
+	TTLSeconds  int
+}
+
+// roomPolicy resolves the effective policy for a room. Ephemeral war rooms are
+// always invite-only with a hard remaining TTL and no exec/webhook surface; all
+// other rooms use their static netherchat.toml policy.
+func (s *Server) roomPolicy(room string) effectivePolicy {
+	cfg := s.cfg.Room(room)
+	pol := effectivePolicy{
+		InviteOnly:  cfg.InviteOnly,
+		ExecEnabled: cfg.ExecEnabled && s.cfg.Exec.Enabled,
+		Webhook:     cfg.Webhook,
+		TTLSeconds:  int(cfg.TTL.Std().Seconds()),
+	}
+	if s.ephemeral != nil {
+		if er, ok := s.ephemeral.Get(room); ok {
+			pol.InviteOnly = true
+			pol.ExecEnabled = false
+			pol.Webhook = false
+			pol.TTLSeconds = 0
+			if rem := int(time.Until(er.Deadline).Seconds()); rem > 0 {
+				pol.TTLSeconds = rem
+			}
+		}
+	}
+	return pol
 }
 
 // runExec runs an allow-listed command on behalf of a member. The requested

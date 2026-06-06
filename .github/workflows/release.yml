@@ -4,7 +4,7 @@ name: Release
 #   git tag v0.2.0 && git push origin v0.2.0
 #
 # Required repository secrets:
-#   DOCKERHUB_USERNAME / DOCKERHUB_TOKEN  — to push astralis/netherchat
+#   DOCKERHUB_USERNAME / DOCKERHUB_TOKEN  — to push salkreiner/netherchat
 #   HOMEBREW_TAP_TOKEN                    — PAT with write access to the tap repo
 # (GITHUB_TOKEN for the release itself is provided automatically.)
 

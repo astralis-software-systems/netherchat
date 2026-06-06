@@ -1,0 +1,222 @@
+/* The link-join client. Deliberately sparse: one screen to enter a name, one
+   screen to chat. Brand tokens (--bg, --accent, fonts) come from tokens.css /
+   fonts.css; everything here is layout only. */
+
+#app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- shared chrome ---------- */
+
+.nc-glyph {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+.nc-glyph svg {
+  display: block;
+}
+
+.nc-room {
+  font-family: var(--font-mono);
+  color: var(--accent2);
+}
+
+/* ---------- join (name) screen ---------- */
+
+.nc-gate {
+  margin: auto;
+  width: min(420px, calc(100vw - 2.5rem));
+  padding: 2rem 1.75rem;
+}
+
+.nc-gate h1 {
+  margin: 1.5rem 0 0.4rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+.nc-gate .nc-sub {
+  margin: 0 0 1.5rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.nc-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.nc-input {
+  width: 100%;
+  padding: 0.7rem 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 1rem;
+  outline: none;
+  transition: border-color 0.12s ease;
+}
+.nc-input:focus {
+  border-color: var(--accent);
+}
+
+.nc-btn {
+  padding: 0.7rem 1rem;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-size: 1rem;
+  font-weight: 600;
+  transition: filter 0.12s ease;
+}
+.nc-btn:hover {
+  filter: brightness(1.08);
+}
+.nc-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.nc-fine {
+  margin: 1.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.nc-error {
+  margin: auto;
+  width: min(420px, calc(100vw - 2.5rem));
+  padding: 2rem 1.75rem;
+  text-align: center;
+  color: var(--muted);
+}
+.nc-error h1 {
+  color: var(--text);
+  font-size: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+/* ---------- chat screen ---------- */
+
+.nc-chat {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.nc-head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.nc-head .nc-title {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.nc-head .nc-spacer {
+  flex: 1;
+}
+.nc-count {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.nc-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.nc-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.nc-status[data-state="connecting"] .nc-dot {
+  background: var(--warn);
+}
+.nc-status[data-state="encrypted"] {
+  color: var(--success);
+}
+.nc-status[data-state="encrypted"] .nc-dot {
+  background: var(--success);
+}
+.nc-status[data-state="down"] {
+  color: var(--error);
+}
+.nc-status[data-state="down"] .nc-dot {
+  background: var(--error);
+}
+
+.nc-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+}
+
+.nc-row {
+  line-height: 1.5;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+.nc-row .nc-ts {
+  color: var(--muted);
+  margin-right: 0.5rem;
+  font-size: 0.8rem;
+}
+.nc-row .nc-name {
+  font-weight: 600;
+}
+.nc-row.nc-self .nc-name {
+  color: var(--accent2);
+}
+.nc-row .nc-text code {
+  background: var(--surface-2);
+  padding: 0.05rem 0.3rem;
+  border-radius: var(--radius-xs);
+}
+
+.nc-sys {
+  color: var(--muted);
+  font-style: italic;
+  font-size: 0.85rem;
+}
+.nc-plain {
+  color: var(--warn);
+}
+.nc-plain .nc-tag {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+.nc-err {
+  color: var(--error);
+}
+
+.nc-composer {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--border);
+}
+.nc-composer .nc-input {
+  flex: 1;
+  font-family: var(--font-mono);
+}

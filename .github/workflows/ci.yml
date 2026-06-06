@@ -52,10 +52,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: build server image
-        run: docker build -t astralis/netherchat:ci .
+        run: docker build -t salkreiner/netherchat:ci .
       - name: smoke test
         run: |
-          docker run -d -p 3000:3000 --name nc-ci astralis/netherchat:ci
+          docker run -d -p 3000:3000 --name nc-ci salkreiner/netherchat:ci
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:3000/health >/dev/null 2>&1; then ok=1; break; fi
             sleep 0.5

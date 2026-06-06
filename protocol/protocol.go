@@ -41,6 +41,12 @@ const (
 	OpExecResult    Op = "exec_result"    // server -> client: command output
 	OpInviteRequest Op = "invite_request" // client -> server: mint an invite token for the room
 	OpInviteResult  Op = "invite_result"  // server -> client: the minted token
+
+	// break-glass (additive over v2): stand up an ephemeral, invite-only room with
+	// a hard expiry and one-time links for named people — the incident war room
+	// that vanishes. See server/internal/ephemeral and PROTOCOL.md §11.
+	OpBreakGlass       Op = "break_glass"        // client -> server: create a war room + mint links
+	OpBreakGlassResult Op = "break_glass_result" // server -> client: room name, links, host token, deadline
 )
 
 // Envelope is the outer frame for every message on the wire. Data holds the

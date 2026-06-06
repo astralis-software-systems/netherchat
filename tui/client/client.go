@@ -170,6 +170,13 @@ func (c *Client) SetTTL(seconds int) {
 // RequestInvite asks the server to mint a one-time invite token for this room.
 func (c *Client) RequestInvite() { c.enqueue(protocol.OpInviteRequest, protocol.InviteRequest{}) }
 
+// BreakGlass asks the server to stand up an ephemeral, invite-only war room with
+// a hard TTL and one-time invite links for each named person. The reply arrives
+// as EvBreakGlass. The server clamps the TTL and caps the invitee count.
+func (c *Client) BreakGlass(invitees []string, ttlSeconds int) {
+	c.enqueue(protocol.OpBreakGlass, protocol.BreakGlass{Invitees: invitees, TTLSeconds: ttlSeconds})
+}
+
 // Exec asks the server to run an allow-listed command in this room.
 func (c *Client) Exec(command string) {
 	c.enqueue(protocol.OpExecRequest, protocol.ExecRequest{Command: command})
@@ -274,6 +281,8 @@ func (c *Client) handle(env protocol.Envelope) {
 		c.onExecResult(env)
 	case protocol.OpInviteResult:
 		c.onInviteResult(env)
+	case protocol.OpBreakGlassResult:
+		c.onBreakGlassResult(env)
 	case protocol.OpError:
 		var e protocol.Error
 		if err := env.Decode(&e); err == nil {
@@ -470,6 +479,28 @@ func (c *Client) onInviteResult(env protocol.Envelope) {
 		exp = time.Unix(r.Expires, 0)
 	}
 	c.emit(EvInvite{Room: r.Room, Token: r.Token, Expires: exp})
+}
+
+func (c *Client) onBreakGlassResult(env protocol.Envelope) {
+	var r protocol.BreakGlassResult
+	if err := env.Decode(&r); err != nil {
+		return
+	}
+	var exp time.Time
+	if r.Expires > 0 {
+		exp = time.Unix(r.Expires, 0)
+	}
+	invites := make([]BreakGlassInvite, 0, len(r.Invites))
+	for _, in := range r.Invites {
+		invites = append(invites, BreakGlassInvite{Name: in.Name, Token: in.Token})
+	}
+	c.emit(EvBreakGlass{
+		Room:       r.Room,
+		TTLSeconds: r.TTLSeconds,
+		Expires:    exp,
+		HostToken:  r.HostToken,
+		Invites:    invites,
+	})
 }
 
 // addMemberLocked records a member; caller holds c.mu. Malformed keys are skipped.

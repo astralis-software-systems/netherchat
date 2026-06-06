@@ -55,6 +55,23 @@ type EvInvite struct {
 	Expires time.Time
 }
 
+// BreakGlassInvite pairs an invited person with their one-time token.
+type BreakGlassInvite struct {
+	Name  string
+	Token string
+}
+
+// EvBreakGlass is emitted in response to /break-glass: a freshly created
+// ephemeral war room, its hard expiry, a host token for the creator to join with,
+// and one-time tokens for each invited person.
+type EvBreakGlass struct {
+	Room       string
+	TTLSeconds int
+	Expires    time.Time
+	HostToken  string
+	Invites    []BreakGlassInvite
+}
+
 // EvKeyReady is emitted when this client holds the room key for an epoch and can
 // send and receive messages.
 type EvKeyReady struct{ Epoch uint64 }
@@ -86,6 +103,7 @@ func (EvServerMessage) isEvent() {}
 func (EvControl) isEvent()       {}
 func (EvExecResult) isEvent()    {}
 func (EvInvite) isEvent()        {}
+func (EvBreakGlass) isEvent()    {}
 func (EvMemberJoined) isEvent()  {}
 func (EvMemberLeft) isEvent()    {}
 func (EvError) isEvent()         {}

@@ -110,6 +110,47 @@ func (h *Hub) removeLocked(roomName, memberID string) bool {
 	return false
 }
 
+// ExpireRoom closes a room out of band: it removes the room, notifies every
+// member with a plaintext system message, and terminates their connections. It
+// is used by the ephemeral-room (break-glass) janitor when a war room hits its
+// hard deadline, and is safe to call for a room that is already gone (no-op).
+func (h *Hub) ExpireRoom(roomName, reason string) {
+	h.mu.Lock()
+	r := h.rooms[roomName]
+	if r == nil {
+		h.mu.Unlock()
+		return
+	}
+	members := make([]*Member, 0, len(r.members))
+	for _, m := range r.members {
+		members = append(members, m)
+	}
+	delete(h.rooms, roomName)
+	h.mu.Unlock()
+
+	h.log.Info("room expired", "room", roomName, "members", len(members))
+	closeMembers(members, reason)
+}
+
+// closeMembers sends a closing system notice to each member and then terminates
+// the connection. Called outside the hub lock.
+func closeMembers(members []*Member, reason string) {
+	notice, _ := protocol.Encode(protocol.OpServerMessage, protocol.ServerMessage{
+		Kind: "system",
+		From: "server",
+		Text: reason,
+		At:   time.Now().Unix(),
+	})
+	for _, m := range members {
+		if m.Send != nil {
+			m.Send(notice)
+		}
+		if m.Close != nil {
+			m.Close()
+		}
+	}
+}
+
 // IsEmpty reports whether a room has no members (or does not exist).
 func (h *Hub) IsEmpty(roomName string) bool {
 	h.mu.Lock()
@@ -226,20 +267,7 @@ func (h *Hub) expireIdleRooms() {
 	h.mu.Unlock()
 
 	for _, v := range victims {
-		h.log.Info("room expired (ttl)", "room", v.name, "members", len(v.members))
-		notice, _ := protocol.Encode(protocol.OpServerMessage, protocol.ServerMessage{
-			Kind: "system",
-			From: "server",
-			Text: "this room has expired (ttl) and is closing",
-			At:   now.Unix(),
-		})
-		for _, m := range v.members {
-			if m.Send != nil {
-				m.Send(notice)
-			}
-			if m.Close != nil {
-				m.Close()
-			}
-		}
+		h.log.Info("room expired (idle ttl)", "room", v.name, "members", len(v.members))
+		closeMembers(v.members, "this room has expired (ttl) and is closing")
 	}
 }

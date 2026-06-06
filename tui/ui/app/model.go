@@ -26,6 +26,7 @@ import (
 // Model is the Bubble Tea model for the whole client.
 type Model struct {
 	url, name, identityPath, notifyCmd string
+	webURL                             string // base URL of the web join client, for /break-glass links
 	fingerprint                        string
 
 	cmds  *command.Set
@@ -49,10 +50,12 @@ type Model struct {
 }
 
 // Run connects to the initial room and runs the TUI. invite is the one-time
-// token for the initial room (empty for open rooms).
-func Run(url, name, identityPath, room, notifyCmd, invite string) error {
+// token for the initial room (empty for open rooms). webURL is the base URL of
+// the browser join client, used to build /break-glass invite links.
+func Run(url, name, identityPath, room, notifyCmd, invite, webURL string) error {
 	m := newModel(url, name, identityPath, room, notifyCmd)
 	m.initialInvite = invite
+	m.webURL = webURL
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
@@ -383,6 +386,13 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 	case client.EvInvite:
 		r.appendLine(line{at: time.Now(), kind: lineRaw, text: m.renderInvite(name, e)})
 
+	case client.EvBreakGlass:
+		// Show the war-room banner (links + deadline) in the room where the command
+		// was run, then bring the new room up in the background so it lands in the
+		// sidebar without yanking focus away from the links the user needs to copy.
+		r.appendLine(line{at: time.Now(), kind: lineRaw, text: m.renderBreakGlass(e)})
+		notify = m.joinRoomOpts(e.Room, e.HostToken, false)
+
 	case client.EvError:
 		r.appendError(e.Err.Error())
 
@@ -401,15 +411,27 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 func (m *Model) activeRoom() *room { return m.session[m.active] }
 
 func (m *Model) joinRoom(name, token string) tea.Cmd {
+	return m.joinRoomOpts(name, token, true)
+}
+
+// joinRoomOpts joins (or focuses) a room. When activate is false the room is
+// connected in the background without stealing focus — used by /break-glass so
+// the freshly created war room appears in the sidebar while the creator keeps
+// reading the printed invite links in the current room.
+func (m *Model) joinRoomOpts(name, token string, activate bool) tea.Cmd {
 	if r, ok := m.session[name]; ok {
-		m.active = name
-		r.unread = 0
-		m.syncViewport()
+		if activate {
+			m.active = name
+			r.unread = 0
+			m.syncViewport()
+		}
 		return nil
 	}
 	m.session[name] = newRoom(name)
 	m.order = append(m.order, name)
-	m.active = name
+	if activate {
+		m.active = name
+	}
 	m.syncViewport()
 	return connectRoom(m.url, name, m.name, m.identityPath, token)
 }

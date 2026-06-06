@@ -5,8 +5,8 @@
 # (ARCHITECTURE_DECISION.md §1). The server makes no outbound calls, so it needs
 # no CA bundle.
 #
-#   docker build -t astralis/netherchat .
-#   docker run -p 3000:3000 astralis/netherchat
+#   docker build -t salkreiner/netherchat .
+#   docker run -p 3000:3000 salkreiner/netherchat
 
 # ---- build stage ------------------------------------------------------------
 FROM golang:1.26-alpine AS build

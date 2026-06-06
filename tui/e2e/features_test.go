@@ -120,6 +120,68 @@ func TestInviteOnlyGating(t *testing.T) {
 	}
 }
 
+func TestBreakGlassWarRoom(t *testing.T) {
+	ts := httptest.NewServer(server.Handler(config.Default(), quietLogger()))
+	defer ts.Close()
+
+	// The commander is in an ordinary room and pulls the break-glass handle.
+	commander := connect(t, ts.URL, "general", "commander", "")
+	waitMatch[client.EvConnected](t, commander, nil, 5*time.Second)
+
+	commander.BreakGlass([]string{"alice", "bob"}, 30) // server clamps up to its 1m floor
+	bg := waitMatch[client.EvBreakGlass](t, commander, nil, 5*time.Second)
+
+	if !strings.HasPrefix(bg.Room, "war-") {
+		t.Fatalf("war room name = %q, want war-*", bg.Room)
+	}
+	if bg.HostToken == "" {
+		t.Fatal("expected a host token")
+	}
+	if len(bg.Invites) != 2 || bg.Invites[0].Name != "alice" || bg.Invites[1].Name != "bob" {
+		t.Fatalf("invites = %+v, want alice & bob", bg.Invites)
+	}
+	for _, in := range bg.Invites {
+		if in.Token == "" {
+			t.Fatalf("invite for %s has no token", in.Name)
+		}
+	}
+	if bg.TTLSeconds <= 0 || bg.Expires.Before(time.Now()) {
+		t.Fatalf("expected a future deadline, got ttl=%d expires=%s", bg.TTLSeconds, bg.Expires)
+	}
+
+	// The creator joins their own war room with the host token and bootstraps it.
+	host := connect(t, ts.URL, bg.Room, "commander", bg.HostToken)
+	waitMatch[client.EvKeyReady](t, host, nil, 5*time.Second)
+
+	// alice joins with her one-time link and gets the room key via the distributor.
+	alice := connect(t, ts.URL, bg.Room, "alice", bg.Invites[0].Token)
+	waitMatch[client.EvKeyReady](t, alice, nil, 5*time.Second)
+
+	// The war room is a real E2E room: host -> alice decrypts.
+	if err := host.Send("the database is on fire"); err != nil {
+		t.Fatalf("host send: %v", err)
+	}
+	got := waitMatch[client.EvMessage](t, alice, func(m client.EvMessage) bool { return !m.Self }, 5*time.Second)
+	if got.Text != "the database is on fire" {
+		t.Fatalf("alice decrypted %q", got.Text)
+	}
+
+	// alice's link is one-time: replaying it is rejected.
+	replay := connect(t, ts.URL, bg.Room, "imposter", bg.Invites[0].Token)
+	re := waitMatch[client.EvError](t, replay, nil, 5*time.Second)
+	if !strings.Contains(re.Err.Error(), "invite") {
+		t.Fatalf("expected one-time-token rejection, got %v", re.Err)
+	}
+
+	// The war room is invite-only: joining the now-populated room without a token
+	// is rejected (no open bootstrap once it has members).
+	crasher := connect(t, ts.URL, bg.Room, "crasher", "")
+	ce := waitMatch[client.EvError](t, crasher, nil, 5*time.Second)
+	if !strings.Contains(ce.Err.Error(), "invite") {
+		t.Fatalf("expected invite-only rejection, got %v", ce.Err)
+	}
+}
+
 func TestExecAllowlist(t *testing.T) {
 	ts := httptest.NewServer(server.Handler(featureConfig(), quietLogger()))
 	defer ts.Close()

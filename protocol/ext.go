@@ -53,3 +53,31 @@ type InviteResult struct {
 	Token   string `json:"token"`
 	Expires int64  `json:"expires,omitempty"` // unix seconds, 0 = no expiry
 }
+
+// BreakGlass asks the server to stand up an ephemeral, invite-only war room with
+// a hard time-to-live and one-time invite links for each named person. The room
+// is created with a server-generated name and vanishes at the deadline whether or
+// not it is still in use — the "incident war room that vanishes" use case. The
+// server clamps TTLSeconds into a sane range and caps the number of invitees.
+type BreakGlass struct {
+	Invitees   []string `json:"invitees"`    // display names; one one-time link is minted per name
+	TTLSeconds int      `json:"ttl_seconds"` // hard lifetime of the room
+}
+
+// BreakGlassInvite pairs a named person with their one-time token. The token is
+// embedded in a /join?room=<room>&token=<token> link by the client.
+type BreakGlassInvite struct {
+	Name  string `json:"name"`
+	Token string `json:"token"`
+}
+
+// BreakGlassResult is the server's reply to BreakGlass. HostToken is a one-time
+// token for the creator to join their own room without racing the invitees for
+// the invite-only bootstrap slot. Expires is the hard deadline (unix seconds).
+type BreakGlassResult struct {
+	Room       string             `json:"room"`
+	TTLSeconds int                `json:"ttl_seconds"`
+	Expires    int64              `json:"expires"`
+	HostToken  string             `json:"host_token"`
+	Invites    []BreakGlassInvite `json:"invites"`
+}

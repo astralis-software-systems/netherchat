@@ -4,7 +4,7 @@
 #   curl -fsSL https://netherchat.com/install | bash
 #   curl -fsSL https://netherchat.com/install | bash -s -- --version 1.2.0
 #
-# The server is distributed as a Docker image (astralis/netherchat); this script
+# The server is distributed as a Docker image (salkreiner/netherchat); this script
 # installs the client only. POSIX sh — no bashisms — so it runs under sh, bash,
 # ash (Alpine) and zsh alike.
 #
@@ -172,5 +172,5 @@ esac
 
 printf '\n%sNetherchat %s installed.%s  Messaging that lives below the surface.\n' "$C_VIO" "$ver" "$C_RST"
 printf '  %sConnect:%s   netherchat connect ws://localhost:3000 --name "$USER"\n' "$C_DIM" "$C_RST"
-printf '  %sRun a server:%s docker run -p 3000:3000 astralis/netherchat\n' "$C_DIM" "$C_RST"
+printf '  %sRun a server:%s docker run -p 3000:3000 salkreiner/netherchat\n' "$C_DIM" "$C_RST"
 printf '  %sUninstall:%s curl -fsSL https://netherchat.com/install | bash -s -- --uninstall\n\n' "$C_DIM" "$C_RST"

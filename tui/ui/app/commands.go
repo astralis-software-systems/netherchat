@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -12,6 +13,10 @@ import (
 	"github.com/salehkreiner/netherchat/tui/ui/theme"
 )
 
+// defaultBreakGlassTTL is used when /break-glass is run without --ttl. It matches
+// the canonical "vanishes in 4 hours" war-room example.
+const defaultBreakGlassTTL = 4 * time.Hour
+
 func buildCommands() *command.Set {
 	return command.New(
 		command.Command{Name: "help", Help: "list commands"},
@@ -20,6 +25,7 @@ func buildCommands() *command.Set {
 		command.Command{Name: "font", Help: "show the recommended terminal font"},
 		command.Command{Name: "whoami", Help: "show your fingerprint and session info"},
 		command.Command{Name: "invite", Help: "generate a one-time invite token (with QR)"},
+		command.Command{Name: "break-glass", Args: "--invite a,b --ttl 4h", Help: "stand up an ephemeral war room with one-time join links"},
 		command.Command{Name: "vanish", Help: "rotate the room key and clear history"},
 		command.Command{Name: "ttl", Args: "<dur|off>", Help: "set a message display TTL",
 			Complete: func(p string) []string { return command.FilterPrefix([]string{"off", "10m", "1h", "24h"}, p) }},
@@ -51,6 +57,21 @@ func (m *Model) runCommand(input string) tea.Cmd {
 			break
 		}
 		r.client.RequestInvite()
+	case "break-glass":
+		if !m.connected(r) {
+			break
+		}
+		invitees, ttl, err := parseBreakGlass(arg)
+		if err != nil {
+			m.addError(err.Error())
+			break
+		}
+		r.client.BreakGlass(invitees, int(ttl.Seconds()))
+		who := "no one yet"
+		if len(invitees) > 0 {
+			who = strings.Join(invitees, ", ")
+		}
+		m.addSystem(fmt.Sprintf("break-glass: standing up a war room (ttl %s) for %s …", ttl, who))
 	case "vanish":
 		if !m.connected(r) {
 			break
@@ -181,6 +202,111 @@ func (m *Model) whoamiText(r *room) string {
 		}
 	}
 	return b.String()
+}
+
+// parseBreakGlass parses the /break-glass argument string, e.g.
+// "--invite alice,bob --ttl 4h". Both "--flag value" and "--flag=value" forms are
+// accepted. Invitees are comma-separated. TTL defaults to 4h when omitted; the
+// server clamps it to a sane range regardless.
+func parseBreakGlass(arg string) (invitees []string, ttl time.Duration, err error) {
+	ttl = defaultBreakGlassTTL
+	fields := strings.Fields(arg)
+	for i := 0; i < len(fields); i++ {
+		flag := fields[i]
+		val := ""
+		if eq := strings.IndexByte(flag, '='); eq >= 0 {
+			flag, val = flag[:eq], flag[eq+1:]
+		} else if i+1 < len(fields) && !strings.HasPrefix(fields[i+1], "-") {
+			val = fields[i+1]
+			i++
+		}
+		switch strings.TrimLeft(flag, "-") {
+		case "invite", "invitees", "i":
+			for _, part := range strings.Split(val, ",") {
+				if p := strings.TrimSpace(part); p != "" {
+					invitees = append(invitees, p)
+				}
+			}
+		case "ttl", "t":
+			d, perr := time.ParseDuration(val)
+			if perr != nil || d <= 0 {
+				return nil, 0, fmt.Errorf("bad --ttl %q  (e.g. 30m, 4h, 24h)", val)
+			}
+			ttl = d
+		default:
+			return nil, 0, fmt.Errorf("unknown flag %q  ·  usage: /break-glass --invite alice,bob --ttl 4h", fields[i])
+		}
+	}
+	return invitees, ttl, nil
+}
+
+// renderBreakGlass builds the war-room banner: the new room, its hard deadline,
+// and a one-time join link per invitee, ready to paste to each person.
+func (m *Model) renderBreakGlass(e client.EvBreakGlass) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("🔥 break-glass war room: #%s\n", e.Room))
+	b.WriteString("   ephemeral · invite-only · end-to-end encrypted · vanishes on a timer\n")
+	if !e.Expires.IsZero() {
+		b.WriteString(fmt.Sprintf("   expires: %s  (in %s)\n", e.Expires.Format("2006-01-02 15:04"), remaining(e.Expires)))
+	}
+	if len(e.Invites) == 0 {
+		b.WriteString("\n   no invitees named — add people with /invite once you're in the room.\n")
+	} else {
+		b.WriteString("\n   send each person their one-time link:\n")
+		width := 0
+		for _, in := range e.Invites {
+			if len(in.Name) > width {
+				width = len(in.Name)
+			}
+		}
+		for _, in := range e.Invites {
+			b.WriteString(fmt.Sprintf("     %-*s  %s\n", width, in.Name, m.joinLink(e.Room, in.Token)))
+		}
+	}
+	b.WriteString(fmt.Sprintf("\n   you're in #%s (background) — switch to it with ctrl+n", e.Room))
+	return b.String()
+}
+
+// joinLink builds the browser join URL for a room + one-time token.
+func (m *Model) joinLink(room, token string) string {
+	base := strings.TrimRight(m.webBase(), "/")
+	q := url.Values{"room": {room}, "token": {token}}
+	return base + "/join?" + q.Encode()
+}
+
+// webBase is the base URL of the browser join client. It uses --web-url when
+// provided, otherwise derives it from the relay URL (ws→http, wss→https, path
+// dropped) — correct for the common deployment where the web client and relay
+// share an origin.
+func (m *Model) webBase() string {
+	if m.webURL != "" {
+		return m.webURL
+	}
+	return deriveWebBase(m.url)
+}
+
+// deriveWebBase maps a relay URL to the web client's origin.
+func deriveWebBase(serverURL string) string {
+	u, err := url.Parse(serverURL)
+	if err != nil || u.Host == "" {
+		return serverURL
+	}
+	switch u.Scheme {
+	case "ws":
+		u.Scheme = "http"
+	case "wss":
+		u.Scheme = "https"
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// remaining formats the duration from now until t, rounded to the minute.
+func remaining(t time.Time) string {
+	d := time.Until(t).Round(time.Minute)
+	if d < 0 {
+		d = 0
+	}
+	return d.String()
 }
 
 // renderInvite builds the multi-line block (hint + QR) shown for an invite.
