@@ -68,6 +68,12 @@ func agentCmd(args []string) {
 				if e.Self {
 					continue // never act on our own echo
 				}
+				if !e.Signed {
+					// Refuse to run an unsigned request: we must be able to
+					// attribute every action to an identity key.
+					log.Warn("exec IGNORED (unsigned request)", "cmd", e.Cmd, "by", e.FromName)
+					continue
+				}
 				go runRunbookAction(c, rb, e, *maxOutput, log)
 			case client.EvError:
 				log.Warn("client error", "err", e.Err)

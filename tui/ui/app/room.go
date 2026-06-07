@@ -24,6 +24,13 @@ type line struct {
 	kind lineKind
 	from string
 	text string
+
+	// For message lines: the sender's identity fingerprint and whether the
+	// message carried a valid signature. The trust/verify badge is computed at
+	// render time from these + current verification state, so verifying a peer
+	// updates the badge on their earlier messages too.
+	fpr    string
+	signed bool
 }
 
 // memberView is the per-room cache of a member's display name and identity

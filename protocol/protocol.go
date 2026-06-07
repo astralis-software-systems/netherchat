@@ -17,9 +17,18 @@ import "encoding/json"
 //
 // v2 adds (additively, keeping the connection==room model): invite tokens on
 // Hello, room policy on Welcome, server-originated plaintext messages
-// (webhooks/system, OpServerMessage), control actions (OpControl), remote exec
+// (webhooks/system, OpServerMessage), control actions (OpControl), edge exec
 // (OpExecRequest/Result), and invite generation (OpInviteRequest/Result).
-const Version = 2
+//
+// v3 adds room-bound, OPTIONAL per-message Ed25519 signatures (§3.3): the signed
+// bytes now include the room id, and the signature rides in Message.Sig
+// (sig,omitempty). It is additive — a message with no Sig is accepted as
+// "unsigned" rather than rejected, so v2 senders still interoperate. The server
+// therefore accepts any client in [MinVersion, Version].
+const Version = 3
+
+// MinVersion is the oldest protocol version the server still admits.
+const MinVersion = 2
 
 // Op is the discriminator on the outer Envelope.
 type Op string
@@ -140,15 +149,20 @@ type KeyDeliver struct {
 	WrappedKey []byte `json:"wrapped_key"` // box(roomKey) — opaque to the server
 }
 
-// Message is an end-to-end encrypted chat message. The server fans it out to
-// every other member of the room verbatim; Ciphertext is never decryptable by
-// the server.
+// Message is an end-to-end encrypted chat message (also the envelope for exec
+// request/result frames). The server fans it out to every other member of the
+// room verbatim; Ciphertext is never decryptable by the server.
+//
+// Sig is the OPTIONAL Ed25519 signature over SigningBytes(...) (§3.3). It is
+// omitempty: a frame with no Sig is treated as unsigned (not invalid), which is
+// how pre-v3 senders — who used a different field — interoperate and appear
+// unsigned rather than failing verification.
 type Message struct {
 	FromID     string `json:"from_id"`
 	Epoch      uint64 `json:"epoch"`
 	Nonce      []byte `json:"nonce"`      // 24-byte XChaCha20-Poly1305 nonce
 	Ciphertext []byte `json:"ciphertext"` // XChaCha20-Poly1305(roomKey, plaintext)
-	Signature  []byte `json:"signature"`  // Ed25519 over SigningBytes(...)
+	Sig        []byte `json:"sig,omitempty"`
 }
 
 // Error is a server-to-client error notification.

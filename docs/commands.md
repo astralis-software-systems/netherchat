@@ -11,6 +11,7 @@ Type these in the message box. Tab completes command names and arguments.
 | `/font` | Show the recommended terminal font for the current theme (advisory — a TUI cannot change the terminal font; the web client honors fonts directly). |
 | `/whoami` | Show your identity: ssh-keygen-format fingerprint, where the key came from (ssh-agent / key file / generated), room, and encryption status. |
 | `/whois [@handle]` | Show an identity's fingerprint, pin status (`pinned ✓` / `unpinned ✗`), and — if a `keys_url` is configured — whether it matches a published key. No argument shows your own identity. See below. |
+| `/verify [@handle [ok]]` | Out-of-band verify a peer via a 5-word SAS read over a trusted side channel. See below. |
 | `/invite` | Mint a one-time invite token for the current room and display it as a QR code. |
 | `/break-glass --invite a,b --ttl 4h` | Stand up an ephemeral, invite-only **war room** with a hard TTL and a one-time browser join link for each named person. See below. |
 | `/vanish` | Rotate the room key forward (HKDF ratchet) and clear history for everyone — messages from before are no longer decryptable. |
@@ -62,6 +63,30 @@ browser guest and terminal users share the same room transparently.
 To serve it on the same origin as the relay, build `web/` (`npm run build`) and
 have your reverse proxy serve the static `dist/` and map the clean path
 `/join → /join.html` (one rewrite rule), while proxying `/ws` to the relay.
+
+## `/verify` — out-of-band verification (SAS)
+
+`/whois` checks an identity against a key published *somewhere*. `/verify` checks
+that **the live channel itself** has no MITM — even if you don't trust the relay
+or the network. After key exchange, both sides derive a 5-word **Short
+Authentication String** from the session transcript (the room key + both parties'
+public keys). You read the words to each other over a side channel already open
+(a phone bridge during an incident). If they match, the channel is clean; a relay
+that substituted a key produces different words.
+
+```
+/verify @bob        # prints the 5 words + read-aloud instructions
+/verify @bob ok     # after they match, mark bob verified (✓ in the member list)
+/verify             # show everyone's verification status
+```
+
+Both parties run `/verify @<other>` and compare; the 5 words are identical iff
+there's no MITM. Verification is in-memory only (it does not persist).
+
+Once verified, that peer's signed messages show a `✓✓` badge; a trust-pinned
+(`[[trust]]`) sender shows `✓`; an unsigned (legacy) sender shows `?`. A message
+whose signature fails verification is rejected with a warning and its body is not
+shown.
 
 ## Identity — bring your own key
 

@@ -1,18 +1,22 @@
 // Standalone interop check (no test runner): decrypts the Go-produced vector and
 // runs the browser crypto round-trips. Run with: npx vite-node scripts/interop-check.ts
+// (a worker-free alternative to vitest for restricted environments).
 import { fromB64 } from "../src/crypto/base64";
 import { newRoomKey, ratchet, wrapRoomKey, unwrapRoomKey, sealMessage, openMessage } from "../src/crypto/group";
 import { newEphemeralIdentity, fingerprint } from "../src/crypto/identity";
+import { signingBytes } from "../src/crypto/signing";
 
+// Protocol v3 vector (room-bound signature) from protocol's TestGenInteropVector.
 const VECTOR = {
   roomKey: "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr8=",
   signPub: "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=",
+  roomID: "ops",
   fromID: "alice-9f3c",
   epoch: 7,
   plaintext: "the database is on fire 🔥 `kubectl rollout undo`",
-  nonce: "ceQjYZoWpcTEQ5lMiv8Xs+HKFt3YmqAn",
-  cipher: "AUSDiEknyHYuqxhB4IUH0WLAgjJZSbNWS1ZA34FUEt80F5uClGDTJgYPv1TT2LfPEk2OwcEGss1Y81UB83yi0WN6Gw==",
-  sig: "Ge5CHGhYMkjs61lXBzuvUin7dW1QTZ3/0KIzojr1CDNH6H50uTTdLQcuBeK+rd94WDrFNdJfNLk5BFsH7zrCAQ==",
+  nonce: "qDNaA4QRIdnkB1MaQcH+xT3wRJd6Gi/t",
+  cipher: "1UaaM3zoBV5xEWbFu6Kv2rmGz1mcSfO0R1AAVgp13rk1uRsA+25W7k9g9hJ7ANZ72mhqFOOLw+q75Z36k+e18FLjdg==",
+  sig: "5sk4OPsflCQ2El+peDpLIPmlJT66qTAUujHvJ5L9/BvR5FAcHuNWmPURtgBc/E9QVbakL0++Bj0rQ1Zk4VDnAA==",
 };
 
 let failures = 0;
@@ -21,9 +25,9 @@ function check(name: string, ok: boolean) {
   if (!ok) failures++;
 }
 
-// 1. Decrypt the Go-sealed message.
+// 1. Decrypt + verify the Go-sealed v3 message.
 const rk = { epoch: VECTOR.epoch, key: fromB64(VECTOR.roomKey) };
-const pt = openMessage(rk, fromB64(VECTOR.signPub), VECTOR.fromID, VECTOR.epoch, fromB64(VECTOR.nonce), fromB64(VECTOR.cipher), fromB64(VECTOR.sig));
+const pt = openMessage(rk, fromB64(VECTOR.signPub), VECTOR.roomID, VECTOR.fromID, VECTOR.epoch, fromB64(VECTOR.nonce), fromB64(VECTOR.cipher), fromB64(VECTOR.sig));
 check("decrypts Go-sealed message", new TextDecoder().decode(pt) === VECTOR.plaintext);
 
 // 2. Tampered ciphertext is rejected.
@@ -31,20 +35,53 @@ check("decrypts Go-sealed message", new TextDecoder().decode(pt) === VECTOR.plai
   const ct = fromB64(VECTOR.cipher);
   ct[0] ^= 0x01;
   let threw = false;
-  try { openMessage(rk, fromB64(VECTOR.signPub), VECTOR.fromID, VECTOR.epoch, fromB64(VECTOR.nonce), ct, fromB64(VECTOR.sig)); } catch { threw = true; }
+  try { openMessage(rk, fromB64(VECTOR.signPub), VECTOR.roomID, VECTOR.fromID, VECTOR.epoch, fromB64(VECTOR.nonce), ct, fromB64(VECTOR.sig)); } catch { threw = true; }
   check("rejects tampered ciphertext", threw);
 }
 
-// 3. Round-trip seal/open.
+// 3. A wrong room id is rejected (the signature binds it).
+{
+  let threw = false;
+  try { openMessage(rk, fromB64(VECTOR.signPub), "other-room", VECTOR.fromID, VECTOR.epoch, fromB64(VECTOR.nonce), fromB64(VECTOR.cipher), fromB64(VECTOR.sig)); } catch { threw = true; }
+  check("rejects wrong room id", threw);
+}
+
+// 4. signingBytes matches the Go cross-impl vector byte-for-byte.
+{
+  const nonce = new Uint8Array(24);
+  for (let i = 0; i < 24; i++) nonce[i] = i;
+  const hex = Array.from(signingBytes("ops", "alice", 7, nonce, new TextEncoder().encode("netherchat")))
+    .map((x) => x.toString(16).padStart(2, "0"))
+    .join("");
+  const want =
+    "00000000000000116e6574686572636861742f6d73672f7631" +
+    "00000000000000036f7073" +
+    "0000000000000005616c696365" +
+    "0000000000000007" +
+    "0000000000000018000102030405060708090a0b0c0d0e0f1011121314151617" +
+    "000000000000000a6e657468657263686174";
+  check("signingBytes matches Go", hex === want);
+}
+
+// 5. Round-trip seal/open (v3, room-bound).
 {
   const id = newEphemeralIdentity();
   const k = newRoomKey(0);
-  const s = sealMessage(id, k, "me", new TextEncoder().encode("hello, war room"));
-  const out = openMessage(k, id.signPub, "me", k.epoch, s.nonce, s.ciphertext, s.signature);
+  const s = sealMessage(id, k, "ops", "me", new TextEncoder().encode("hello, war room"));
+  const out = openMessage(k, id.signPub, "ops", "me", k.epoch, s.nonce, s.ciphertext, s.signature);
   check("seal/open round-trip", new TextDecoder().decode(out) === "hello, war room");
 }
 
-// 4. Wrap/unwrap a room key.
+// 6. Unsigned message accepted (empty signature → decrypt without verify).
+{
+  const id = newEphemeralIdentity();
+  const k = newRoomKey(0);
+  const s = sealMessage(id, k, "ops", "me", new TextEncoder().encode("legacy"));
+  const out = openMessage(k, id.signPub, "ops", "me", k.epoch, s.nonce, s.ciphertext, new Uint8Array(0));
+  check("accepts unsigned message", new TextDecoder().decode(out) === "legacy");
+}
+
+// 7. Wrap/unwrap a room key.
 {
   const a = newEphemeralIdentity();
   const b = newEphemeralIdentity();
@@ -54,7 +91,7 @@ check("decrypts Go-sealed message", new TextDecoder().decode(pt) === VECTOR.plai
   check("wrap/unwrap room key", got.key.every((v, i) => v === k.key[i]));
 }
 
-// 5. Deterministic ratchet + fingerprint format + fresh identities.
+// 8. Deterministic ratchet + fingerprint format + fresh identities.
 {
   const k = newRoomKey(0);
   const n1 = ratchet(k), n2 = ratchet(k);

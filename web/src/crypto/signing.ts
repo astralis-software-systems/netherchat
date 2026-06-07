@@ -1,10 +1,11 @@
-// Mirrors protocol/signing.go exactly. The signature over a message covers an
-// injective, length-prefixed encoding so that no concatenation of one field can
-// be confused for another. Both signer and verifier — in any language — must
-// derive identical bytes, so this layout is fixed and must match the Go side
-// byte-for-byte.
+// Mirrors protocol/signing.go exactly (protocol v3). The signature over a message
+// covers an injective, length-prefixed encoding so that no concatenation of one
+// field can be confused for another. Both signer and verifier — in any language —
+// must derive identical bytes, so this layout is fixed and must match the Go side
+// byte-for-byte (protocol/signing_test.go and signing.test.ts pin the same hex).
 //
-//   field("netherchat/msg/v1") || field(from_id) || epoch_be64 || field(nonce) || field(ciphertext)
+//   field("netherchat/msg/v1") || field(room_id) || field(from_id)
+//     || epoch_be64 || field(nonce) || field(ciphertext)
 //
 // where field(b) = uint64-big-endian(len(b)) || b, and epoch_be64 is the epoch
 // as 8 bytes big-endian (NOT length-prefixed).
@@ -45,6 +46,7 @@ function field(b: Uint8Array): Uint8Array {
 }
 
 export function signingBytes(
+  roomID: string,
   fromID: string,
   epoch: number | bigint,
   nonce: Uint8Array,
@@ -52,6 +54,7 @@ export function signingBytes(
 ): Uint8Array {
   return concat(
     field(utf8(DOMAIN_TAG)),
+    field(utf8(roomID)),
     field(utf8(fromID)),
     u64be(epoch),
     field(nonce),

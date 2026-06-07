@@ -1,6 +1,11 @@
 # PROTOCOL.md — Netherchat wire protocol
 
-**Protocol version: 2** · Status: M3 (subject to change before 1.0)
+**Protocol version: 3** · Status: M3+ (subject to change before 1.0)
+
+The server admits clients in `[2, 3]`. v3 adds room-bound, OPTIONAL per-message
+Ed25519 signatures (§6) and out-of-band SAS verification (a purely client-side
+feature; see docs/commands.md). A v2 message (no `sig`) is accepted as *unsigned*,
+not rejected.
 
 This document specifies the Netherchat wire protocol so that third-party clients
 can be built. It reflects what is implemented today; the `protocol` Go package is
@@ -136,27 +141,34 @@ it came from `from_id`'s X25519 key, yielding the shared room key.
   "epoch":      0,
   "nonce":      "<base64 24 bytes>",
   "ciphertext": "<base64>",
-  "signature":  "<base64 ed25519>"
+  "sig":        "<base64 ed25519>"      // OPTIONAL (omitempty); absent = unsigned
 }
 ```
 
 - **Encryption:** `XChaCha20-Poly1305` under the room key. The 24-byte nonce is
   random per message (XChaCha's extended nonce makes this safe). The AEAD
   additional data is the 8-byte big-endian epoch.
-- **Authentication:** the sender signs `SigningBytes` (below) with its Ed25519 key.
-  Recipients look up the sender's public key by `from_id` (from the member list)
-  and **verify the signature before decrypting**.
+- **Authentication (v3, §3.3):** the sender signs `SigningBytes` (below) with its
+  Ed25519 key. Recipients look up the sender's public key by `from_id` and, **if a
+  `sig` is present, verify it before decrypting** — an invalid signature rejects
+  the message (its body is never shown). A message with **no `sig` is accepted as
+  unsigned** (a pre-v3 sender used a different field), not rejected. Clients badge
+  messages accordingly (signed / signed+verified / unsigned).
 - The server fans the frame out verbatim to every other member. It stamps `from_id`
   with the connection's real ID, so a client cannot spoof another member at the
   routing layer; signature verification enforces authenticity end-to-end.
+- `exec_request` / `exec_result` are the same `msg` envelope and are signed the
+  same way; an agent ignores an unsigned exec request.
 
 ### `SigningBytes`
 
 The signature covers an injective, length-prefixed encoding (each field is an
-8-byte big-endian length followed by its bytes; the epoch is 8 bytes big-endian):
+8-byte big-endian length followed by its bytes; the epoch is 8 bytes big-endian).
+Binding `room_id` (added in v3) prevents a captured ciphertext from being replayed
+into a different room:
 
 ```
-field("netherchat/msg/v1") || field(from_id) || epoch_be64 || field(nonce) || field(ciphertext)
+field("netherchat/msg/v1") || field(room_id) || field(from_id) || epoch_be64 || field(nonce) || field(ciphertext)
 ```
 
 Binding `from_id` and `epoch` prevents a captured ciphertext from being replayed
@@ -216,9 +228,11 @@ These are additive; the connection==room model is unchanged.
 
 ## 10. Versioning
 
-`protocol_version` is exchanged in `hello`/`welcome`. Incompatible changes bump it.
-A future MLS-based key-agreement scheme can be negotiated alongside the NaCl
-scheme during migration.
+`protocol_version` is exchanged in `hello`/`welcome`. The server admits any
+client in `[MinVersion, Version]` (currently `[2, 3]`); additive changes widen
+that window rather than hard-breaking older clients. v3 added room-bound optional
+per-message signatures (§6). A future MLS-based key-agreement scheme can be
+negotiated alongside the NaCl scheme during migration.
 
 ## 11. Break-glass war rooms
 

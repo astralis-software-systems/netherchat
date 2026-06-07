@@ -80,6 +80,7 @@ export interface SealedMessage {
 export function sealMessage(
   id: Identity,
   rk: RoomKey,
+  roomID: string,
   fromID: string,
   plaintext: Uint8Array,
 ): SealedMessage {
@@ -87,34 +88,39 @@ export function sealMessage(
   const aead = xchacha20poly1305(rk.key, nonce, u64be(rk.epoch));
   const ciphertext = aead.encrypt(plaintext);
   const signature = nacl.sign.detached(
-    signingBytes(fromID, rk.epoch, nonce, ciphertext),
+    signingBytes(roomID, fromID, rk.epoch, nonce, ciphertext),
     id.signSecret,
   );
   return { nonce, ciphertext, signature };
 }
 
 /**
- * Verify the sender's signature (BEFORE decrypting, so a forged ciphertext never
- * touches the AEAD) and decrypt. Throws on any failure.
+ * Decrypt a message. If a signature is present it is verified BEFORE decrypting
+ * (so a forged ciphertext never touches the AEAD); an invalid signature throws.
+ * An empty signature is accepted as "unsigned" (legacy / pre-v3) and decrypted
+ * without verification. Throws on decrypt failure or epoch mismatch.
  */
 export function openMessage(
   rk: RoomKey,
   senderSignPub: Uint8Array,
+  roomID: string,
   fromID: string,
   epoch: number,
   nonce: Uint8Array,
   ciphertext: Uint8Array,
   signature: Uint8Array,
 ): Uint8Array {
-  if (senderSignPub.length !== 32) throw new Error("sender signing key invalid");
-  if (
-    !nacl.sign.detached.verify(
-      signingBytes(fromID, epoch, nonce, ciphertext),
-      signature,
-      senderSignPub,
-    )
-  ) {
-    throw new Error("message signature verification failed");
+  if (signature.length > 0) {
+    if (senderSignPub.length !== 32) throw new Error("sender signing key invalid");
+    if (
+      !nacl.sign.detached.verify(
+        signingBytes(roomID, fromID, epoch, nonce, ciphertext),
+        signature,
+        senderSignPub,
+      )
+    ) {
+      throw new Error("message signature verification failed");
+    }
   }
   if (rk.epoch !== epoch) {
     throw new Error(`epoch mismatch: holding key for epoch ${rk.epoch}, message is epoch ${epoch}`);

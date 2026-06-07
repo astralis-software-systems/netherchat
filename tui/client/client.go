@@ -140,7 +140,7 @@ func (c *Client) Send(text string) error {
 	if err := c.sealAndSend(protocol.OpMessage, []byte(text)); err != nil {
 		return err
 	}
-	c.emit(EvMessage{FromID: c.SelfID(), FromName: c.name, Text: text, Self: true, At: time.Now()})
+	c.emit(EvMessage{FromID: c.SelfID(), FromName: c.name, Text: text, Self: true, Signed: true, At: time.Now()})
 	return nil
 }
 
@@ -155,11 +155,11 @@ func (c *Client) sealAndSend(op protocol.Op, plaintext []byte) error {
 	if rk == nil {
 		return errors.New("room key not established yet")
 	}
-	nonce, ct, sig, err := c.id.SealMessage(*rk, selfID, plaintext)
+	nonce, ct, sig, err := c.id.SealMessage(*rk, c.room, selfID, plaintext)
 	if err != nil {
 		return err
 	}
-	c.enqueue(op, protocol.Message{FromID: selfID, Epoch: rk.Epoch, Nonce: nonce, Ciphertext: ct, Signature: sig})
+	c.enqueue(op, protocol.Message{FromID: selfID, Epoch: rk.Epoch, Nonce: nonce, Ciphertext: ct, Sig: sig})
 	return nil
 }
 
@@ -205,7 +205,7 @@ func (c *Client) RequestExec(cmd string) (string, error) {
 	}
 	c.emit(EvExecRequest{
 		ID: id, Cmd: cmd, FromID: c.SelfID(), FromName: c.name,
-		FromFingerprint: c.Fingerprint(), Self: true, At: time.Now(),
+		FromFingerprint: c.Fingerprint(), Self: true, Signed: true, At: time.Now(),
 	})
 	return id, nil
 }
@@ -516,22 +516,27 @@ func (c *Client) handleEncrypted(op protocol.Op, m protocol.Message) {
 		c.emit(EvError{Err: fmt.Errorf("%s from unknown member %s", op, m.FromID)})
 		return
 	}
-	pt, err := crypto.OpenMessage(*rk, sender.signPub, m.FromID, m.Epoch, m.Nonce, m.Ciphertext, m.Signature)
+	pt, signed, err := crypto.OpenMessage(*rk, sender.signPub, c.room, m.FromID, m.Epoch, m.Nonce, m.Ciphertext, m.Sig)
 	if err != nil {
-		c.emit(EvError{Err: fmt.Errorf("decrypt from %s: %w", sender.name, err)})
+		if errors.Is(err, crypto.ErrBadSignature) {
+			// Reject: the body is never surfaced (§3.3).
+			c.emit(EvError{Err: fmt.Errorf("message from @%s failed signature verification", sender.name)})
+		} else {
+			c.emit(EvError{Err: fmt.Errorf("decrypt from %s: %w", sender.name, err)})
+		}
 		return
 	}
 	now := time.Now()
 	fpr := crypto.Fingerprint(sender.signPub)
 	switch op {
 	case protocol.OpMessage:
-		c.emit(EvMessage{FromID: m.FromID, FromName: sender.name, Text: string(pt), At: now})
+		c.emit(EvMessage{FromID: m.FromID, FromName: sender.name, Text: string(pt), Signed: signed, At: now})
 	case protocol.OpExecRequest:
 		var body protocol.ExecRequestBody
 		if json.Unmarshal(pt, &body) == nil {
 			c.emit(EvExecRequest{
 				ID: body.ID, Cmd: body.Cmd, FromID: m.FromID, FromName: sender.name,
-				FromFingerprint: fpr, At: now,
+				FromFingerprint: fpr, Signed: signed, At: now,
 			})
 		}
 	case protocol.OpExecResult:

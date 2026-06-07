@@ -6,7 +6,7 @@
 // strings, the way Go's encoding/json renders []byte. We keep them as strings in
 // these wire types and convert at the crypto boundary (see client.ts).
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export const Op = {
   Hello: "hello",
@@ -53,7 +53,6 @@ export interface Hello {
 
 export interface RoomPolicy {
   invite_only: boolean;
-  exec_enabled: boolean;
   webhook: boolean;
   ttl_seconds?: number;
 }
@@ -92,7 +91,7 @@ export interface WireMessage {
   epoch: number;
   nonce: string; // base64, 24 bytes
   ciphertext: string; // base64
-  signature: string; // base64 ed25519
+  sig?: string; // base64 ed25519 over SigningBytes(...); absent = unsigned (v3, §3.3)
 }
 
 export interface WireError {

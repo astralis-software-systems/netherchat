@@ -49,6 +49,7 @@ type EvExecRequest struct {
 	FromName        string
 	FromFingerprint string // ssh fingerprint of the requester's identity key
 	Self            bool   // true for our own request (local echo)
+	Signed          bool   // true if the request carried a valid Ed25519 signature
 	At              time.Time
 }
 
@@ -94,12 +95,14 @@ type EvBreakGlass struct {
 type EvKeyReady struct{ Epoch uint64 }
 
 // EvMessage is a decrypted chat message (Self is true for the local echo of our
-// own outgoing messages).
+// own outgoing messages). Signed reports whether a valid Ed25519 signature was
+// present (§3.3); unsigned legacy messages still arrive (Signed=false).
 type EvMessage struct {
 	FromID   string
 	FromName string
 	Text     string
 	Self     bool
+	Signed   bool
 	At       time.Time
 }
 

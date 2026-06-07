@@ -121,13 +121,13 @@ export class NetherClient {
 
   send(text: string): void {
     if (!this.rk) throw new Error("room key not established yet");
-    const sealed = sealMessage(this.id, this.rk, this.selfID, new TextEncoder().encode(text));
+    const sealed = sealMessage(this.id, this.rk, this.room, this.selfID, new TextEncoder().encode(text));
     const msg: WireMessage = {
       from_id: this.selfID,
       epoch: this.rk.epoch,
       nonce: toB64(sealed.nonce),
       ciphertext: toB64(sealed.ciphertext),
-      signature: toB64(sealed.signature),
+      sig: toB64(sealed.signature),
     };
     this.sendRaw(encode(Op.Message, msg));
     // Local echo: the server fans the message out to OTHERS only.
@@ -310,11 +310,12 @@ export class NetherClient {
       pt = openMessage(
         this.rk,
         sender.signPub,
+        this.room,
         m.from_id,
         m.epoch,
         fromB64(m.nonce),
         fromB64(m.ciphertext),
-        fromB64(m.signature),
+        m.sig ? fromB64(m.sig) : new Uint8Array(0),
       );
     } catch (e) {
       this.onEvent({ t: "error", message: `decrypt from ${sender.name}: ${String(e)}` });

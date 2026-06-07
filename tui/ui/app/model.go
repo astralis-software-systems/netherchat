@@ -340,7 +340,7 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 		if e.Self {
 			k = lineSelf
 		}
-		r.appendLine(line{at: e.At, kind: k, from: e.FromName, text: e.Text})
+		r.appendLine(line{at: e.At, kind: k, from: e.FromName, text: e.Text, fpr: r.members[e.FromID].fpr, signed: e.Signed})
 		if !e.Self {
 			if name != m.active {
 				r.unread++
@@ -752,8 +752,33 @@ func (m *Model) renderLine(l line) string {
 		tag := m.st(m.theme.Accent2).Bold(true).Render("⚡ " + l.from + " ")
 		return m.wrap(ts + tag + m.inlineCode(l.text))
 	default: // lineMessage
-		return m.wrap(ts + m.user(l.from) + m.st(m.theme.Text).Render(": ") + m.inlineCode(l.text))
+		return m.wrap(ts + m.user(l.from) + m.badge(l) + m.st(m.theme.Text).Render(": ") + m.inlineCode(l.text))
 	}
+}
+
+// badge returns the trust indicator drawn after a message sender's name (§3.3):
+//
+//	✓✓  signed + SAS-verified (you read the words out of band)
+//	✓   signed + trust-pinned (fingerprint matches a [[trust]] pin)
+//	(none) signed but neither pinned nor verified — signed is the baseline
+//	?   unsigned (legacy / pre-v3 sender)
+func (m *Model) badge(l line) string {
+	if !l.signed {
+		return m.st(m.theme.Warn).Render(" ?")
+	}
+	if m.isVerified(l.fpr) {
+		return m.st(m.theme.Success).Bold(true).Render(" ✓✓")
+	}
+	if m.isPinned(l.from, l.fpr) {
+		return m.st(m.theme.Success).Render(" ✓")
+	}
+	return ""
+}
+
+// isPinned reports whether fpr matches a [[trust]] pin for the given handle.
+func (m *Model) isPinned(handle, fpr string) bool {
+	entry, ok := m.trustFor(handle)
+	return ok && entry.Fpr != "" && entry.Fpr == fpr
 }
 
 // inlineCode styles `code` spans within a message.

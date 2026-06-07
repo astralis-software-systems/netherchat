@@ -87,7 +87,7 @@ func (s *Server) serve(ctx context.Context, c *websocket.Conn) {
 		_ = sendNow(ctx, c, protocol.OpError, protocol.Error{Code: "bad_hello", Message: "malformed hello"})
 		return
 	}
-	if hello.ProtocolVersion != protocol.Version {
+	if hello.ProtocolVersion < protocol.MinVersion || hello.ProtocolVersion > protocol.Version {
 		_ = sendNow(ctx, c, protocol.OpError, protocol.Error{Code: "version_mismatch", Message: "unsupported protocol version"})
 		return
 	}

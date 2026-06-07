@@ -36,10 +36,11 @@ func TestGenInteropVector(t *testing.T) {
 		rk.Key[i] = byte(0xA0 + i) // fixed room key
 	}
 
+	const roomID = "ops"
 	const fromID = "alice-9f3c"
 	const plaintext = "the database is on fire 🔥 `kubectl rollout undo`"
 
-	nonce, ct, sig, err := id.SealMessage(rk, fromID, []byte(plaintext))
+	nonce, ct, sig, err := id.SealMessage(rk, roomID, fromID, []byte(plaintext))
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}
@@ -48,6 +49,7 @@ func TestGenInteropVector(t *testing.T) {
 	t.Logf("\n--- BEGIN INTEROP VECTOR ---\n"+
 		"roomKey:   %s\n"+
 		"signPub:   %s\n"+
+		"roomID:    %s\n"+
 		"fromID:    %s\n"+
 		"epoch:     %d\n"+
 		"plaintext: %q\n"+
@@ -55,6 +57,6 @@ func TestGenInteropVector(t *testing.T) {
 		"cipher:    %s\n"+
 		"sig:       %s\n"+
 		"--- END INTEROP VECTOR ---",
-		b64(rk.Key[:]), b64(id.SignPub), fromID, rk.Epoch, plaintext,
+		b64(rk.Key[:]), b64(id.SignPub), roomID, fromID, rk.Epoch, plaintext,
 		b64(nonce), b64(ct), b64(sig))
 }

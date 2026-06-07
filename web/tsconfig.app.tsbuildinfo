@@ -1,1 +1,0 @@
-{"root":["./src/vite-env.d.ts","./src/crypto/base64.ts","./src/crypto/group.ts","./src/crypto/identity.ts","./src/crypto/interop.test.ts","./src/crypto/random.ts","./src/crypto/signing.ts","./src/join/main.ts","./src/landing/landing.ts","./src/net/client.ts","./src/net/protocol.ts","./src/theme/apply.ts","./src/theme/themes.ts"],"version":"5.6.3"}

@@ -3,6 +3,7 @@ package crypto
 import (
 	"bytes"
 	"crypto/ed25519"
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -97,7 +98,7 @@ func TestMessageSealOpenRoundTrip(t *testing.T) {
 	rk, _ := NewRoomKey(3)
 	plaintext := []byte("messaging that lives below the surface")
 
-	nonce, ct, sig, err := alice.SealMessage(rk, "alice-id", plaintext)
+	nonce, ct, sig, err := alice.SealMessage(rk, "ops", "alice-id", plaintext)
 	if err != nil {
 		t.Fatalf("SealMessage: %v", err)
 	}
@@ -105,9 +106,12 @@ func TestMessageSealOpenRoundTrip(t *testing.T) {
 		t.Fatal("ciphertext contains plaintext")
 	}
 
-	got, err := OpenMessage(rk, alice.SignPub, "alice-id", rk.Epoch, nonce, ct, sig)
+	got, signed, err := OpenMessage(rk, alice.SignPub, "ops", "alice-id", rk.Epoch, nonce, ct, sig)
 	if err != nil {
 		t.Fatalf("OpenMessage: %v", err)
+	}
+	if !signed {
+		t.Error("a signed message should report signed=true")
 	}
 	if !bytes.Equal(got, plaintext) {
 		t.Fatalf("round-trip mismatch: got %q want %q", got, plaintext)
@@ -117,29 +121,69 @@ func TestMessageSealOpenRoundTrip(t *testing.T) {
 func TestMessageRejectsTamperedSignature(t *testing.T) {
 	alice := mustIdentity(t)
 	rk, _ := NewRoomKey(0)
-	nonce, ct, sig, _ := alice.SealMessage(rk, "alice-id", []byte("hello"))
+	nonce, ct, sig, _ := alice.SealMessage(rk, "ops", "alice-id", []byte("hello"))
 
-	// Flip a bit in the signature.
+	// Flip a bit in the signature → ErrBadSignature, body not returned.
 	bad := bytes.Clone(sig)
 	bad[0] ^= 0x01
-	if _, err := OpenMessage(rk, alice.SignPub, "alice-id", rk.Epoch, nonce, ct, bad); err == nil {
-		t.Fatal("expected signature verification to fail on tampered signature")
+	if _, _, err := OpenMessage(rk, alice.SignPub, "ops", "alice-id", rk.Epoch, nonce, ct, bad); !errors.Is(err, ErrBadSignature) {
+		t.Fatalf("expected ErrBadSignature on tampered signature, got %v", err)
 	}
 
 	// A different sender's key must not verify Alice's message.
 	bob := mustIdentity(t)
-	if _, err := OpenMessage(rk, bob.SignPub, "alice-id", rk.Epoch, nonce, ct, sig); err == nil {
-		t.Fatal("expected verification to fail with wrong signing key")
+	if _, _, err := OpenMessage(rk, bob.SignPub, "ops", "alice-id", rk.Epoch, nonce, ct, sig); !errors.Is(err, ErrBadSignature) {
+		t.Fatalf("expected ErrBadSignature with the wrong signing key, got %v", err)
+	}
+}
+
+func TestMessageRejectsTamperedCiphertext(t *testing.T) {
+	alice := mustIdentity(t)
+	rk, _ := NewRoomKey(0)
+	nonce, ct, sig, _ := alice.SealMessage(rk, "ops", "alice-id", []byte("roll back prod"))
+
+	ct[0] ^= 0x01 // corrupt the ciphertext the signature covers
+	if _, _, err := OpenMessage(rk, alice.SignPub, "ops", "alice-id", rk.Epoch, nonce, ct, sig); !errors.Is(err, ErrBadSignature) {
+		t.Fatalf("expected ErrBadSignature on tampered ciphertext, got %v", err)
+	}
+}
+
+func TestMessageAcceptsUnsignedAsLegacy(t *testing.T) {
+	alice := mustIdentity(t)
+	rk, _ := NewRoomKey(0)
+	nonce, ct, _, _ := alice.SealMessage(rk, "ops", "alice-id", []byte("legacy hi"))
+
+	// No signature → accepted as unsigned (not rejected), signed=false.
+	got, signed, err := OpenMessage(rk, alice.SignPub, "ops", "alice-id", rk.Epoch, nonce, ct, nil)
+	if err != nil {
+		t.Fatalf("unsigned message should decrypt: %v", err)
+	}
+	if signed {
+		t.Error("a message with no signature must report signed=false")
+	}
+	if string(got) != "legacy hi" {
+		t.Fatalf("unsigned round-trip: got %q", got)
+	}
+}
+
+func TestMessageRejectsWrongRoom(t *testing.T) {
+	alice := mustIdentity(t)
+	rk, _ := NewRoomKey(0)
+	nonce, ct, sig, _ := alice.SealMessage(rk, "ops", "alice-id", []byte("ops only"))
+
+	// The signature binds the room id, so verifying under a different room fails.
+	if _, _, err := OpenMessage(rk, alice.SignPub, "other-room", "alice-id", rk.Epoch, nonce, ct, sig); !errors.Is(err, ErrBadSignature) {
+		t.Fatalf("expected ErrBadSignature across rooms, got %v", err)
 	}
 }
 
 func TestMessageRejectsWrongRoomKey(t *testing.T) {
 	alice := mustIdentity(t)
 	rk, _ := NewRoomKey(0)
-	nonce, ct, sig, _ := alice.SealMessage(rk, "alice-id", []byte("secret"))
+	nonce, ct, sig, _ := alice.SealMessage(rk, "ops", "alice-id", []byte("secret"))
 
 	other, _ := NewRoomKey(0) // same epoch, different key
-	if _, err := OpenMessage(other, alice.SignPub, "alice-id", rk.Epoch, nonce, ct, sig); err == nil {
+	if _, _, err := OpenMessage(other, alice.SignPub, "ops", "alice-id", rk.Epoch, nonce, ct, sig); err == nil {
 		t.Fatal("expected decryption to fail under a different room key")
 	}
 }
@@ -147,10 +191,10 @@ func TestMessageRejectsWrongRoomKey(t *testing.T) {
 func TestMessageRejectsEpochMismatch(t *testing.T) {
 	alice := mustIdentity(t)
 	rk, _ := NewRoomKey(5)
-	nonce, ct, sig, _ := alice.SealMessage(rk, "alice-id", []byte("hi"))
+	nonce, ct, sig, _ := alice.SealMessage(rk, "ops", "alice-id", []byte("hi"))
 
 	wrongEpoch := RoomKey{Epoch: 6, Key: rk.Key}
-	if _, err := OpenMessage(wrongEpoch, alice.SignPub, "alice-id", 5, nonce, ct, sig); err == nil {
+	if _, _, err := OpenMessage(wrongEpoch, alice.SignPub, "ops", "alice-id", 5, nonce, ct, sig); err == nil {
 		t.Fatal("expected epoch-mismatch error")
 	}
 }

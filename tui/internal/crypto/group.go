@@ -91,11 +91,15 @@ func (id *Identity) UnwrapRoomKey(epoch uint64, nonce, wrapped []byte, senderKX 
 	return rk, nil
 }
 
+// ErrBadSignature is returned by OpenMessage when a present signature fails
+// verification. Such a message MUST be rejected (and its body never shown).
+var ErrBadSignature = errors.New("message signature verification failed")
+
 // SealMessage encrypts plaintext under the room key with XChaCha20-Poly1305 and
-// signs the result with the sender's Ed25519 identity key. The epoch is bound
-// both into the AEAD additional data and into the signature. Returns the wire
-// fields for a protocol.Message.
-func (id *Identity) SealMessage(rk RoomKey, fromID string, plaintext []byte) (nonce, ciphertext, signature []byte, err error) {
+// signs the result with the sender's Ed25519 identity key. The signature binds
+// the room id, sender id, and epoch (§3.3); the epoch is also AEAD additional
+// data. Returns the wire fields for a protocol.Message.
+func (id *Identity) SealMessage(rk RoomKey, roomID, fromID string, plaintext []byte) (nonce, ciphertext, signature []byte, err error) {
 	aead, err := chacha20poly1305.NewX(rk.Key[:])
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("init aead: %w", err)
@@ -105,36 +109,41 @@ func (id *Identity) SealMessage(rk RoomKey, fromID string, plaintext []byte) (no
 		return nil, nil, nil, fmt.Errorf("nonce: %w", err)
 	}
 	ciphertext = aead.Seal(nil, nonce, plaintext, epochAD(rk.Epoch))
-	signature, err = id.Sign(protocol.SigningBytes(fromID, rk.Epoch, nonce, ciphertext))
+	signature, err = id.Sign(protocol.SigningBytes(roomID, fromID, rk.Epoch, nonce, ciphertext))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("sign message: %w", err)
 	}
 	return nonce, ciphertext, signature, nil
 }
 
-// OpenMessage verifies the sender's signature and decrypts a message under the
-// room key. The signature is checked BEFORE decryption so a forged ciphertext
-// is rejected without touching the AEAD. senderSignPub is the sender's Ed25519
-// public key, known from the room's member list.
-func OpenMessage(rk RoomKey, senderSignPub ed25519.PublicKey, fromID string, epoch uint64, nonce, ciphertext, signature []byte) ([]byte, error) {
-	if len(senderSignPub) != ed25519.PublicKeySize {
-		return nil, errors.New("sender signing key invalid")
-	}
-	if !ed25519.Verify(senderSignPub, protocol.SigningBytes(fromID, epoch, nonce, ciphertext), signature) {
-		return nil, errors.New("message signature verification failed")
+// OpenMessage decrypts a message and reports whether it carried a valid
+// signature. If sig is non-empty it is verified BEFORE decryption (a forged
+// ciphertext is rejected without touching the AEAD) against senderSignPub over
+// the room-bound signing bytes; an invalid signature returns ErrBadSignature. If
+// sig is empty the message is accepted as UNSIGNED (signed=false) and decrypted
+// without verification — pre-v3 / legacy frames interoperate this way.
+func OpenMessage(rk RoomKey, senderSignPub ed25519.PublicKey, roomID, fromID string, epoch uint64, nonce, ciphertext, sig []byte) (plaintext []byte, signed bool, err error) {
+	if len(sig) > 0 {
+		if len(senderSignPub) != ed25519.PublicKeySize {
+			return nil, false, errors.New("sender signing key invalid")
+		}
+		if !ed25519.Verify(senderSignPub, protocol.SigningBytes(roomID, fromID, epoch, nonce, ciphertext), sig) {
+			return nil, false, ErrBadSignature
+		}
+		signed = true
 	}
 	if rk.Epoch != epoch {
-		return nil, fmt.Errorf("epoch mismatch: holding key for epoch %d, message is epoch %d", rk.Epoch, epoch)
+		return nil, signed, fmt.Errorf("epoch mismatch: holding key for epoch %d, message is epoch %d", rk.Epoch, epoch)
 	}
 	aead, err := chacha20poly1305.NewX(rk.Key[:])
 	if err != nil {
-		return nil, fmt.Errorf("init aead: %w", err)
+		return nil, signed, fmt.Errorf("init aead: %w", err)
 	}
-	plaintext, err := aead.Open(nil, nonce, ciphertext, epochAD(epoch))
+	plaintext, err = aead.Open(nil, nonce, ciphertext, epochAD(epoch))
 	if err != nil {
-		return nil, fmt.Errorf("decrypt: %w", err)
+		return nil, signed, fmt.Errorf("decrypt: %w", err)
 	}
-	return plaintext, nil
+	return plaintext, signed, nil
 }
 
 // epochAD is the AEAD additional-authenticated-data for a message: the epoch,
