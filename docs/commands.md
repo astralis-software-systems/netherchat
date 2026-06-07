@@ -17,6 +17,9 @@ Type these in the message box. Tab completes command names and arguments.
 | `/vanish` | Rotate the room key forward (HKDF ratchet) and clear history for everyone — messages from before are no longer decryptable. |
 | `/ttl <dur\|off>` | Set a client-side message display TTL (e.g. `/ttl 1h`, `/ttl off`). |
 | `/exec <action>` | Send a signed, E2E-encrypted request for a `netherchat agent` to run a runbook action on its own host. The relay never runs anything. See below. |
+| `/ack [tag]` | Ack a coordination tag (e.g. `/ack drain-complete`). The member list shows a running quorum (`drain-complete 3/6`). No argument lists active tags. A typed coordination primitive — **not** a reaction. See below. |
+| `/handoff @handle` | Transfer the incident-commander (IC) token to another member. The IC holder is shown with a `⚡` in the member list. See below. |
+| `/ic` | Show who currently holds incident command in this room. |
 | `/join <room>` | Join another room (opens a new tab in the sidebar). |
 | `/leave` | Leave the current room. |
 | `/clear` | Clear the current room view locally. |

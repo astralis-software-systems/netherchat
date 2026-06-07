@@ -103,3 +103,22 @@ type RouteFired struct {
 	TTLSeconds  int      `json:"ttl_seconds"`  // hard lifetime of the spawned room
 	At          int64    `json:"at"`           // unix seconds
 }
+
+// AckBody is the END-TO-END-ENCRYPTED plaintext of an OpAck Message (§2.2). An
+// /ack is a typed coordination primitive — it carries a tag that the room counts
+// into a quorum (one ack per identity fingerprint per tag). It is deliberately
+// NOT a reaction emoji: free-form reactions are a rejected feature
+// (FEATURE_ROADMAP_FREE.md §4). The acting identity is the signed Message's
+// sender, so the body needs only the tag.
+type AckBody struct {
+	Tag string `json:"tag"`
+}
+
+// HandoffBody is the END-TO-END-ENCRYPTED plaintext of an OpHandoff Message
+// (§2.2): it transfers the single incident-commander (IC) token to ToID. The
+// sender is the signed Message's author; ToName is carried for display when a
+// receiver does not (yet) know the target member.
+type HandoffBody struct {
+	ToID   string `json:"to_id"`
+	ToName string `json:"to_name,omitempty"`
+}

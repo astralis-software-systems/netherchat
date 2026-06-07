@@ -106,6 +106,29 @@ type EvRouteFired struct {
 // send and receive messages.
 type EvKeyReady struct{ Epoch uint64 }
 
+// EvAck is a decrypted, signature-verified coordination ack (§2.2): someone ran
+// /ack <tag>. Quorum is the running "<acked>/<members>" count from THIS client's
+// view of the room at the moment the ack was counted. Self marks our own echo.
+type EvAck struct {
+	Tag    string
+	Actor  string // display name of the acker
+	Fpr    string // ssh fingerprint of the acker's identity key
+	Quorum string // e.g. "3/6"
+	Self   bool
+	At     time.Time
+}
+
+// EvHandoff is a decrypted, signature-verified incident-commander handoff (§2.2):
+// the IC token moved from one identity to another. Self marks our own echo.
+type EvHandoff struct {
+	FromName string
+	FromFpr  string
+	ToName   string
+	ToFpr    string
+	Self     bool
+	At       time.Time
+}
+
 // EvMessage is a decrypted chat message (Self is true for the local echo of our
 // own outgoing messages). Signed reports whether a valid Ed25519 signature was
 // present (§3.3); unsigned legacy messages still arrive (Signed=false).
@@ -130,6 +153,8 @@ type EvDisconnected struct{ Err error }
 
 func (EvConnected) isEvent()     {}
 func (EvRouteFired) isEvent()    {}
+func (EvAck) isEvent()           {}
+func (EvHandoff) isEvent()       {}
 func (EvKeyReady) isEvent()      {}
 func (EvMessage) isEvent()       {}
 func (EvServerMessage) isEvent() {}

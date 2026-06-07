@@ -41,10 +41,17 @@ type Event struct {
 	BodyHash string `json:"body_hash,omitempty"`
 	Body     string `json:"body,omitempty"`
 	Tag      string `json:"tag,omitempty"`
+	Quorum   string `json:"quorum,omitempty"` // "<acked>/<members>" for ack events
 
 	Target    string `json:"target,omitempty"`
 	TargetFpr string `json:"target_fpr,omitempty"`
 	OK        *bool  `json:"ok,omitempty"`
+
+	// Handoff (§2.2): the incident-commander token moved from -> to.
+	From    string `json:"from,omitempty"`
+	FromFpr string `json:"from_fpr,omitempty"`
+	To      string `json:"to,omitempty"`
+	ToFpr   string `json:"to_fpr,omitempty"`
 
 	Cmd     string `json:"cmd,omitempty"`
 	Allowed *bool  `json:"allowed,omitempty"`
@@ -110,9 +117,18 @@ func Vanish(room, actor, fpr string) Event {
 	return e
 }
 
-func Ack(room, actor, fpr, tag string) Event {
+// Ack builds an ack event (§2.2). quorum is the "<acked>/<members>" count at the
+// moment the ack was counted, from the emitting client's view.
+func Ack(room, actor, fpr, tag, quorum string) Event {
 	e := base("ack", room)
-	e.Actor, e.Fpr, e.Tag = actor, fpr, tag
+	e.Actor, e.Fpr, e.Tag, e.Quorum = actor, fpr, tag, quorum
+	return e
+}
+
+// Handoff builds an incident-commander handoff event (§2.2).
+func Handoff(room, from, fromFpr, to, toFpr string) Event {
+	e := base("handoff", room)
+	e.From, e.FromFpr, e.To, e.ToFpr = from, fromFpr, to, toFpr
 	return e
 }
 

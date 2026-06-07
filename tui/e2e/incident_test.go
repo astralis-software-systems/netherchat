@@ -224,3 +224,195 @@ func TestRouteReplyURLFiresAsync(t *testing.T) {
 		t.Fatal("reply_url never received the POST")
 	}
 }
+
+// TestAckQuorumThroughRelay is the §2.2 acceptance test: two real clients, alice
+// acks then bob acks, and the quorum runs 1/2 → 2/2. A duplicate ack from the
+// same identity does not increment.
+func TestAckQuorumThroughRelay(t *testing.T) {
+	ts := httptest.NewServer(server.Handler(config.Default(), quietLogger()))
+	defer ts.Close()
+
+	alice := connect(t, ts.URL, "ops", "alice", "")
+	waitMatch[client.EvKeyReady](t, alice, nil, 5*time.Second)
+	bob := connect(t, ts.URL, "ops", "bob", "")
+	waitMatch[client.EvKeyReady](t, bob, nil, 5*time.Second)
+	// alice must observe bob before acking so the quorum denominator is 2.
+	waitMatch[client.EvMemberJoined](t, alice, func(e client.EvMemberJoined) bool { return e.Name == "bob" }, 5*time.Second)
+
+	const tag = "drain-complete"
+	isTag := func(self bool) func(client.EvAck) bool {
+		return func(e client.EvAck) bool { return e.Self == self && e.Tag == tag }
+	}
+
+	// alice acks: her echo and bob's remote view both show 1/2.
+	if err := alice.Ack(tag); err != nil {
+		t.Fatalf("alice ack: %v", err)
+	}
+	if a := waitMatch[client.EvAck](t, alice, isTag(true), 5*time.Second); a.Quorum != "1/2" {
+		t.Errorf("alice self quorum = %q, want 1/2", a.Quorum)
+	}
+	if b := waitMatch[client.EvAck](t, bob, isTag(false), 5*time.Second); b.Quorum != "1/2" {
+		t.Errorf("bob remote quorum = %q, want 1/2", b.Quorum)
+	}
+
+	// bob acks (after seeing alice's, so bob's own echo is 2/2); alice sees 2/2.
+	if err := bob.Ack(tag); err != nil {
+		t.Fatalf("bob ack: %v", err)
+	}
+	if b := waitMatch[client.EvAck](t, bob, isTag(true), 5*time.Second); b.Quorum != "2/2" {
+		t.Errorf("bob self quorum = %q, want 2/2", b.Quorum)
+	}
+	if a := waitMatch[client.EvAck](t, alice, isTag(false), 5*time.Second); a.Quorum != "2/2" {
+		t.Errorf("alice remote quorum = %q, want 2/2", a.Quorum)
+	}
+
+	// A duplicate ack from alice (same fingerprint) does not increment.
+	if err := alice.Ack(tag); err != nil {
+		t.Fatalf("alice dup ack: %v", err)
+	}
+	if a := waitMatch[client.EvAck](t, alice, isTag(true), 5*time.Second); a.Quorum != "2/2" {
+		t.Errorf("dup ack quorum = %q, want 2/2 (no increment)", a.Quorum)
+	}
+	if got := alice.AckState()[tag]; got != "2/2" {
+		t.Errorf("AckState[%s] = %q, want 2/2", tag, got)
+	}
+}
+
+// TestHandoffTransfersIC proves /handoff moves the incident-commander token and
+// /ic (ICHolder) reflects it on both sides. The first member implicitly holds IC.
+func TestHandoffTransfersIC(t *testing.T) {
+	ts := httptest.NewServer(server.Handler(config.Default(), quietLogger()))
+	defer ts.Close()
+
+	alice := connect(t, ts.URL, "ops", "alice", "")
+	waitMatch[client.EvKeyReady](t, alice, nil, 5*time.Second)
+	bob := connect(t, ts.URL, "ops", "bob", "")
+	waitMatch[client.EvKeyReady](t, bob, nil, 5*time.Second)
+	waitMatch[client.EvMemberJoined](t, alice, func(e client.EvMemberJoined) bool { return e.Name == "bob" }, 5*time.Second)
+
+	// Initially alice (first member) holds IC; both sides agree.
+	if name, _, isSelf, ok := alice.ICHolder(); !ok || !isSelf || name != "alice" {
+		t.Fatalf("initial IC (alice view) = %q self=%v ok=%v, want alice/self", name, isSelf, ok)
+	}
+	if name, _, isSelf, ok := bob.ICHolder(); !ok || isSelf || name != "alice" {
+		t.Fatalf("initial IC (bob view) = %q self=%v ok=%v, want alice/not-self", name, isSelf, ok)
+	}
+
+	if err := alice.Handoff("bob"); err != nil {
+		t.Fatalf("handoff: %v", err)
+	}
+	waitMatch[client.EvHandoff](t, alice, func(e client.EvHandoff) bool { return e.Self && e.ToName == "bob" }, 5*time.Second)
+	h := waitMatch[client.EvHandoff](t, bob, func(e client.EvHandoff) bool { return !e.Self && e.ToName == "bob" }, 5*time.Second)
+	if h.FromName != "alice" || !strings.HasPrefix(h.FromFpr, "SHA256:") || !strings.HasPrefix(h.ToFpr, "SHA256:") {
+		t.Fatalf("handoff event = %+v", h)
+	}
+
+	// IC is now bob on both sides.
+	if name, _, isSelf, _ := alice.ICHolder(); name != "bob" || isSelf {
+		t.Errorf("post-handoff IC (alice view) = %q self=%v, want bob/not-self", name, isSelf)
+	}
+	if name, _, isSelf, _ := bob.ICHolder(); name != "bob" || !isSelf {
+		t.Errorf("post-handoff IC (bob view) = %q self=%v, want bob/self", name, isSelf)
+	}
+}
+
+// TestVanishClearsCoordination proves /vanish resets both ack state and IC.
+func TestVanishClearsCoordination(t *testing.T) {
+	ts := httptest.NewServer(server.Handler(config.Default(), quietLogger()))
+	defer ts.Close()
+
+	alice := connect(t, ts.URL, "ops", "alice", "")
+	waitMatch[client.EvKeyReady](t, alice, nil, 5*time.Second)
+	bob := connect(t, ts.URL, "ops", "bob", "")
+	waitMatch[client.EvKeyReady](t, bob, nil, 5*time.Second)
+	waitMatch[client.EvMemberJoined](t, alice, func(e client.EvMemberJoined) bool { return e.Name == "bob" }, 5*time.Second)
+
+	if err := alice.Ack("drain-complete"); err != nil {
+		t.Fatalf("ack: %v", err)
+	}
+	waitMatch[client.EvAck](t, alice, func(e client.EvAck) bool { return e.Self }, 5*time.Second)
+	if err := alice.Handoff("bob"); err != nil {
+		t.Fatalf("handoff: %v", err)
+	}
+	waitMatch[client.EvHandoff](t, alice, func(e client.EvHandoff) bool { return e.Self }, 5*time.Second)
+
+	// Sanity: coordination state is populated before the vanish.
+	if len(alice.AckState()) == 0 {
+		t.Fatal("expected ack state before vanish")
+	}
+	if name, _, _, _ := alice.ICHolder(); name != "bob" {
+		t.Fatalf("pre-vanish IC = %q, want bob", name)
+	}
+
+	alice.Vanish()
+
+	if got := alice.AckState(); len(got) != 0 {
+		t.Errorf("ack state after vanish = %v, want empty", got)
+	}
+	// IC resets to the oldest current member (the initial condition) — alice.
+	if name, _, isSelf, ok := alice.ICHolder(); !ok || name != "alice" || !isSelf {
+		t.Errorf("post-vanish IC = %q self=%v ok=%v, want alice/self", name, isSelf, ok)
+	}
+}
+
+// TestCoordinationEventsInTailStream proves ack and handoff events reach the
+// structured stream with the quorum field, as `tail #ops --json` would emit them
+// from a participant's connection.
+func TestCoordinationEventsInTailStream(t *testing.T) {
+	ts := httptest.NewServer(server.Handler(config.Default(), quietLogger()))
+	defer ts.Close()
+
+	alice := connect(t, ts.URL, "ops", "alice", "")
+	waitMatch[client.EvKeyReady](t, alice, nil, 5*time.Second)
+	bob := connect(t, ts.URL, "ops", "bob", "")
+	waitMatch[client.EvKeyReady](t, bob, nil, 5*time.Second)
+	waitMatch[client.EvMemberJoined](t, alice, func(e client.EvMemberJoined) bool { return e.Name == "bob" }, 5*time.Second)
+
+	mapper := eventlog.NewMapper("ops", false)
+
+	if err := alice.Ack("drain-complete"); err != nil {
+		t.Fatalf("alice ack: %v", err)
+	}
+	if err := bob.Ack("drain-complete"); err != nil {
+		t.Fatalf("bob ack: %v", err)
+	}
+	if err := alice.Handoff("bob"); err != nil {
+		t.Fatalf("handoff: %v", err)
+	}
+
+	var acks []eventlog.Event
+	var handoff *eventlog.Event
+	deadline := time.After(8 * time.Second)
+	for len(acks) < 2 || handoff == nil {
+		select {
+		case ev := <-alice.Events():
+			for _, e := range mapper.Map(ev) {
+				e := e
+				switch e.Type {
+				case "ack":
+					acks = append(acks, e)
+				case "handoff":
+					handoff = &e
+				}
+			}
+		case <-alice.Done():
+			t.Fatal("alice disconnected")
+		case <-deadline:
+			t.Fatalf("timed out: acks=%d handoff=%v", len(acks), handoff)
+		}
+	}
+
+	// On alice's stream the order is her own ack (1/2) then bob's (2/2).
+	if acks[0].Quorum != "1/2" {
+		t.Errorf("first ack quorum = %q, want 1/2", acks[0].Quorum)
+	}
+	if acks[1].Quorum != "2/2" || acks[1].Tag != "drain-complete" {
+		t.Errorf("second ack = %+v, want quorum 2/2 tag drain-complete", acks[1])
+	}
+	if handoff.From != "alice" || handoff.To != "bob" {
+		t.Errorf("handoff = %+v, want from alice to bob", handoff)
+	}
+	if !strings.HasPrefix(handoff.FromFpr, "SHA256:") || !strings.HasPrefix(handoff.ToFpr, "SHA256:") {
+		t.Errorf("handoff fingerprints = %q -> %q", handoff.FromFpr, handoff.ToFpr)
+	}
+}

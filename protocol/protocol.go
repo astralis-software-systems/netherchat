@@ -63,6 +63,14 @@ const (
 	// (route_fired). It carries no secrets — only metadata about an automatically
 	// created room. See server/internal/api and PROTOCOL.md §12.
 	OpRouteFired Op = "route_fired" // server -> clients: an alert route fired and spawned a war room
+
+	// Coordination primitives (§2.2, additive). Both carry a Message envelope
+	// (sealed under the room key, Ed25519-signed) exactly like OpExecRequest — the
+	// relay only ever sees ciphertext. These are TYPED coordination state, not
+	// social reactions (free-form emoji reactions are explicitly rejected,
+	// FEATURE_ROADMAP_FREE.md §4). See PROTOCOL.md §13.
+	OpAck     Op = "ack"     // member -> room: a typed, countable ack of a tag
+	OpHandoff Op = "handoff" // member -> room: transfer the incident-commander token
 )
 
 // Envelope is the outer frame for every message on the wire. Data holds the

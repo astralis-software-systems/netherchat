@@ -30,6 +30,9 @@ func buildCommands() *command.Set {
 		command.Command{Name: "ttl", Args: "<dur|off>", Help: "set a message display TTL",
 			Complete: func(p string) []string { return command.FilterPrefix([]string{"off", "10m", "1h", "24h"}, p) }},
 		command.Command{Name: "exec", Args: "<action>", Help: "request an edge agent run a runbook action (signed, E2E)"},
+		command.Command{Name: "ack", Args: "[tag]", Help: "ack a coordination tag (typed quorum, not a reaction); no arg lists active tags"},
+		command.Command{Name: "handoff", Args: "@handle", Help: "transfer the incident-commander (IC) token"},
+		command.Command{Name: "ic", Help: "show who currently holds incident command"},
 		command.Command{Name: "whois", Args: "[@handle]", Help: "show an identity's fingerprint, pin status, and published-key match"},
 		command.Command{Name: "verify", Args: "[@handle [ok]]", Help: "out-of-band verify a peer via a 5-word SAS read over a side channel"},
 		command.Command{Name: "join", Args: "<room>", Help: "join another room"},
@@ -92,6 +95,12 @@ func (m *Model) runCommand(input string) tea.Cmd {
 		if _, err := r.client.RequestExec(arg); err != nil {
 			m.addError(err.Error())
 		}
+	case "ack":
+		m.runAck(r, arg)
+	case "handoff":
+		m.runHandoff(r, arg)
+	case "ic":
+		m.runIC(r)
 	case "whois":
 		return m.runWhois(arg)
 	case "verify":
@@ -165,6 +174,69 @@ func (m *Model) runTTL(r *room, arg string) {
 		r.ttl = d
 		r.client.SetTTL(int(d.Seconds()))
 	}
+}
+
+// runAck implements /ack (§2.2). With a tag it sends a signed, E2E ack and the
+// member list shows the running quorum; with no argument it lists active tags.
+// /ack is a typed coordination primitive — deliberately NOT a reaction emoji.
+func (m *Model) runAck(r *room, arg string) {
+	if !m.connected(r) {
+		return
+	}
+	if arg == "" {
+		m.addSystem(m.ackStatusText(r))
+		return
+	}
+	tag := strings.Fields(arg)[0]
+	if err := r.client.Ack(tag); err != nil {
+		m.addError(err.Error())
+	}
+}
+
+// ackStatusText lists the active ack tags and their quorum counts.
+func (m *Model) ackStatusText(r *room) string {
+	acks := r.client.AckState()
+	if len(acks) == 0 {
+		return "no active ack tags"
+	}
+	var b strings.Builder
+	b.WriteString("active acks:\n")
+	for _, tag := range sortedKeys(acks) {
+		b.WriteString(fmt.Sprintf("  %-20s %s\n", tag, acks[tag]))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// runHandoff implements /handoff @handle (§2.2): transfer the IC token.
+func (m *Model) runHandoff(r *room, arg string) {
+	if !m.connected(r) {
+		return
+	}
+	if arg == "" {
+		m.addError("usage: /handoff @handle")
+		return
+	}
+	handle := strings.TrimPrefix(strings.Fields(arg)[0], "@")
+	if err := r.client.Handoff(handle); err != nil {
+		m.addError(err.Error())
+	}
+}
+
+// runIC implements /ic: show who currently holds incident command.
+func (m *Model) runIC(r *room) {
+	if !m.connected(r) {
+		return
+	}
+	name, fpr, isSelf, ok := r.client.ICHolder()
+	if !ok {
+		m.addSystem("incident commander: (none yet)")
+		return
+	}
+	who := "@" + name
+	if isSelf {
+		who += " (you)"
+	}
+	m.addSystem("incident commander: " + who + "  " + shortFpr(fpr))
 }
 
 // renderRouteFired builds the banner shown in an intake room when an inbound

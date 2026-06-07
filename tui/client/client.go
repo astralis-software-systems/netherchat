@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,8 +58,21 @@ type Client struct {
 	mu      sync.Mutex
 	selfID  string
 	members map[string]memberInfo
+	order   []string        // member ids oldest-first, INCLUDING self (for IC + quorum)
 	rk      *crypto.RoomKey // current room key; nil until established
 	pending []pendingFrame  // E2E frames received before the key arrived
+
+	// Coordination state (§2.2), in memory, reset on /vanish. acks maps a
+	// coordination tag to the set of identity fingerprints that have acked it
+	// (one ack per identity per tag). ic is the current incident-commander.
+	acks map[string]map[string]bool
+	ic   icHolder
+}
+
+// icHolder identifies the room's current incident commander. The first member of
+// a room implicitly holds it; /handoff transfers it explicitly.
+type icHolder struct {
+	id, name, fpr string
 }
 
 // pendingFrame is an encrypted frame (message or exec request/result) buffered
@@ -114,6 +128,7 @@ func NewWithIdentity(serverURL, room, name string, id *crypto.Identity) (*Client
 		sendCh:  make(chan protocol.Envelope, 64),
 		done:    make(chan struct{}),
 		members: make(map[string]memberInfo),
+		acks:    make(map[string]map[string]bool),
 	}, nil
 }
 
@@ -184,6 +199,9 @@ func (c *Client) UseInviteToken(token string) { c.inviteToken = token }
 // who discarded the prior key.
 func (c *Client) Vanish() {
 	c.ratchetForward()
+	c.mu.Lock()
+	c.resetCoordinationLocked()
+	c.mu.Unlock()
 	c.enqueue(protocol.OpControl, protocol.Control{Action: protocol.ActionVanish, ByName: c.name})
 	c.emit(EvControl{Action: protocol.ActionVanish, ByName: c.name, Self: true})
 }
@@ -202,6 +220,120 @@ func (c *Client) RequestInvite() { c.enqueue(protocol.OpInviteRequest, protocol.
 // as EvBreakGlass. The server clamps the TTL and caps the invitee count.
 func (c *Client) BreakGlass(invitees []string, ttlSeconds int) {
 	c.enqueue(protocol.OpBreakGlass, protocol.BreakGlass{Invitees: invitees, TTLSeconds: ttlSeconds})
+}
+
+// Ack sends an end-to-end-encrypted, signed coordination ack for tag, records
+// our own ack locally, and emits a local echo carrying the running quorum. An
+// ack is a typed coordination primitive (one ack per identity per tag), NOT a
+// reaction. It errors if the room key is not yet established.
+func (c *Client) Ack(tag string) error {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return errors.New("ack needs a tag")
+	}
+	body, _ := json.Marshal(protocol.AckBody{Tag: tag})
+	if err := c.sealAndSend(protocol.OpAck, body); err != nil {
+		return err
+	}
+	quorum := c.recordAck(tag, c.Fingerprint())
+	c.emit(EvAck{Tag: tag, Actor: c.name, Fpr: c.Fingerprint(), Quorum: quorum, Self: true, At: time.Now()})
+	return nil
+}
+
+// Handoff transfers the incident-commander token to the member named handle. It
+// sends a signed, E2E handoff frame, updates local IC state, and emits a local
+// echo. It errors if no such member is present or the room key is not ready.
+func (c *Client) Handoff(handle string) error {
+	handle = strings.TrimPrefix(strings.TrimSpace(handle), "@")
+	toID, toFpr, ok := c.LookupMember(handle)
+	if !ok {
+		return fmt.Errorf("no member named @%s in this room", handle)
+	}
+	body, _ := json.Marshal(protocol.HandoffBody{ToID: toID, ToName: handle})
+	if err := c.sealAndSend(protocol.OpHandoff, body); err != nil {
+		return err
+	}
+	c.setIC(toID, handle, toFpr)
+	c.emit(EvHandoff{
+		FromName: c.name, FromFpr: c.Fingerprint(),
+		ToName: handle, ToFpr: toFpr, Self: true, At: time.Now(),
+	})
+	return nil
+}
+
+// AckState returns the current per-tag quorum counts as tag -> "<acked>/<members>".
+func (c *Client) AckState() map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]string, len(c.acks))
+	for tag := range c.acks {
+		out[tag] = c.quorumLocked(tag)
+	}
+	return out
+}
+
+// ICHolder returns the display name and fingerprint of the current incident
+// commander, and whether that is us. ok is false before the holder is known.
+func (c *Client) ICHolder() (name, fpr string, isSelf, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ic.id == "" {
+		return "", "", false, false
+	}
+	return c.ic.name, c.ic.fpr, c.ic.id == c.selfID, true
+}
+
+// recordAck records that fpr acked tag and returns the resulting quorum string.
+func (c *Client) recordAck(tag, fpr string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	set := c.acks[tag]
+	if set == nil {
+		set = make(map[string]bool)
+		c.acks[tag] = set
+	}
+	set[fpr] = true
+	return c.quorumLocked(tag)
+}
+
+// quorumLocked formats "<distinct acks>/<current members>" for tag. The
+// denominator is the number of members in this client's current view (including
+// self); caller holds c.mu.
+func (c *Client) quorumLocked(tag string) string {
+	total := len(c.order)
+	if total == 0 {
+		total = 1 // we are always at least one member
+	}
+	return strconv.Itoa(len(c.acks[tag])) + "/" + strconv.Itoa(total)
+}
+
+// setIC sets the current incident commander.
+func (c *Client) setIC(id, name, fpr string) {
+	c.mu.Lock()
+	c.ic = icHolder{id: id, name: name, fpr: fpr}
+	c.mu.Unlock()
+}
+
+// resetCoordinationLocked clears ack quorum state and recomputes the IC to the
+// oldest current member — the initial condition. Called on /vanish (key rotation
+// resets coordination state, §2.2). Caller holds c.mu.
+func (c *Client) resetCoordinationLocked() {
+	c.acks = make(map[string]map[string]bool)
+	c.ic = c.oldestHolderLocked()
+}
+
+// oldestHolderLocked returns the IC holder implied by join order: the oldest
+// current member. Caller holds c.mu.
+func (c *Client) oldestHolderLocked() icHolder {
+	if len(c.order) == 0 {
+		return icHolder{}
+	}
+	id := c.order[0]
+	if id == c.selfID {
+		return icHolder{id: id, name: c.name, fpr: c.id.Fingerprint()}
+	}
+	m := c.members[id]
+	return icHolder{id: id, name: m.name, fpr: crypto.Fingerprint(m.signPub)}
 }
 
 // RequestExec sends an end-to-end-encrypted, signed exec request naming a runbook
@@ -360,7 +492,7 @@ func (c *Client) handle(env protocol.Envelope) {
 		c.onKeyRequest(env)
 	case protocol.OpKeyDeliver:
 		c.onKeyDeliver(env)
-	case protocol.OpMessage, protocol.OpExecRequest, protocol.OpExecResult:
+	case protocol.OpMessage, protocol.OpExecRequest, protocol.OpExecResult, protocol.OpAck, protocol.OpHandoff:
 		var m protocol.Message
 		if err := env.Decode(&m); err == nil {
 			c.handleEncrypted(env.Type, m)
@@ -393,10 +525,17 @@ func (c *Client) onWelcome(env protocol.Envelope) {
 	c.mu.Lock()
 	c.selfID = w.YourID
 	members := make([]ConnMember, 0, len(w.Members))
+	// Welcome lists existing members oldest-first; we joined last. Recording the
+	// order (with self appended) lets us name the oldest member as the initial
+	// incident commander and size the ack quorum denominator.
+	c.order = c.order[:0]
 	for _, m := range w.Members {
 		c.addMemberLocked(m)
+		c.order = append(c.order, m.ID)
 		members = append(members, ConnMember{ID: m.ID, Name: m.DisplayName, Fingerprint: fingerprintOf(m.IdentityKey)})
 	}
+	c.order = append(c.order, w.YourID)
+	c.ic = c.oldestHolderLocked() // first member of the room implicitly holds IC
 	var minted *crypto.RoomKey
 	if w.YouAreFirst {
 		if rk, err := crypto.NewRoomKey(0); err == nil {
@@ -427,6 +566,7 @@ func (c *Client) onMemberJoined(env protocol.Envelope) {
 	}
 	c.mu.Lock()
 	c.addMemberLocked(mj.Member)
+	c.order = append(c.order, mj.Member.ID)
 	c.mu.Unlock()
 	c.emit(EvMemberJoined{ID: mj.Member.ID, Name: mj.Member.DisplayName, Fingerprint: fingerprintOf(mj.Member.IdentityKey)})
 }
@@ -449,6 +589,12 @@ func (c *Client) onMemberLeft(env protocol.Envelope) {
 	c.mu.Lock()
 	name := c.members[ml.ID].name
 	delete(c.members, ml.ID)
+	for i, id := range c.order {
+		if id == ml.ID {
+			c.order = append(c.order[:i], c.order[i+1:]...)
+			break
+		}
+	}
 	c.mu.Unlock()
 	c.emit(EvMemberLeft{ID: ml.ID, Name: name})
 }
@@ -560,7 +706,38 @@ func (c *Client) handleEncrypted(op protocol.Op, m protocol.Message) {
 				Output: body.Output, FromName: sender.name, FromFingerprint: fpr, At: now,
 			})
 		}
+	case protocol.OpAck:
+		var body protocol.AckBody
+		if json.Unmarshal(pt, &body) == nil && body.Tag != "" {
+			quorum := c.recordAck(body.Tag, fpr)
+			c.emit(EvAck{Tag: body.Tag, Actor: sender.name, Fpr: fpr, Quorum: quorum, At: now})
+		}
+	case protocol.OpHandoff:
+		var body protocol.HandoffBody
+		if json.Unmarshal(pt, &body) == nil && body.ToID != "" {
+			toName, toFpr := c.resolveTarget(body.ToID, body.ToName)
+			c.setIC(body.ToID, toName, toFpr)
+			c.emit(EvHandoff{FromName: sender.name, FromFpr: fpr, ToName: toName, ToFpr: toFpr, At: now})
+		}
 	}
+}
+
+// resolveTarget resolves a member id to a display name and fingerprint from the
+// directory (or self), falling back to fallbackName when the member is unknown.
+func (c *Client) resolveTarget(id, fallbackName string) (name, fpr string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if id == c.selfID {
+		return c.name, c.id.Fingerprint()
+	}
+	if m, ok := c.members[id]; ok {
+		name = m.name
+		if name == "" {
+			name = fallbackName
+		}
+		return name, crypto.Fingerprint(m.signPub)
+	}
+	return fallbackName, ""
 }
 
 // replayPending decrypts and emits any frames buffered before the room key
@@ -594,7 +771,11 @@ func (c *Client) onControl(env protocol.Envelope) {
 	}
 	if ctrl.Action == protocol.ActionVanish {
 		// Everyone advances the room key deterministically; no key exchange needed.
+		// Key rotation also resets coordination state (§2.2).
 		c.ratchetForward()
+		c.mu.Lock()
+		c.resetCoordinationLocked()
+		c.mu.Unlock()
 	}
 	c.emit(EvControl{Action: ctrl.Action, ByName: ctrl.ByName, TTLSeconds: ctrl.TTLSeconds})
 }

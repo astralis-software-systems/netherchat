@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -425,6 +426,20 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 			r.unread++
 		}
 
+	case client.EvAck:
+		who := e.Actor
+		if e.Self {
+			who = "you"
+		}
+		r.appendSystem(fmt.Sprintf("✓ %s acked %s  (%s)", who, e.Tag, e.Quorum))
+
+	case client.EvHandoff:
+		from := e.FromName
+		if e.Self {
+			from = "you"
+		}
+		r.appendSystem(fmt.Sprintf("⚡ incident command: %s → %s", from, e.ToName))
+
 	case client.EvError:
 		r.appendError(e.Err.Error())
 
@@ -717,18 +732,45 @@ func (m *Model) membersView() string {
 	r := m.activeRoom()
 	lines := []string{m.st(m.theme.Accent).Bold(true).Render("members")}
 	if r != nil {
+		// The incident commander is marked with a ⚡ prefix (§2.2).
+		var icFpr string
+		var icSelf bool
+		if r.client != nil {
+			if _, fpr, isSelf, ok := r.client.ICHolder(); ok {
+				icFpr, icSelf = fpr, isSelf
+			}
+		}
 		dot := m.st(m.theme.Success).Render("● ")
-		lines = append(lines, dot+m.user(m.name)+m.st(m.theme.Muted).Render(" (you)"))
+		lines = append(lines, m.icMark(icSelf)+dot+m.user(m.name)+m.st(m.theme.Muted).Render(" (you)"))
 		for _, id := range r.order {
 			mem := r.members[id]
-			row := dot + m.user(mem.name)
+			row := m.icMark(!icSelf && icFpr != "" && mem.fpr == icFpr) + dot + m.user(mem.name)
 			if m.isVerified(mem.fpr) {
 				row += m.st(m.theme.Success).Render(" ✓")
 			}
 			lines = append(lines, row)
 		}
+		// A running quorum count per active ack tag (§2.2).
+		if r.client != nil {
+			if acks := r.client.AckState(); len(acks) > 0 {
+				lines = append(lines, "", m.st(m.theme.Accent).Bold(true).Render("acks"))
+				for _, tag := range sortedKeys(acks) {
+					label := truncate(tag, m.membersW-5)
+					lines = append(lines, m.st(m.theme.Text).Render(label)+" "+m.st(m.theme.Warn).Render(acks[tag]))
+				}
+			}
+		}
 	}
 	return m.pane(m.membersW, strings.Join(lines, "\n"))
+}
+
+// icMark returns the incident-commander prefix: a ⚡ for the holder, a blank slot
+// otherwise (so rows stay aligned).
+func (m *Model) icMark(isIC bool) string {
+	if isIC {
+		return m.st(m.theme.Warn).Render("⚡")
+	}
+	return " "
 }
 
 func (m *Model) renderLines(r *room) string {
@@ -810,6 +852,31 @@ func (m *Model) user(name string) string {
 }
 
 func (m *Model) st(c lipgloss.Color) lipgloss.Style { return lipgloss.NewStyle().Foreground(c) }
+
+// sortedKeys returns the keys of a string-keyed map in sorted order, for stable
+// rendering of the ack panel.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// truncate shortens s to at most n display columns, appending "…" when cut.
+func truncate(s string, n int) string {
+	if n < 1 {
+		n = 1
+	}
+	if len(s) <= n {
+		return s
+	}
+	if n == 1 {
+		return "…"
+	}
+	return s[:n-1] + "…"
+}
 
 func (m *Model) wrap(s string) string { return lipgloss.NewStyle().Width(m.vp.Width).Render(s) }
 
