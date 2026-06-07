@@ -90,6 +90,18 @@ type EvBreakGlass struct {
 	Invites    []BreakGlassInvite
 }
 
+// EvRouteFired is emitted to members of a webhook (intake) room when an inbound
+// alert matched a [[route]] rule and the server spawned an incident war room
+// (§1.3). Room is the NEW incident room. It is informational — the invitees
+// receive their join links out of band (the webhook response / reply_url).
+type EvRouteFired struct {
+	Room        string
+	TriggerRule int
+	Invitees    []string
+	TTLSeconds  int
+	At          time.Time
+}
+
 // EvKeyReady is emitted when this client holds the room key for an epoch and can
 // send and receive messages.
 type EvKeyReady struct{ Epoch uint64 }
@@ -117,6 +129,7 @@ type EvError struct{ Err error }
 type EvDisconnected struct{ Err error }
 
 func (EvConnected) isEvent()     {}
+func (EvRouteFired) isEvent()    {}
 func (EvKeyReady) isEvent()      {}
 func (EvMessage) isEvent()       {}
 func (EvServerMessage) isEvent() {}

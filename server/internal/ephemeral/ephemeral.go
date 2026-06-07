@@ -75,9 +75,20 @@ func ClampTTL(d time.Duration) time.Duration {
 	}
 }
 
-// Create registers a new ephemeral room with a fresh, unguessable name and a
-// hard deadline of now+ttl. ttl is clamped into [MinTTL, MaxTTL].
+// Create registers a new ephemeral room named "war-<8 hex>". It is the
+// break-glass default; see CreateNamed for the prefix-controlled variant.
 func (r *Registry) Create(ttl time.Duration, by string) Room {
+	return r.CreateNamed(ttl, by, "war")
+}
+
+// CreateNamed registers a new ephemeral room with a fresh, unguessable name of
+// the form "<prefix>-<8 hex>" and a hard deadline of now+ttl. ttl is clamped
+// into [MinTTL, MaxTTL]. Auto-war-room (§1.3) uses the per-route prefix (default
+// "inc"); break-glass uses "war".
+func (r *Registry) CreateNamed(ttl time.Duration, by, prefix string) Room {
+	if prefix == "" {
+		prefix = "war"
+	}
 	ttl = ClampTTL(ttl)
 	now := time.Now()
 	room := Room{CreatedBy: by, Created: now, Deadline: now.Add(ttl)}
@@ -85,7 +96,7 @@ func (r *Registry) Create(ttl time.Duration, by string) Room {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for {
-		room.Name = newRoomName()
+		room.Name = newRoomName(prefix)
 		if _, taken := r.rooms[room.Name]; !taken {
 			break
 		}
@@ -133,9 +144,10 @@ func (r *Registry) sweep(now time.Time) {
 	}
 }
 
-// newRoomName returns an unguessable ephemeral room name like "war-3f9a2b71".
-func newRoomName() string {
+// newRoomName returns an unguessable ephemeral room name like "war-3f9a2b71" or
+// "inc-3f9a2b71" — the prefix plus 8 hex characters (4 random bytes).
+func newRoomName(prefix string) string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
-	return "war-" + hex.EncodeToString(b[:])
+	return prefix + "-" + hex.EncodeToString(b[:])
 }

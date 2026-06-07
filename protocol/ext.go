@@ -90,3 +90,16 @@ type BreakGlassResult struct {
 	HostToken  string             `json:"host_token"`
 	Invites    []BreakGlassInvite `json:"invites"`
 }
+
+// RouteFired is broadcast by the server to every member of a webhook room when an
+// inbound alert payload matched a [[route]] rule and a break-glass war room was
+// spawned automatically (§1.3). It carries no secrets — only metadata about the
+// new room — so observers (e.g. `netherchat tail #alerts --json`) can record the
+// spawn in the structured event stream. Room is the NEW incident room's name.
+type RouteFired struct {
+	Room        string   `json:"room"`         // the spawned incident room (e.g. inc-3f9a2b71)
+	TriggerRule int      `json:"trigger_rule"` // index of the matched [[route]] rule
+	Invitees    []string `json:"invitees"`     // names the route invited
+	TTLSeconds  int      `json:"ttl_seconds"`  // hard lifetime of the spawned room
+	At          int64    `json:"at"`           // unix seconds
+}

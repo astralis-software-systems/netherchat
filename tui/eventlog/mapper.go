@@ -58,6 +58,10 @@ func (m *Mapper) Map(ev client.Event) []Event {
 	case client.EvKeyReady:
 		return []Event{KeyReady(m.room, e.Epoch)}
 
+	case client.EvRouteFired:
+		// room is the SPAWNED incident room, not the intake room we are tailing.
+		return []Event{RouteFired(e.Room, e.TriggerRule, e.Invitees, e.TTLSeconds)}
+
 	case client.EvControl:
 		if e.Action == "vanish" { // protocol.ActionVanish
 			return []Event{Vanish(m.room, e.ByName, m.fprByName(e.ByName))}

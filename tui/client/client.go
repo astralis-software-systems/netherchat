@@ -365,6 +365,8 @@ func (c *Client) handle(env protocol.Envelope) {
 		if err := env.Decode(&m); err == nil {
 			c.handleEncrypted(env.Type, m)
 		}
+	case protocol.OpRouteFired:
+		c.onRouteFired(env)
 	case protocol.OpServerMessage:
 		c.onServerMessage(env)
 	case protocol.OpControl:
@@ -628,6 +630,24 @@ func (c *Client) onBreakGlassResult(env protocol.Envelope) {
 		Expires:    exp,
 		HostToken:  r.HostToken,
 		Invites:    invites,
+	})
+}
+
+func (c *Client) onRouteFired(env protocol.Envelope) {
+	var rf protocol.RouteFired
+	if err := env.Decode(&rf); err != nil {
+		return
+	}
+	at := time.Now()
+	if rf.At > 0 {
+		at = time.Unix(rf.At, 0)
+	}
+	c.emit(EvRouteFired{
+		Room:        rf.Room,
+		TriggerRule: rf.TriggerRule,
+		Invitees:    rf.Invitees,
+		TTLSeconds:  rf.TTLSeconds,
+		At:          at,
 	})
 }
 

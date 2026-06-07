@@ -24,6 +24,7 @@ import (
 func main() {
 	configPath := flag.String("config", "", "path to netherchat.toml (optional)")
 	addr := flag.String("addr", "", "listen address override, e.g. :3000")
+	webURL := flag.String("web-url", "", "base URL of the browser join client for auto-war-room links (overrides [server].web_url)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	healthcheck := flag.Bool("healthcheck", false, "probe the local /health endpoint and exit 0/1 (used by Docker HEALTHCHECK)")
 	flag.Parse()
@@ -47,6 +48,9 @@ func main() {
 	}
 	if *addr != "" {
 		cfg.Server.Addr = *addr
+	}
+	if *webURL != "" {
+		cfg.Server.WebURL = *webURL
 	}
 
 	if *healthcheck {

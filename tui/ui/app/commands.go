@@ -167,6 +167,20 @@ func (m *Model) runTTL(r *room, arg string) {
 	}
 }
 
+// renderRouteFired builds the banner shown in an intake room when an inbound
+// alert matched a [[route]] rule and spawned an incident war room (§1.3).
+func (m *Model) renderRouteFired(e client.EvRouteFired) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("🔥 auto-war-room: alert matched rule %d → #%s spawned\n", e.TriggerRule, e.Room))
+	b.WriteString("   ephemeral · invite-only · end-to-end encrypted\n")
+	if len(e.Invitees) > 0 {
+		b.WriteString("   invited: " + strings.Join(e.Invitees, ", ") + "\n")
+	}
+	b.WriteString(fmt.Sprintf("   ttl: %s  ·  one-time join links were delivered to the alert source",
+		(time.Duration(e.TTLSeconds) * time.Second)))
+	return b.String()
+}
+
 // sourceLabel describes where the identity key came from, for /whoami and /whois.
 func (m *Model) sourceLabel() string {
 	if m.source == "" {

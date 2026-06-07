@@ -56,6 +56,13 @@ const (
 	// that vanishes. See server/internal/ephemeral and PROTOCOL.md §11.
 	OpBreakGlass       Op = "break_glass"        // client -> server: create a war room + mint links
 	OpBreakGlassResult Op = "break_glass_result" // server -> client: room name, links, host token, deadline
+
+	// Auto-war-room (§1.3, additive): when an inbound webhook payload matches a
+	// [[route]] rule the server spawns a break-glass room and notifies the webhook
+	// room's members so the spawn is visible in the structured event stream
+	// (route_fired). It carries no secrets — only metadata about an automatically
+	// created room. See server/internal/api and PROTOCOL.md §12.
+	OpRouteFired Op = "route_fired" // server -> clients: an alert route fired and spawned a war room
 )
 
 // Envelope is the outer frame for every message on the wire. Data holds the

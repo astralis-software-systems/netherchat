@@ -21,6 +21,7 @@ type Config struct {
 	Limits      LimitsConfig          `toml:"limits"`
 	Persistence PersistenceConfig     `toml:"persistence"`
 	Rooms       map[string]RoomConfig `toml:"rooms"`
+	Routes      []RouteConfig         `toml:"route"`
 	Trust       []TrustEntry          `toml:"trust"`
 }
 
@@ -38,6 +39,27 @@ type ServerConfig struct {
 	Addr    string `toml:"addr"`
 	TLSCert string `toml:"tls_cert"`
 	TLSKey  string `toml:"tls_key"`
+	// WebURL is the base URL of the browser join client. Auto-war-room (§1.3)
+	// uses it to build the one-time /join links it hands back to invitees. When
+	// empty the server falls back to the inbound request's own host.
+	WebURL string `toml:"web_url"`
+}
+
+// RouteConfig is one alert-routing rule (§1.3). When an inbound webhook payload
+// matches Match (all fields AND-ed), the server spawns an ephemeral break-glass
+// war room, mints one-time invite links for each name in Invite, and returns
+// them. Routes are evaluated in order; the first match wins.
+//
+// Match values are matched against the (possibly nested, dot-addressed) JSON
+// payload: a value containing regex metacharacters is an anchored regex
+// (^value$), otherwise it is exact string equality. See server/internal/route.
+type RouteConfig struct {
+	Match      map[string]string `toml:"match"`
+	Action     string            `toml:"action"`      // currently only "break-glass"
+	Invite     []string          `toml:"invite"`      // display names or @handles to invite
+	TTL        Duration          `toml:"ttl"`         // hard lifetime of the spawned room
+	RoomPrefix string            `toml:"room_prefix"` // room name is <prefix>-<8 hex>; default "inc"
+	ReplyURL   string            `toml:"reply_url"`   // optional: POST the links to the operator's own system
 }
 
 // LimitsConfig is the per-connection inbound rate limit.

@@ -41,7 +41,7 @@ func handlerWithStore(cfg config.Config, st store.Store, log *slog.Logger) http.
 	eph := ephemeral.New(log)
 	eph.Start(h.ExpireRoom)
 	transport := ws.NewServer(h, cfg, invites, eph, st, log)
-	rest := api.New(h, cfg, log)
+	rest := api.New(h, cfg, invites, eph, log)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", transport.HandleWS)

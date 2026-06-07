@@ -418,6 +418,13 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 		r.appendLine(line{at: time.Now(), kind: lineRaw, text: m.renderBreakGlass(e)})
 		notify = m.joinRoomOpts(e.Room, e.HostToken, false)
 
+	case client.EvRouteFired:
+		// An inbound alert in this (intake) room spawned an incident war room.
+		r.appendLine(line{at: e.At, kind: lineRaw, text: m.renderRouteFired(e)})
+		if name != m.active {
+			r.unread++
+		}
+
 	case client.EvError:
 		r.appendError(e.Err.Error())
 

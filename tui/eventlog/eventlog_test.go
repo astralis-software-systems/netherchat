@@ -22,6 +22,7 @@ func sampleEvents() []Event {
 		Message("ops", "alice", fpr, true, true, "with body", true),
 		Vanish("ops", "alice", fpr),
 		Ack("ops", "alice", fpr, "drain-complete"),
+		RouteFired("inc-3f9a2b71", 0, []string{"alice", "bob"}, 7200),
 		Verify("ops", "alice", fpr, "bob", fpr2, true),
 		ExecRequest("ops", "alice", fpr, "drain", Bool(true)),
 		ExecRequest("ops", "alice", fpr, "drain", nil),

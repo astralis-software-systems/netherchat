@@ -50,6 +50,11 @@ type Event struct {
 	Allowed *bool  `json:"allowed,omitempty"`
 	Exit    *int   `json:"exit,omitempty"`
 
+	// Auto-war-room (§1.3): an alert route fired and spawned an incident room.
+	TriggerRule *int     `json:"trigger_rule,omitempty"`
+	Invitees    []string `json:"invitees,omitempty"`
+	TTLSeconds  int      `json:"ttl_seconds,omitempty"`
+
 	Epoch   *uint64 `json:"epoch,omitempty"`
 	Message string  `json:"message,omitempty"`
 }
@@ -108,6 +113,16 @@ func Vanish(room, actor, fpr string) Event {
 func Ack(room, actor, fpr, tag string) Event {
 	e := base("ack", room)
 	e.Actor, e.Fpr, e.Tag = actor, fpr, tag
+	return e
+}
+
+// RouteFired builds an auto-war-room event (§1.3). room is the spawned incident
+// room (not the intake room the rule matched on).
+func RouteFired(room string, triggerRule int, invitees []string, ttlSeconds int) Event {
+	e := base("route_fired", room)
+	e.TriggerRule = Int(triggerRule)
+	e.Invitees = invitees
+	e.TTLSeconds = ttlSeconds
 	return e
 }
 
