@@ -69,15 +69,25 @@ func sendCmd(args []string) {
 // allows a brief grace period for the frame to flush (the protocol has no
 // delivery ack — send is fire-and-forget to whoever is currently in the room).
 func sendAfterKey(c *client.Client, msg string, timeout time.Duration) error {
+	if err := waitForKey(c, timeout); err != nil {
+		return err
+	}
+	if err := c.Send(msg); err != nil {
+		return err
+	}
+	time.Sleep(400 * time.Millisecond)
+	return nil
+}
+
+// waitForKey blocks until the room key is established (EvKeyReady), the client
+// disconnects, or the timeout elapses. The non-interactive commands (send,
+// replay) need the key before they can encrypt anything for the room.
+func waitForKey(c *client.Client, timeout time.Duration) error {
 	deadline := time.After(timeout)
 	for {
 		select {
 		case ev := <-c.Events():
 			if _, ok := ev.(client.EvKeyReady); ok {
-				if err := c.Send(msg); err != nil {
-					return err
-				}
-				time.Sleep(400 * time.Millisecond)
 				return nil
 			}
 		case <-c.Done():

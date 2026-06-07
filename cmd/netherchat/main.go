@@ -39,6 +39,8 @@ func main() {
 		whoamiCmd(os.Args[2:])
 	case "verify":
 		verifyCmd(os.Args[2:])
+	case "replay":
+		replayCmd(os.Args[2:])
 	case "rooms":
 		roomsCmd(os.Args[2:])
 	case "schema":
@@ -148,6 +150,7 @@ usage:
   netherchat agent   --room <room> --allow runbook.toml   run an edge-exec agent
   netherchat whoami  [--json]                     show your identity
   netherchat verify  <record.json> [--json]       verify a sealed record's hash chain + signatures
+  netherchat replay  <record.json> --into <room>  stream a sealed record into a room for a retro
   netherchat rooms   [--json] [--server ws://...] list active rooms
   netherchat version [--json]                     print version info
   netherchat schema                              print the JSON Schema for the --json event stream

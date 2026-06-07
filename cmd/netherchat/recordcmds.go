@@ -37,7 +37,7 @@ func verifyCmd(args []string) {
 
 // verifyFile loads, parses, and verifies a sealed record, printing the verdict
 // and returning the process exit code (0 = VALID, 1 = TAMPERED/error) so it
-// composes in scripts and CI.
+// composes in scripts and CI. It is shared by `verify` and `replay --verify-only`.
 func verifyFile(path string, jsonMode bool) int {
 	b, err := os.ReadFile(path)
 	if err != nil {

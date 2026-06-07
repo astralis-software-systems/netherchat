@@ -264,6 +264,37 @@ func (c *Client) finalizeSeal() {
 	c.emit(EvSealComplete{Record: rec, Entries: entries, Signers: signers})
 }
 
+// Replay streams the entries of a previously sealed record into the current room
+// as record entries marked Replayed (§2.7), so a retro room can walk a past
+// incident's signed minutes without re-litigating them. Each entry is sent
+// verbatim except for the Replayed flag — which is unsigned provenance, NOT part
+// of the canonical signed bytes (see record.Entry) — so receivers verify the
+// original authors' signatures exactly as for live entries, and AppendRemote
+// re-links the chain from genesis. The flag is what dims the entries in the UI.
+//
+// Entries go out in chain order over the single ordered relay connection, so a
+// receiver whose record chain is empty (a fresh retro room) appends them in
+// sequence; replaying into a room that already holds a record chain is rejected
+// by the receivers as a fork — the intended guard, not a bug. The replaying
+// client does not append to its own chain (it is a courier, not an author).
+// Returns the number of entries streamed.
+func (c *Client) Replay(entries []record.Entry) (int, error) {
+	c.mu.Lock()
+	ready := c.rk != nil
+	c.mu.Unlock()
+	if !ready {
+		return 0, errors.New("room key not established yet")
+	}
+	for i, e := range entries {
+		e.Replayed = true
+		b, _ := json.Marshal(e)
+		if err := c.sealAndSend(protocol.OpRecordEntry, b); err != nil {
+			return i, fmt.Errorf("replay entry %d: %w", e.Seq, err)
+		}
+	}
+	return len(entries), nil
+}
+
 // clearSealLocked drops any in-progress or pending seal. Caller holds c.mu.
 func (c *Client) clearSealLocked() {
 	if c.sealTimer != nil {
