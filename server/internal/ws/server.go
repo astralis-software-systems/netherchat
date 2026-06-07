@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
@@ -41,7 +42,17 @@ type Server struct {
 	scuttle   *scuttle.Manager
 	store     store.Store // optional history persistence; nil when disabled
 	log       *slog.Logger
+
+	// frameTap, when set, receives a copy of every raw inbound relay frame BEFORE
+	// the relay decodes or processes it — the exact bytes that arrived over the
+	// wire. It is nil in production (zero cost); `netherchat doctor --paranoid`
+	// (§3.1) sets it to prove the relay sees only ciphertext. A tap can never grant
+	// the relay the ability to read content; it only observes the same opaque bytes.
+	frameTap func([]byte)
 }
+
+// SetFrameTap installs a diagnostic tap (see Server.frameTap). Call before serving.
+func (s *Server) SetFrameTap(tap func([]byte)) { s.frameTap = tap }
 
 // NewServer constructs a transport bound to the given hub, config, invite store,
 // ephemeral-room registry, scuttle manager (dead-man's switch), and optional
@@ -176,9 +187,18 @@ func (s *Server) serve(ctx context.Context, c *websocket.Conn) {
 	// user-originated content frames.
 	limiter := rate.NewLimiter(rate.Limit(s.cfg.Limits.MessagesPerSecond), s.cfg.Limits.Burst)
 	for {
-		var env protocol.Envelope
-		if err := wsjson.Read(ctx, c, &env); err != nil {
+		// Read the raw frame so the diagnostic tap (if any) sees the exact bytes on
+		// the wire before any decoding — the basis of the doctor blindness proof.
+		_, raw, err := c.Read(ctx)
+		if err != nil {
 			break
+		}
+		if s.frameTap != nil {
+			s.frameTap(raw)
+		}
+		var env protocol.Envelope
+		if err := json.Unmarshal(raw, &env); err != nil {
+			continue
 		}
 		if env.Type == protocol.OpMessage && !limiter.Allow() {
 			cn.send(mustEncode(protocol.OpError, protocol.Error{Code: "rate_limited", Message: "slow down"}))

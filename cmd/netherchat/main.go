@@ -43,6 +43,8 @@ func main() {
 		replayCmd(os.Args[2:])
 	case "rooms":
 		roomsCmd(os.Args[2:])
+	case "doctor":
+		doctorCmd(os.Args[2:])
 	case "schema":
 		fmt.Print(eventlog.SchemaJSON())
 	case "version", "--version", "-v":
@@ -161,6 +163,7 @@ usage:
   netherchat verify  <record.json> [--json]       verify a sealed record's hash chain + signatures
   netherchat replay  <record.json> --into <room>  stream a sealed record into a room for a retro
   netherchat rooms   [--json] [--server ws://...] list active rooms
+  netherchat doctor  [--paranoid] [--json]        self-test; --paranoid proves the relay is blind
   netherchat version [--json]                     print version info
   netherchat schema                              print the JSON Schema for the --json event stream
 

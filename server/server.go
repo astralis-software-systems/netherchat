@@ -28,10 +28,18 @@ import (
 // persistence is enabled. Each call returns an independent server — convenient
 // for tests.
 func Handler(cfg config.Config, log *slog.Logger) http.Handler {
-	return handlerWithStore(cfg, openStore(cfg, log), log)
+	return handlerWithStore(cfg, openStore(cfg, log), nil, log)
 }
 
-func handlerWithStore(cfg config.Config, st store.Store, log *slog.Logger) http.Handler {
+// HandlerWithTap is Handler plus a diagnostic frame tap: every raw inbound relay
+// frame is copied to tap before the relay decodes it. It exists for
+// `netherchat doctor --paranoid` (§3.1), which uses it to prove the relay sees
+// only ciphertext. Never wired in normal server startup.
+func HandlerWithTap(cfg config.Config, tap func([]byte), log *slog.Logger) http.Handler {
+	return handlerWithStore(cfg, openStore(cfg, log), tap, log)
+}
+
+func handlerWithStore(cfg config.Config, st store.Store, tap func([]byte), log *slog.Logger) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -45,6 +53,9 @@ func handlerWithStore(cfg config.Config, st store.Store, log *slog.Logger) http.
 	// connection lifecycle in the transport. Policy comes from each room's config.
 	sc := scuttle.New(h, scuttlePolicyOf(cfg), log)
 	transport := ws.NewServer(h, cfg, invites, eph, sc, st, log)
+	if tap != nil {
+		transport.SetFrameTap(tap)
+	}
 	rest := api.New(h, cfg, invites, eph, log)
 
 	mux := http.NewServeMux()
@@ -100,7 +111,7 @@ func Run(ctx context.Context, cfg config.Config, tor TorOptions, log *slog.Logge
 	if st != nil {
 		defer st.Close()
 	}
-	handler := handlerWithStore(cfg, st, log)
+	handler := handlerWithStore(cfg, st, nil, log)
 	srv := &http.Server{
 		Addr:              cfg.Server.Addr,
 		Handler:           handler,

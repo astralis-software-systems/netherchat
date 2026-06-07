@@ -141,6 +141,19 @@ func New(serverURL, room, name, identityPath string) (*Client, error) {
 	return NewWithIdentity(serverURL, room, name, id)
 }
 
+// NewEphemeral creates a client with a freshly generated, throwaway identity —
+// no key file, no ssh-agent. It exists so callers outside the tui/ tree (which
+// Go's internal-package rule bars from importing the crypto package) can still
+// stand up self-contained clients: `netherchat doctor --paranoid` uses it for the
+// canary peers of its blindness self-test (§3.1).
+func NewEphemeral(serverURL, room, name string) (*Client, error) {
+	id, err := crypto.GenerateIdentity()
+	if err != nil {
+		return nil, fmt.Errorf("generate identity: %w", err)
+	}
+	return NewWithIdentity(serverURL, room, name, id)
+}
+
 // NewWithIdentity creates a client from an explicit identity. serverURL may use
 // http(s) or ws(s); the /ws path is appended if absent. Used by tests and any
 // caller (under tui/) that manages identities directly.
