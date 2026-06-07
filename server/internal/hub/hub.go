@@ -211,20 +211,32 @@ func (h *Hub) recipients(roomName, exceptID string) []func(protocol.Envelope) {
 	return out
 }
 
-// RoomStat is non-sensitive room metadata for the REST /rooms endpoint.
+// RoomStat is non-sensitive room metadata for the REST /rooms endpoint: a room
+// name, its live member count, and its (static) policy. Never any content.
 type RoomStat struct {
-	Name    string `json:"name"`
-	Members int    `json:"members"`
+	Name       string `json:"name"`
+	Members    int    `json:"members"`
+	InviteOnly bool   `json:"invite_only"`
+	TTLSeconds int    `json:"ttl_seconds"`
+	Webhook    bool   `json:"webhook"`
 }
 
-// Stats returns a snapshot of current rooms and their member counts.
+// Stats returns a snapshot of the currently-active rooms (those with at least one
+// member), each with its member count and static netherchat.toml policy.
 func (h *Hub) Stats() []RoomStat {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	stats := make([]RoomStat, 0, len(h.rooms))
 	for name, r := range h.rooms {
-		stats = append(stats, RoomStat{Name: name, Members: len(r.members)})
+		p := h.cfg.Room(name)
+		stats = append(stats, RoomStat{
+			Name:       name,
+			Members:    len(r.members),
+			InviteOnly: p.InviteOnly,
+			TTLSeconds: int(p.TTL.Std().Seconds()),
+			Webhook:    p.Webhook,
+		})
 	}
 	return stats
 }

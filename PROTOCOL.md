@@ -23,7 +23,9 @@ key and never sees plaintext. Everything below is designed around that.
   acceptable only for local development.
 - Every WebSocket message is a single JSON-encoded **Envelope** (UTF-8 text frame).
 - The server also exposes read-only REST endpoints: `GET /health`, `GET /version`,
-  `GET /rooms`. `/rooms` returns only room names and member counts — never content.
+  `GET /rooms`. `/rooms` returns `{"rooms":[{name, members, invite_only,
+  ttl_seconds, webhook}, …]}` — room names, live member counts, and static
+  policy, never content. (`netherchat rooms` consumes it.)
 - Per-message read limit: 1 MiB.
 
 ## 2. Envelope

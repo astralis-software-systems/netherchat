@@ -112,7 +112,7 @@ func TestSchemaValidatesEvents(t *testing.T) {
 		{"v": 2, "ts": "2026-06-06T03:14:22Z", "type": "join"},                                // wrong version (const 1)
 		{"v": 1, "ts": "2026-06-06T03:14:22Z", "type": "nonsense"},                            // not in type enum
 		{"v": 1, "ts": "2026-06-06T03:14:22Z", "type": "message", "fpr": "not-a-fingerprint"}, // fpr pattern
-		{"v": 1, "type": "join"},                                                              // missing ts
+		{"v": 1, "type": "join"}, // missing ts
 	}
 	for i, b := range bad {
 		if err := sch.Validate(any(b)); err == nil {

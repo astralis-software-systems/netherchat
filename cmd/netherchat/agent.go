@@ -14,6 +14,8 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/salehkreiner/netherchat/tui/client"
+	"github.com/salehkreiner/netherchat/tui/eventlog"
+	"github.com/salehkreiner/netherchat/tui/output"
 )
 
 // agentCmd implements `netherchat agent --room <room> --allow runbook.toml`: it
@@ -29,8 +31,9 @@ func agentCmd(args []string) {
 	name := fs.String("name", agentName(), "display name")
 	identity := fs.String("identity", "", "identity key (default: ssh-agent → ~/.ssh/id_ed25519 → generated)")
 	maxOutput := fs.Int("max-output", 16<<10, "cap on bytes of command output posted back")
+	jsonMode := fs.Bool("json", false, "emit an ndjson exec event stream to stdout (audit log stays on stderr)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: netherchat agent --room <room> --allow runbook.toml [--server ws://...] [--name <host>]")
+		fmt.Fprintln(os.Stderr, "usage: netherchat agent --room <room> --allow runbook.toml [--json] [--server ws://...] [--name <host>]")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
@@ -68,13 +71,18 @@ func agentCmd(args []string) {
 				if e.Self {
 					continue // never act on our own echo
 				}
+				_, inRunbook := rb[e.Cmd]
+				willRun := e.Signed && inRunbook
+				if *jsonMode {
+					_ = output.WriteJSON(eventlog.ExecRequest(room0, e.FromName, e.FromFingerprint, e.Cmd, eventlog.Bool(willRun)))
+				}
 				if !e.Signed {
 					// Refuse to run an unsigned request: we must be able to
 					// attribute every action to an identity key.
 					log.Warn("exec IGNORED (unsigned request)", "cmd", e.Cmd, "by", e.FromName)
 					continue
 				}
-				go runRunbookAction(c, rb, e, *maxOutput, log)
+				go runRunbookAction(c, rb, e, *maxOutput, log, room0, *name, *jsonMode)
 			case client.EvError:
 				log.Warn("client error", "err", e.Err)
 			}
@@ -129,11 +137,17 @@ func loadRunbook(path string) (map[string]allowEntry, error) {
 // in the local allowlist, mapped to a fixed command line (no shell, no
 // caller-supplied arguments), and logs every attempt — allowed or denied —
 // locally on this host. The requester is identified by their key fingerprint.
-func runRunbookAction(c *client.Client, rb map[string]allowEntry, e client.EvExecRequest, maxOutput int, log *slog.Logger) {
+func runRunbookAction(c *client.Client, rb map[string]allowEntry, e client.EvExecRequest, maxOutput int, log *slog.Logger, room, selfName string, jsonMode bool) {
+	emitResult := func(allowed bool, exit int) {
+		if jsonMode {
+			_ = output.WriteJSON(eventlog.ExecResult(room, selfName, c.Fingerprint(), e.Cmd, allowed, exit))
+		}
+	}
 	entry, ok := rb[e.Cmd]
 	if !ok {
 		log.Warn("exec DENIED (not in runbook)", "cmd", e.Cmd, "by", e.FromFingerprint, "name", e.FromName)
 		_ = c.PostExecResult(e.ID, e.Cmd, false, 0, "")
+		emitResult(false, 0)
 		return
 	}
 
@@ -152,6 +166,7 @@ func runRunbookAction(c *client.Client, rb map[string]allowEntry, e client.EvExe
 	if perr := c.PostExecResult(e.ID, e.Cmd, true, exitCode, out); perr != nil {
 		log.Warn("failed to post exec result", "err", perr)
 	}
+	emitResult(true, exitCode)
 }
 
 // executeAllowed runs an allowlisted command line (no shell, no caller-supplied

@@ -94,7 +94,7 @@ func (a *API) health(w http.ResponseWriter, _ *http.Request) {
 func (a *API) version(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":  buildinfo.Version,
-		"protocol": 1,
+		"protocol": protocol.Version,
 		"product":  "netherchat",
 	})
 }

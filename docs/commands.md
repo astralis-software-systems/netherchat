@@ -194,3 +194,37 @@ Common flags: `--server <url>`, `--name <you>`, `--identity <path>`, `--invite <
 > exchange messages while at least one other member is present to share the room
 > key. For unattended, no-key injection from external systems, use an inbound
 > [webhook](self-hosting.md) instead (server-origin plaintext).
+
+## Machine-readable output (`--json`)
+
+Netherchat composes like `gh` or `kubectl`: most subcommands speak JSON on stdout
+when `--json` is passed (errors go to stderr as `{"error":"…"}`; exit 0 on
+success). Output is always valid JSON — never mixed with human text.
+
+```bash
+netherchat version --json     # {"version":"…","protocol_version":3,"go_version":"…","platform":"…"}
+netherchat whoami  --json     # {"identity":{…},"server":"…","room":"…","encryption":"…",…}
+netherchat rooms   --json     # [{"name":"ops","members":2,"invite_only":false,"ttl_seconds":0,"webhook":true},…]
+netherchat agent   --room ops --allow runbook.toml --json   # ndjson exec_request/exec_result stream
+```
+
+### `tail --json` — the structured event stream
+
+`netherchat tail #room --json` emits a **versioned, metadata-only** newline-delimited
+JSON event stream (§1.7) — an auditable incident timeline you can pipe into `jq`,
+Vector, or Loki with **zero message-body leakage**:
+
+```bash
+netherchat tail ops --json | jq -c '{ts,type,actor}'
+```
+
+Every event carries `v` (the schema version — a stability contract bumped only on
+a breaking change) and an RFC3339-UTC `ts`. A `message` event reports `signed`,
+`verified`, `body_len`, and `body_hash` (`sha256:<hex>` of the plaintext) — but
+**never the body** unless you add `--include-bodies` (an explicit opt-in that
+creates a local content record). Event types: `join`, `leave`, `message`, `ack`,
+`verify`, `vanish`, `exec_request`, `exec_result`, `key_ready`, `error`,
+`disconnect`.
+
+`netherchat schema` prints the JSON Schema (draft-07) for v1 events so downstream
+tools can validate the stream.

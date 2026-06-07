@@ -15,7 +15,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/salehkreiner/netherchat/buildinfo"
 	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/eventlog"
@@ -36,10 +35,14 @@ func main() {
 		tailCmd(os.Args[2:])
 	case "agent":
 		agentCmd(os.Args[2:])
+	case "whoami":
+		whoamiCmd(os.Args[2:])
+	case "rooms":
+		roomsCmd(os.Args[2:])
 	case "schema":
 		fmt.Print(eventlog.SchemaJSON())
 	case "version", "--version", "-v":
-		fmt.Println("netherchat " + buildinfo.Version)
+		versionCmd(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -141,7 +144,12 @@ usage:
   netherchat send    <room> "message"           send one message (or pipe stdin)
   netherchat tail    <room> [--json]             stream messages (or the ndjson event log)
   netherchat agent   --room <room> --allow runbook.toml   run an edge-exec agent
+  netherchat whoami  [--json]                     show your identity
+  netherchat rooms   [--json] [--server ws://...] list active rooms
+  netherchat version [--json]                     print version info
   netherchat schema                              print the JSON Schema for the --json event stream
+
+Most subcommands accept --json for machine-readable output.
 
 common flags:
   --server <url>      server URL (send/tail; default ws://localhost:3000)

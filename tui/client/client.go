@@ -73,6 +73,17 @@ type pendingFrame struct {
 // it without touching crypto types.
 func DefaultIdentityPath() (string, error) { return crypto.DefaultIdentityPath() }
 
+// Identify resolves the BYO-key identity at identityPath (empty = the cascade:
+// ssh-agent → ~/.ssh/id_ed25519(_sk) → generated) and returns its fingerprint
+// and source WITHOUT opening a connection. Used by `netherchat whoami`.
+func Identify(identityPath string) (fingerprint, source string, err error) {
+	id, err := crypto.ResolveIdentity(identityPath)
+	if err != nil {
+		return "", "", err
+	}
+	return id.Fingerprint(), id.Source, nil
+}
+
 // New creates a client, resolving the operator's identity via the BYO-key
 // cascade (crypto.ResolveIdentity): an explicit identityPath, else ssh-agent,
 // else ~/.ssh/id_ed25519(_sk), else the generated key. This is the constructor
