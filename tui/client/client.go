@@ -26,6 +26,7 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/tui/internal/crypto"
+	"github.com/salehkreiner/netherchat/tui/record"
 )
 
 const (
@@ -67,6 +68,34 @@ type Client struct {
 	// (one ack per identity per tag). ic is the current incident-commander.
 	acks map[string]map[string]bool
 	ic   icHolder
+
+	// Sealed-record state (§1.4), in memory, reset on /vanish. chain is this
+	// client's copy of the append-only record chain; lastMsg is the most recent
+	// message (for /mark). The seal* fields hold an in-progress /seal collection
+	// when we are the sealer; pendingSeal* remembers an incoming SEAL_REQUEST so a
+	// later /seal can co-sign it.
+	chain   *record.Chain
+	lastMsg lastMessage
+
+	sealing         bool              // we initiated a seal and are collecting co-signatures
+	sealHead        []byte            // the chain head being sealed
+	sealEntries     []record.Entry    // snapshot of the chain at seal time (so later appends don't drift)
+	sealSigs        map[string][]byte // fingerprint -> raw Ed25519 seal signature
+	sealKeys        map[string][]byte // fingerprint -> raw Ed25519 public key
+	sealTimer       *time.Timer       // 30s collection window
+	pendingSealHead []byte            // head of the most recent incoming SEAL_REQUEST
+	pendingSealName string            // display name of who proposed it
+}
+
+// sealTimeout bounds how long a sealer waits for co-signatures before finalizing
+// with whatever it has collected (§1.4).
+const sealTimeout = 30 * time.Second
+
+// lastMessage is the most recent chat message seen in the room, remembered so
+// /mark can promote it into the record.
+type lastMessage struct {
+	from string
+	text string
 }
 
 // icHolder identifies the room's current incident commander. The first member of
@@ -129,6 +158,7 @@ func NewWithIdentity(serverURL, room, name string, id *crypto.Identity) (*Client
 		done:    make(chan struct{}),
 		members: make(map[string]memberInfo),
 		acks:    make(map[string]map[string]bool),
+		chain:   record.NewChain(),
 	}, nil
 }
 
@@ -166,8 +196,16 @@ func (c *Client) Send(text string) error {
 	if err := c.sealAndSend(protocol.OpMessage, []byte(text)); err != nil {
 		return err
 	}
+	c.rememberMessage(c.name, text)
 	c.emit(EvMessage{FromID: c.SelfID(), FromName: c.name, Text: text, Self: true, Signed: true, At: time.Now()})
 	return nil
+}
+
+// rememberMessage records the most recent message so /mark can promote it.
+func (c *Client) rememberMessage(from, text string) {
+	c.mu.Lock()
+	c.lastMsg = lastMessage{from: from, text: text}
+	c.mu.Unlock()
 }
 
 // sealAndSend encrypts plaintext under the current room key, signs it, and sends
@@ -315,11 +353,17 @@ func (c *Client) setIC(id, name, fpr string) {
 }
 
 // resetCoordinationLocked clears ack quorum state and recomputes the IC to the
-// oldest current member — the initial condition. Called on /vanish (key rotation
-// resets coordination state, §2.2). Caller holds c.mu.
+// oldest current member — the initial condition. It also drops the unsealed
+// record chain and any in-progress seal: like everything else in the room, an
+// unsealed chain is deliberately not kept past a /vanish (§1.4 — seal before you
+// vanish, or it is gone). Called on /vanish (key rotation resets coordination
+// state, §2.2). Caller holds c.mu.
 func (c *Client) resetCoordinationLocked() {
 	c.acks = make(map[string]map[string]bool)
 	c.ic = c.oldestHolderLocked()
+	c.chain.Reset()
+	c.lastMsg = lastMessage{}
+	c.clearSealLocked()
 }
 
 // oldestHolderLocked returns the IC holder implied by join order: the oldest
@@ -492,7 +536,8 @@ func (c *Client) handle(env protocol.Envelope) {
 		c.onKeyRequest(env)
 	case protocol.OpKeyDeliver:
 		c.onKeyDeliver(env)
-	case protocol.OpMessage, protocol.OpExecRequest, protocol.OpExecResult, protocol.OpAck, protocol.OpHandoff:
+	case protocol.OpMessage, protocol.OpExecRequest, protocol.OpExecResult, protocol.OpAck, protocol.OpHandoff,
+		protocol.OpRecordEntry, protocol.OpSealRequest, protocol.OpSealAck:
 		var m protocol.Message
 		if err := env.Decode(&m); err == nil {
 			c.handleEncrypted(env.Type, m)
@@ -689,6 +734,7 @@ func (c *Client) handleEncrypted(op protocol.Op, m protocol.Message) {
 	fpr := crypto.Fingerprint(sender.signPub)
 	switch op {
 	case protocol.OpMessage:
+		c.rememberMessage(sender.name, string(pt))
 		c.emit(EvMessage{FromID: m.FromID, FromName: sender.name, Text: string(pt), Signed: signed, At: now})
 	case protocol.OpExecRequest:
 		var body protocol.ExecRequestBody
@@ -718,6 +764,21 @@ func (c *Client) handleEncrypted(op protocol.Op, m protocol.Message) {
 			toName, toFpr := c.resolveTarget(body.ToID, body.ToName)
 			c.setIC(body.ToID, toName, toFpr)
 			c.emit(EvHandoff{FromName: sender.name, FromFpr: fpr, ToName: toName, ToFpr: toFpr, At: now})
+		}
+	case protocol.OpRecordEntry:
+		var e record.Entry
+		if json.Unmarshal(pt, &e) == nil {
+			c.onRecordEntry(e)
+		}
+	case protocol.OpSealRequest:
+		var body protocol.SealRequestBody
+		if json.Unmarshal(pt, &body) == nil {
+			c.onSealRequest(sender.name, body.HeadHash)
+		}
+	case protocol.OpSealAck:
+		var body protocol.SealAckBody
+		if json.Unmarshal(pt, &body) == nil {
+			c.onSealAck(m.FromID, sender.name, sender.signPub, body.HeadHash, body.Sig)
 		}
 	}
 }

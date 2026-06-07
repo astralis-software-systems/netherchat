@@ -231,13 +231,16 @@ func (s *Server) relay(room, fromID string, env protocol.Envelope) {
 			Room: room, Token: token, Expires: expUnix,
 		}))
 
-	case protocol.OpExecRequest, protocol.OpExecResult, protocol.OpAck, protocol.OpHandoff:
-		// Edge exec and the coordination primitives (ack/handoff): the relay treats
-		// all of these exactly like chat messages — opaque E2E envelopes (sealed
-		// under the room key, Ed25519-signed) it fans out to the room verbatim. It
-		// never sees the command, the ack tag, or the handoff target, and never runs
-		// or counts anything; quorum and the IC token are computed client-side from
-		// the signed sender (FEATURE_ROADMAP_FREE.md §0.1, §2.2).
+	case protocol.OpExecRequest, protocol.OpExecResult, protocol.OpAck, protocol.OpHandoff,
+		protocol.OpRecordEntry, protocol.OpSealRequest, protocol.OpSealAck:
+		// Edge exec, coordination primitives (ack/handoff), and sealed-record frames
+		// (record entries, seal requests/acks): the relay treats all of these
+		// exactly like chat messages — opaque E2E envelopes (sealed under the room
+		// key, Ed25519-signed) it fans out to the room verbatim. It never sees the
+		// command, the ack tag, the handoff target, the recorded decision, or the
+		// head being sealed, and never runs, counts, chains, or signs anything; the
+		// record chain, quorum, and IC token are all computed client-side from the
+		// signed payloads (FEATURE_ROADMAP_FREE.md §0.1, §1.4, §2.2).
 		var m protocol.Message
 		if err := env.Decode(&m); err != nil {
 			return

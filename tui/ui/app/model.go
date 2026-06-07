@@ -440,6 +440,35 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 		}
 		r.appendSystem(fmt.Sprintf("⚡ incident command: %s → %s", from, e.ToName))
 
+	case client.EvRecordEntry:
+		r.appendLine(line{at: e.At, kind: lineRaw, text: m.renderRecordEntry(e)})
+		if !e.Self && name != m.active {
+			r.unread++
+		}
+
+	case client.EvSealRequest:
+		if e.Self {
+			r.appendSystem(fmt.Sprintf("📋 sealing the record (%d entries) — waiting for co-signers…", e.NumEntries))
+		} else if e.Matches {
+			r.appendSystem(fmt.Sprintf("📋 %s proposes sealing the record (%d entries) — type /seal to co-sign", e.ByName, e.NumEntries))
+		} else {
+			r.appendSystem(fmt.Sprintf("📋 %s proposes a seal, but your record differs from theirs — /seal will report the divergence", e.ByName))
+		}
+
+	case client.EvSealAck:
+		if e.Self {
+			r.appendSystem("✓ you co-signed the seal")
+		} else {
+			r.appendSystem(fmt.Sprintf("✓ %s co-signed the seal  (%d/%d)", e.ByName, e.Count, e.Total))
+		}
+
+	case client.EvSealComplete:
+		if err := writeSealedRecord(e.Record); err != nil {
+			r.appendError("seal complete but writing files failed: " + err.Error())
+		} else {
+			r.appendSystem(fmt.Sprintf("🔏 sealed — record.json + minutes.md written (%d entries, %d signature(s)). Verify: netherchat verify record.json", e.Entries, e.Signers))
+		}
+
 	case client.EvError:
 		r.appendError(e.Err.Error())
 

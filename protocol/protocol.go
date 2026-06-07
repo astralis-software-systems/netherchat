@@ -71,6 +71,15 @@ const (
 	// FEATURE_ROADMAP_FREE.md §4). See PROTOCOL.md §13.
 	OpAck     Op = "ack"     // member -> room: a typed, countable ack of a tag
 	OpHandoff Op = "handoff" // member -> room: transfer the incident-commander token
+
+	// Sealed record (§1.4, additive). All three carry a Message envelope sealed
+	// under the room key, exactly like OpAck/OpExecRequest — the relay only ever
+	// sees ciphertext. They build a hash-chained, multi-party-signed artifact of
+	// the decisions that mattered, so an ephemeral room can produce defensible
+	// minutes without a transcript. See tui/record and PROTOCOL.md §14.
+	OpRecordEntry Op = "record_entry" // member -> room: a new append-only chain entry (decision/action/note)
+	OpSealRequest Op = "seal_request" // sealer -> room: { head_hash } — propose sealing the chain at this head
+	OpSealAck     Op = "seal_ack"     // member -> room: { head_hash, sig } — co-sign the proposed head
 )
 
 // Envelope is the outer frame for every message on the wire. Data holds the

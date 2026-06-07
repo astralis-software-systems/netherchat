@@ -3,12 +3,14 @@ package app
 import (
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/salehkreiner/netherchat/tui/client"
+	"github.com/salehkreiner/netherchat/tui/record"
 	"github.com/salehkreiner/netherchat/tui/ui/command"
 	"github.com/salehkreiner/netherchat/tui/ui/theme"
 )
@@ -33,6 +35,10 @@ func buildCommands() *command.Set {
 		command.Command{Name: "ack", Args: "[tag]", Help: "ack a coordination tag (typed quorum, not a reaction); no arg lists active tags"},
 		command.Command{Name: "handoff", Args: "@handle", Help: "transfer the incident-commander (IC) token"},
 		command.Command{Name: "ic", Help: "show who currently holds incident command"},
+		command.Command{Name: "decide", Args: "<text>", Help: "promote a decision into the signed record chain"},
+		command.Command{Name: "action", Args: "@handle <text>", Help: "record an action item assigned to someone"},
+		command.Command{Name: "mark", Help: "promote the most recent message into the record as a note"},
+		command.Command{Name: "seal", Help: "seal the record: collect signatures, write record.json + minutes.md"},
 		command.Command{Name: "whois", Args: "[@handle]", Help: "show an identity's fingerprint, pin status, and published-key match"},
 		command.Command{Name: "verify", Args: "[@handle [ok]]", Help: "out-of-band verify a peer via a 5-word SAS read over a side channel"},
 		command.Command{Name: "join", Args: "<room>", Help: "join another room"},
@@ -101,6 +107,14 @@ func (m *Model) runCommand(input string) tea.Cmd {
 		m.runHandoff(r, arg)
 	case "ic":
 		m.runIC(r)
+	case "decide":
+		m.runDecide(r, arg)
+	case "action":
+		m.runAction(r, arg)
+	case "mark":
+		m.runMark(r)
+	case "seal":
+		m.runSeal(r)
 	case "whois":
 		return m.runWhois(arg)
 	case "verify":
@@ -237,6 +251,90 @@ func (m *Model) runIC(r *room) {
 		who += " (you)"
 	}
 	m.addSystem("incident commander: " + who + "  " + shortFpr(fpr))
+}
+
+// runDecide implements /decide <text> (§1.4): promote a decision into the signed
+// record chain.
+func (m *Model) runDecide(r *room, arg string) {
+	if !m.connected(r) {
+		return
+	}
+	if strings.TrimSpace(arg) == "" {
+		m.addError("usage: /decide <what was decided>")
+		return
+	}
+	if err := r.client.Decide(arg); err != nil {
+		m.addError(err.Error())
+	}
+}
+
+// runAction implements /action @handle <text>: record an attributed action item.
+func (m *Model) runAction(r *room, arg string) {
+	if !m.connected(r) {
+		return
+	}
+	fields := strings.Fields(arg)
+	if len(fields) < 2 {
+		m.addError("usage: /action @handle <text>")
+		return
+	}
+	handle := fields[0]
+	text := strings.TrimSpace(strings.TrimPrefix(arg, handle))
+	if err := r.client.Action(handle, text); err != nil {
+		m.addError(err.Error())
+	}
+}
+
+// runMark implements /mark: promote the most recent message into the record.
+func (m *Model) runMark(r *room) {
+	if !m.connected(r) {
+		return
+	}
+	if err := r.client.Mark(); err != nil {
+		m.addError(err.Error())
+	}
+}
+
+// runSeal implements /seal (§1.4): initiate a seal, or co-sign a pending one.
+func (m *Model) runSeal(r *room) {
+	if !m.connected(r) {
+		return
+	}
+	if err := r.client.Seal(); err != nil {
+		m.addError(err.Error())
+	}
+}
+
+// renderRecordEntry styles a sealed-record entry for the room view. Live entries
+// are marked with a 📌 and the kind; replayed entries (§2.7) are dimmed with a
+// bracketed original timestamp and cannot be marked again.
+func (m *Model) renderRecordEntry(e client.EvRecordEntry) string {
+	ts := e.At.UTC().Format("15:04")
+	if e.Replayed {
+		tail := "  [" + e.Kind + "]"
+		return m.st(m.theme.Muted).Render(fmt.Sprintf("[REPLAY %s] %s: %s%s", ts, e.AuthorName, e.Body, tail))
+	}
+	pin := m.st(m.theme.Accent).Bold(true).Render("📌 " + e.Kind)
+	who := m.st(m.theme.Accent2).Bold(true).Render(e.AuthorName)
+	detail := ": " + e.Body
+	if e.Kind == record.KindAction && e.Actionee != "" {
+		detail = " → @" + e.Actionee + ": " + e.Body
+	}
+	return m.st(m.theme.Muted).Render(ts+" ") + pin + " " + who + m.st(m.theme.Text).Render(detail)
+}
+
+// writeSealedRecord writes the two seal artifacts to the current directory:
+// record.json (machine-readable) and minutes.md (human-readable). The record is a
+// deliberately-created artifact the operator chose to keep, so it lands in cwd.
+func writeSealedRecord(rec *record.SealedRecord) error {
+	jb, err := rec.Marshal()
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile("record.json", jb, 0o644); err != nil {
+		return err
+	}
+	return os.WriteFile("minutes.md", []byte(record.RenderMinutes(rec)), 0o644)
 }
 
 // renderRouteFired builds the banner shown in an intake room when an inbound

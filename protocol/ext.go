@@ -122,3 +122,20 @@ type HandoffBody struct {
 	ToID   string `json:"to_id"`
 	ToName string `json:"to_name,omitempty"`
 }
+
+// SealRequestBody is the END-TO-END-ENCRYPTED plaintext of an OpSealRequest
+// Message (§1.4): a sealer proposes sealing the record at HeadHash (the SHA-256
+// of the chain's last entry). Members whose own chain head matches respond with
+// an OpSealAck. HeadHash is the raw 32-byte hash (base64 on the wire).
+type SealRequestBody struct {
+	HeadHash []byte `json:"head_hash"`
+}
+
+// SealAckBody is the END-TO-END-ENCRYPTED plaintext of an OpSealAck Message
+// (§1.4): a participant co-signs HeadHash. Sig is the Ed25519 signature over
+// SealSigningBytes(room, HeadHash) (domain-separated and room-bound, see
+// record_signing.go), verifiable against the sender's identity key.
+type SealAckBody struct {
+	HeadHash []byte `json:"head_hash"`
+	Sig      []byte `json:"sig"`
+}

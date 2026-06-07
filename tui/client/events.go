@@ -1,6 +1,10 @@
 package client
 
-import "time"
+import (
+	"time"
+
+	"github.com/salehkreiner/netherchat/tui/record"
+)
 
 // Event is something the client core surfaces to its consumer (the TUI or a
 // test). Consumers receive these on Events() and stop when Done() is closed.
@@ -129,6 +133,52 @@ type EvHandoff struct {
 	At       time.Time
 }
 
+// EvRecordEntry is a decrypted, signature-verified sealed-record entry (§1.4):
+// someone ran /decide, /action, or /mark, and the entry was appended to this
+// client's chain. Self marks our own echo; Replayed marks an entry streamed in
+// from a prior record during a retro (§2.7).
+type EvRecordEntry struct {
+	Seq        uint64
+	Kind       string // decision | action | note
+	AuthorName string
+	AuthorFpr  string
+	Actionee   string
+	Body       string
+	Self       bool
+	Replayed   bool
+	At         time.Time
+}
+
+// EvSealRequest is emitted when a seal of the record is proposed (§1.4): either
+// by us (Self) or by another participant. Matches reports whether the proposer's
+// chain head equals ours — only then can we honestly co-sign. NumEntries is the
+// chain length at the proposed head.
+type EvSealRequest struct {
+	ByName     string
+	Matches    bool
+	NumEntries int
+	Self       bool
+}
+
+// EvSealAck is emitted as co-signatures arrive during a seal we initiated:
+// ByName co-signed, bringing the running total to Count of Total present members.
+// Self marks our own co-signature when acking someone else's request.
+type EvSealAck struct {
+	ByName string
+	Count  int
+	Total  int
+	Self   bool
+}
+
+// EvSealComplete is emitted to the sealer (the participant who initiated and
+// collected signatures) when the record is finalized — all present members
+// co-signed, or the 30s window elapsed. Record is ready to write to disk.
+type EvSealComplete struct {
+	Record  *record.SealedRecord
+	Entries int
+	Signers int
+}
+
 // EvMessage is a decrypted chat message (Self is true for the local echo of our
 // own outgoing messages). Signed reports whether a valid Ed25519 signature was
 // present (§3.3); unsigned legacy messages still arrive (Signed=false).
@@ -155,6 +205,10 @@ func (EvConnected) isEvent()     {}
 func (EvRouteFired) isEvent()    {}
 func (EvAck) isEvent()           {}
 func (EvHandoff) isEvent()       {}
+func (EvRecordEntry) isEvent()   {}
+func (EvSealRequest) isEvent()   {}
+func (EvSealAck) isEvent()       {}
+func (EvSealComplete) isEvent()  {}
 func (EvKeyReady) isEvent()      {}
 func (EvMessage) isEvent()       {}
 func (EvServerMessage) isEvent() {}

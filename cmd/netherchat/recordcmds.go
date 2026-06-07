@@ -1,0 +1,84 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/salehkreiner/netherchat/tui/output"
+	"github.com/salehkreiner/netherchat/tui/record"
+)
+
+// verifyCmd implements `netherchat verify record.json [--json]` (§1.4): it
+// recomputes the hash chain from scratch, checks every PrevHash link, verifies
+// each entry's Ed25519 signature against its author, and verifies each sealer's
+// signature over the chain head. It exits 0 for VALID, 1 for TAMPERED or any
+// load/parse error — so it composes in scripts and CI.
+func verifyCmd(args []string) {
+	fs := flag.NewFlagSet("verify", flag.ExitOnError)
+	jsonMode := fs.Bool("json", false, "output the verification result as JSON")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: netherchat verify <record.json> [--json]")
+		fs.PrintDefaults()
+	}
+	// The record path is the first positional; flags follow it. Go's flag parser
+	// stops at the first non-flag argument, so (like send/tail) we peel the path
+	// off first and parse the rest — otherwise `verify record.json --json` would
+	// silently ignore --json.
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		fs.Usage()
+		os.Exit(2)
+	}
+	path := args[0]
+	_ = fs.Parse(args[1:])
+	os.Exit(verifyFile(path, *jsonMode))
+}
+
+// verifyFile loads, parses, and verifies a sealed record, printing the verdict
+// and returning the process exit code (0 = VALID, 1 = TAMPERED/error) so it
+// composes in scripts and CI.
+func verifyFile(path string, jsonMode bool) int {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		output.WriteError(jsonMode, err)
+		return 1
+	}
+	rec, err := record.Parse(b)
+	if err != nil {
+		output.WriteError(jsonMode, err)
+		return 1
+	}
+	res, err := record.Verify(rec)
+	if err != nil {
+		output.WriteError(jsonMode, err)
+		return 1
+	}
+
+	if jsonMode {
+		_ = output.WriteJSON(res)
+		if res.Valid {
+			return 0
+		}
+		return 1
+	}
+
+	if !res.Valid {
+		output.WriteHuman("TAMPERED — %s\n", res.Reason)
+		return 1
+	}
+	output.WriteHuman("VALID — chain intact, %d entr%s, %d signature(s) verified\n",
+		res.Entries, plural(res.Entries, "y", "ies"), len(res.Signers))
+	output.WriteHuman("  room: %s\n  head: %s\n", res.Room, res.HeadHash)
+	for _, s := range res.Signers {
+		output.WriteHuman("  signed: %s\n", s)
+	}
+	return 0
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
