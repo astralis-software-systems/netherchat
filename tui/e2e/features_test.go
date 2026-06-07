@@ -11,6 +11,7 @@ import (
 	"github.com/salehkreiner/netherchat/server"
 	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/tui/client"
+	"github.com/salehkreiner/netherchat/tui/eventlog"
 	"github.com/salehkreiner/netherchat/tui/internal/crypto"
 )
 
@@ -210,6 +211,76 @@ func TestSASMatchesBetweenPeers(t *testing.T) {
 		t.Fatalf("SAS mismatch — alice: %v  bob: %v", aw, bw)
 	}
 	t.Logf("agreed SAS: %s", strings.Join(aw, " "))
+}
+
+// TestTailJSONStream is the §1.7 acceptance test, automated: an observer mapping
+// its events through the eventlog Mapper (exactly what `tail --json` does) sees a
+// join event for alice with her real fingerprint, and a message event with
+// signed=true, verified=false, body_len>0, the correct body_hash, and NO body.
+func TestTailJSONStream(t *testing.T) {
+	ts := httptest.NewServer(server.Handler(config.Default(), quietLogger()))
+	defer ts.Close()
+
+	observer := connect(t, ts.URL, "ops", "observer", "")
+	waitMatch[client.EvKeyReady](t, observer, nil, 5*time.Second)
+	alice := connect(t, ts.URL, "ops", "alice", "")
+	waitMatch[client.EvKeyReady](t, alice, nil, 5*time.Second)
+
+	mapper := eventlog.NewMapper("ops", false) // metadata only
+	const body = "the database is on fire"
+
+	var joinAlice, msgAlice *eventlog.Event
+	sent := false
+	deadline := time.After(8 * time.Second)
+	for joinAlice == nil || msgAlice == nil {
+		select {
+		case ev := <-observer.Events():
+			for _, e := range mapper.Map(ev) {
+				e := e
+				switch {
+				case e.Type == "join" && e.Actor == "alice":
+					joinAlice = &e
+					if !sent {
+						sent = true
+						if err := alice.Send(body); err != nil {
+							t.Fatalf("alice send: %v", err)
+						}
+					}
+				case e.Type == "message" && e.Actor == "alice":
+					msgAlice = &e
+				}
+			}
+		case <-observer.Done():
+			t.Fatal("observer disconnected")
+		case <-deadline:
+			t.Fatalf("timed out (join=%v msg=%v)", joinAlice, msgAlice)
+		}
+	}
+
+	if !strings.HasPrefix(joinAlice.Fpr, "SHA256:") {
+		t.Errorf("join fpr = %q, want ssh format", joinAlice.Fpr)
+	}
+	if joinAlice.V != eventlog.SchemaVersion {
+		t.Errorf("join v = %d", joinAlice.V)
+	}
+	if msgAlice.Signed == nil || !*msgAlice.Signed {
+		t.Error("message should be signed=true")
+	}
+	if msgAlice.Verified == nil || *msgAlice.Verified {
+		t.Error("message verified should be false (observer didn't /verify)")
+	}
+	if msgAlice.BodyLen == nil || *msgAlice.BodyLen != len(body) {
+		t.Errorf("message body_len = %v, want %d", msgAlice.BodyLen, len(body))
+	}
+	if msgAlice.Body != "" {
+		t.Errorf("message body must be absent without --include-bodies, got %q", msgAlice.Body)
+	}
+	if msgAlice.BodyHash != eventlog.HashBody(body) {
+		t.Errorf("message body_hash = %q", msgAlice.BodyHash)
+	}
+	if !strings.HasPrefix(msgAlice.Fpr, "SHA256:") {
+		t.Errorf("message fpr = %q", msgAlice.Fpr)
+	}
 }
 
 func TestEdgeExecThroughBlindRelay(t *testing.T) {

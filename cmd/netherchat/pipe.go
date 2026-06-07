@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/salehkreiner/netherchat/tui/client"
+	"github.com/salehkreiner/netherchat/tui/eventlog"
+	"github.com/salehkreiner/netherchat/tui/output"
 )
 
 // utf8BOM is the byte-order mark some shells (notably Windows PowerShell)
@@ -86,16 +88,20 @@ func sendAfterKey(c *client.Client, msg string, timeout time.Duration) error {
 	}
 }
 
-// tailCmd implements `netherchat tail <room> [flags]`: it prints decrypted
-// messages to stdout, one per line, for piping into grep/tee. Plain text only.
+// tailCmd implements `netherchat tail <room> [flags]`. By default it prints
+// decrypted messages to stdout as plain text (pipe into grep/tee). With --json it
+// emits the structured, versioned, metadata-only event stream (§1.7) as ndjson —
+// no message bodies unless --include-bodies is also passed.
 func tailCmd(args []string) {
 	fs := flag.NewFlagSet("tail", flag.ExitOnError)
 	url := fs.String("server", "ws://localhost:3000", "server URL")
 	name := fs.String("name", defaultName(), "display name")
 	identity := fs.String("identity", "", "identity file path")
 	invite := fs.String("invite", "", "one-time invite token")
+	jsonMode := fs.Bool("json", false, "emit the structured ndjson event stream (metadata only)")
+	includeBodies := fs.Bool("include-bodies", false, "with --json, include decrypted message bodies (creates a local content record)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: netherchat tail <room> [--server ws://...]")
+		fmt.Fprintln(os.Stderr, "usage: netherchat tail <room> [--json] [--include-bodies] [--server ws://...]")
 		fs.PrintDefaults()
 	}
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
@@ -105,11 +111,19 @@ func tailCmd(args []string) {
 	room := strings.TrimPrefix(args[0], "#")
 	_ = fs.Parse(args[1:])
 
-	c := dial(*url, room, *name, *identity, *invite, 15*time.Second)
+	c, err := dialErr(*url, room, *name, *identity, *invite, 15*time.Second)
+	if err != nil {
+		output.Fatal(*jsonMode, err)
+	}
 	defer c.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if *jsonMode {
+		tailJSON(ctx, c, room, *includeBodies)
+		return
+	}
 
 	for {
 		select {
@@ -124,6 +138,28 @@ func tailCmd(args []string) {
 			}
 		case <-c.Done():
 			fmt.Fprintln(os.Stderr, "netherchat: disconnected")
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// tailJSON streams the structured event log: each client event is mapped to zero
+// or more eventlog events and written as one ndjson line. Bodies are emitted only
+// when includeBodies is set.
+func tailJSON(ctx context.Context, c *client.Client, room string, includeBodies bool) {
+	mapper := eventlog.NewMapper(room, includeBodies)
+	for {
+		select {
+		case ev := <-c.Events():
+			for _, e := range mapper.Map(ev) {
+				_ = output.WriteJSON(e)
+			}
+			if _, done := ev.(client.EvDisconnected); done {
+				return
+			}
+		case <-c.Done():
 			return
 		case <-ctx.Done():
 			return

@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://netherchat.com/schema/event-v1.json",
+  "title": "Netherchat event stream (v1)",
+  "description": "One newline-delimited JSON object per event from `netherchat tail --json` and `netherchat agent --json`. Metadata only by default — message bodies are emitted only with --include-bodies. The `v` field is the schema version and a stability contract: it is bumped only on a breaking change.",
+  "type": "object",
+  "required": ["v", "ts", "type"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {
+      "const": 1,
+      "description": "Schema version. Stability contract; bumped only on a breaking change."
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Event time, RFC3339 in UTC."
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "join",
+        "leave",
+        "message",
+        "ack",
+        "verify",
+        "vanish",
+        "exec_request",
+        "exec_result",
+        "key_ready",
+        "error",
+        "disconnect"
+      ]
+    },
+    "room": { "type": "string" },
+    "actor": { "type": "string", "description": "Display name of the acting member (not authenticated; judge identity by fpr)." },
+    "fpr": { "type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]{43}$", "description": "SSH-format SHA256 fingerprint of the actor's identity key." },
+    "verified": { "type": "boolean", "description": "Whether the local observer has SAS-verified the actor this session." },
+    "signed": { "type": "boolean", "description": "Whether the message carried a valid Ed25519 signature." },
+    "body_len": { "type": "integer", "minimum": 0, "description": "Length in bytes of the decrypted message body." },
+    "body_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "description": "SHA-256 of the plaintext body, hex, prefixed sha256:." },
+    "body": { "type": "string", "description": "The decrypted body. Present ONLY when --include-bodies is set (creates a local content record)." },
+    "tag": { "type": "string", "description": "Coordination tag for ack events." },
+    "target": { "type": "string", "description": "Display name of the verified peer (verify events)." },
+    "target_fpr": { "type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]{43}$" },
+    "ok": { "type": "boolean", "description": "Verification outcome (verify events)." },
+    "cmd": { "type": "string", "description": "Runbook action name (exec events)." },
+    "allowed": { "type": "boolean", "description": "Whether the agent's allowlist permits the command (exec events)." },
+    "exit": { "type": "integer", "description": "Process exit code (exec_result events)." },
+    "epoch": { "type": "integer", "minimum": 0, "description": "Room key epoch (key_ready events)." },
+    "message": { "type": "string", "description": "Human-readable detail (error / disconnect events)." }
+  }
+}

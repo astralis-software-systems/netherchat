@@ -1,0 +1,151 @@
+// Package eventlog defines Netherchat's structured event stream (§1.7): a
+// versioned, stable, metadata-only JSON schema emitted by `netherchat tail
+// --json` and `netherchat agent --json`. Engineers pipe it into jq / Vector /
+// Loki to build an auditable incident timeline with zero content leakage —
+// message bodies are NEVER included unless --include-bodies is passed.
+//
+// The schema (schema.json, embedded) is the contract; `netherchat schema` prints
+// it. The "v" field is the schema version and is bumped only on a breaking
+// change.
+package eventlog
+
+import (
+	"crypto/sha256"
+	_ "embed"
+	"encoding/hex"
+	"time"
+)
+
+// SchemaVersion is the value of every event's "v" field.
+const SchemaVersion = 1
+
+//go:embed schema.json
+var schemaJSON []byte
+
+// SchemaJSON returns the embedded JSON Schema (draft-07) for v1 events.
+func SchemaJSON() string { return string(schemaJSON) }
+
+// Event is one line of the ndjson stream. Optional fields are omitempty;
+// booleans and ints that must be explicit when present (e.g. signed=false,
+// body_len=0) use pointers so they are emitted rather than dropped.
+type Event struct {
+	V        int    `json:"v"`
+	TS       string `json:"ts"`
+	Type     string `json:"type"`
+	Room     string `json:"room,omitempty"`
+	Actor    string `json:"actor,omitempty"`
+	Fpr      string `json:"fpr,omitempty"`
+	Verified *bool  `json:"verified,omitempty"`
+	Signed   *bool  `json:"signed,omitempty"`
+	BodyLen  *int   `json:"body_len,omitempty"`
+	BodyHash string `json:"body_hash,omitempty"`
+	Body     string `json:"body,omitempty"`
+	Tag      string `json:"tag,omitempty"`
+
+	Target    string `json:"target,omitempty"`
+	TargetFpr string `json:"target_fpr,omitempty"`
+	OK        *bool  `json:"ok,omitempty"`
+
+	Cmd     string `json:"cmd,omitempty"`
+	Allowed *bool  `json:"allowed,omitempty"`
+	Exit    *int   `json:"exit,omitempty"`
+
+	Epoch   *uint64 `json:"epoch,omitempty"`
+	Message string  `json:"message,omitempty"`
+}
+
+// Bool / Int return pointers, for setting optional pointer fields inline.
+func Bool(b bool) *bool { return &b }
+func Int(i int) *int    { return &i }
+
+// HashBody returns the SHA-256 of a plaintext body as "sha256:<hex>".
+func HashBody(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// nowUTC is overridable in tests for deterministic timestamps.
+var nowUTC = func() string { return time.Now().UTC().Format(time.RFC3339) }
+
+func base(typ, room string) Event {
+	return Event{V: SchemaVersion, TS: nowUTC(), Type: typ, Room: room}
+}
+
+// --- constructors -----------------------------------------------------------
+
+func Join(room, actor, fpr string, verified bool) Event {
+	e := base("join", room)
+	e.Actor, e.Fpr, e.Verified = actor, fpr, Bool(verified)
+	return e
+}
+
+func Leave(room, actor, fpr string) Event {
+	e := base("leave", room)
+	e.Actor, e.Fpr = actor, fpr
+	return e
+}
+
+// Message builds a message event. The body is hashed (always) and length-counted
+// (always); the body itself is included ONLY when includeBody is true.
+func Message(room, actor, fpr string, signed, verified bool, body string, includeBody bool) Event {
+	e := base("message", room)
+	e.Actor, e.Fpr = actor, fpr
+	e.Signed, e.Verified = Bool(signed), Bool(verified)
+	e.BodyLen = Int(len(body))
+	e.BodyHash = HashBody(body)
+	if includeBody {
+		e.Body = body
+	}
+	return e
+}
+
+func Vanish(room, actor, fpr string) Event {
+	e := base("vanish", room)
+	e.Actor, e.Fpr = actor, fpr
+	return e
+}
+
+func Ack(room, actor, fpr, tag string) Event {
+	e := base("ack", room)
+	e.Actor, e.Fpr, e.Tag = actor, fpr, tag
+	return e
+}
+
+func Verify(room, actor, fpr, target, targetFpr string, ok bool) Event {
+	e := base("verify", room)
+	e.Actor, e.Fpr, e.Target, e.TargetFpr, e.OK = actor, fpr, target, targetFpr, Bool(ok)
+	return e
+}
+
+// ExecRequest builds an exec_request event. allowed is nil for a passive tail
+// observer (which can't know the agent's decision) and set for an agent's own
+// stream.
+func ExecRequest(room, actor, fpr, cmd string, allowed *bool) Event {
+	e := base("exec_request", room)
+	e.Actor, e.Fpr, e.Cmd, e.Allowed = actor, fpr, cmd, allowed
+	return e
+}
+
+func ExecResult(room, actor, fpr, cmd string, allowed bool, exit int) Event {
+	e := base("exec_result", room)
+	e.Actor, e.Fpr, e.Cmd, e.Allowed, e.Exit = actor, fpr, cmd, Bool(allowed), Int(exit)
+	return e
+}
+
+func KeyReady(room string, epoch uint64) Event {
+	e := base("key_ready", room)
+	e.Epoch = &epoch
+	return e
+}
+
+func ErrorEvent(room, message string) Event {
+	e := base("error", room)
+	e.Message = message
+	return e
+}
+
+func Disconnect(room, message string) Event {
+	e := base("disconnect", room)
+	e.Message = message
+	return e
+}

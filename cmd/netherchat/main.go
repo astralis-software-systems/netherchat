@@ -18,6 +18,7 @@ import (
 	"github.com/salehkreiner/netherchat/buildinfo"
 	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/tui/client"
+	"github.com/salehkreiner/netherchat/tui/eventlog"
 	"github.com/salehkreiner/netherchat/tui/ui/app"
 )
 
@@ -35,6 +36,8 @@ func main() {
 		tailCmd(os.Args[2:])
 	case "agent":
 		agentCmd(os.Args[2:])
+	case "schema":
+		fmt.Print(eventlog.SchemaJSON())
 	case "version", "--version", "-v":
 		fmt.Println("netherchat " + buildinfo.Version)
 	case "-h", "--help", "help":
@@ -102,12 +105,13 @@ func defaultName() string {
 	return "anon"
 }
 
-// dial connects a client core for the non-interactive modes. An empty identity
-// path means "use the BYO-key cascade" (ssh-agent → key file → generated).
-func dial(url, room, name, identity, invite string, timeout time.Duration) *client.Client {
+// dialErr connects a client core for the non-interactive modes, returning an
+// error rather than exiting — callers that support --json render the error as
+// JSON. An empty identity path means "use the BYO-key cascade".
+func dialErr(url, room, name, identity, invite string, timeout time.Duration) (*client.Client, error) {
 	c, err := client.New(url, room, name, identity)
 	if err != nil {
-		fatal(err)
+		return nil, err
 	}
 	if invite != "" {
 		c.UseInviteToken(invite)
@@ -115,7 +119,16 @@ func dial(url, room, name, identity, invite string, timeout time.Duration) *clie
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	if err := c.Connect(ctx); err != nil {
-		fatal(fmt.Errorf("connect to %s: %w", url, err))
+		return nil, fmt.Errorf("connect to %s: %w", url, err)
+	}
+	return c, nil
+}
+
+// dial is the plain-text wrapper: it exits on error.
+func dial(url, room, name, identity, invite string, timeout time.Duration) *client.Client {
+	c, err := dialErr(url, room, name, identity, invite, timeout)
+	if err != nil {
+		fatal(err)
 	}
 	return c
 }
@@ -126,8 +139,9 @@ func usage() {
 usage:
   netherchat connect [ws://host:port] [flags]   open the terminal UI
   netherchat send    <room> "message"           send one message (or pipe stdin)
-  netherchat tail    <room>                      stream decrypted messages to stdout
+  netherchat tail    <room> [--json]             stream messages (or the ndjson event log)
   netherchat agent   --room <room> --allow runbook.toml   run an edge-exec agent
+  netherchat schema                              print the JSON Schema for the --json event stream
 
 common flags:
   --server <url>      server URL (send/tail; default ws://localhost:3000)
