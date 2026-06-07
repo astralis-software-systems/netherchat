@@ -36,12 +36,13 @@ type EvServerMessage struct {
 	At   time.Time
 }
 
-// EvControl is a relayed room control action (vanish/ttl).
+// EvControl is a relayed room control action (vanish/ttl/scuttle/scuttle_arm).
 type EvControl struct {
 	Action     string
 	ByName     string
-	Self       bool // true if this client initiated it
-	TTLSeconds int
+	Self       bool   // true if this client initiated it
+	TTLSeconds int    // ttl seconds, or the scuttle_arm countdown
+	Reason     string // for scuttle: why (idle | owner_loss | manual | armed)
 }
 
 // EvExecRequest is a decrypted, signature-verified edge-exec request seen in the

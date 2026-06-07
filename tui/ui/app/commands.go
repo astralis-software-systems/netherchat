@@ -29,6 +29,8 @@ func buildCommands() *command.Set {
 		command.Command{Name: "invite", Help: "generate a one-time invite token (with QR)"},
 		command.Command{Name: "break-glass", Args: "--invite a,b --ttl 4h", Help: "stand up an ephemeral war room with one-time join links"},
 		command.Command{Name: "vanish", Help: "rotate the room key and clear history"},
+		command.Command{Name: "scuttle", Args: "[now|arm <dur>]", Help: "burn the room's keys and close it (dead-man's switch)",
+			Complete: func(p string) []string { return command.FilterPrefix([]string{"now", "arm"}, p) }},
 		command.Command{Name: "ttl", Args: "<dur|off>", Help: "set a message display TTL",
 			Complete: func(p string) []string { return command.FilterPrefix([]string{"off", "10m", "1h", "24h"}, p) }},
 		command.Command{Name: "exec", Args: "<action>", Help: "request an edge agent run a runbook action (signed, E2E)"},
@@ -88,6 +90,8 @@ func (m *Model) runCommand(input string) tea.Cmd {
 			break
 		}
 		r.client.Vanish()
+	case "scuttle":
+		m.runScuttle(r, arg)
 	case "ttl":
 		m.runTTL(r, arg)
 	case "exec":
@@ -187,6 +191,57 @@ func (m *Model) runTTL(r *room, arg string) {
 		}
 		r.ttl = d
 		r.client.SetTTL(int(d.Seconds()))
+	}
+}
+
+// runScuttle implements /scuttle (§1.6): the dead-man's switch under manual
+// control. "/scuttle now" burns the room immediately; "/scuttle arm <dur>" shows
+// a visible countdown to everyone and auto-burns when it reaches zero. Both are
+// server-orchestrated, so the burn arrives back as a scuttle control the whole
+// room renders identically.
+func (m *Model) runScuttle(r *room, arg string) {
+	if !m.connected(r) {
+		return
+	}
+	fields := strings.Fields(arg)
+	sub := "now"
+	if len(fields) > 0 {
+		sub = strings.ToLower(fields[0])
+	}
+	switch sub {
+	case "now":
+		r.client.ScuttleNow()
+		m.addSystem("scuttling the room now — keys will be destroyed")
+	case "arm":
+		if len(fields) < 2 {
+			m.addError("usage: /scuttle arm <dur>   (e.g. 10m)")
+			return
+		}
+		d, err := time.ParseDuration(fields[1])
+		if err != nil || d <= 0 {
+			m.addError("bad duration " + fields[1] + "  (e.g. 30s, 10m, 1h)")
+			return
+		}
+		r.client.ScuttleArm(int(d.Seconds()))
+	default:
+		m.addError("usage: /scuttle [now|arm <dur>]")
+	}
+}
+
+// scuttleReasonSuffix renders the human reason a room scuttled, for the
+// attestation line. An empty/unknown reason yields no suffix.
+func scuttleReasonSuffix(reason string) string {
+	switch reason {
+	case "idle":
+		return " (idle timeout)"
+	case "owner_loss":
+		return " (owner disconnected)"
+	case "manual":
+		return " (triggered)"
+	case "armed":
+		return " (armed countdown elapsed)"
+	default:
+		return ""
 	}
 }
 

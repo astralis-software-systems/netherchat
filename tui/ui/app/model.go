@@ -386,6 +386,23 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 				r.ttl = time.Duration(e.TTLSeconds) * time.Second
 				r.appendSystem("message ttl set to " + r.ttl.String())
 			}
+		case "scuttle":
+			// The dead-man's switch fired (§1.6): the client already ran the /vanish
+			// ratchet on this event. Render the attestation and the scuttled state;
+			// the room is gone server-side.
+			r.scuttled = true
+			r.appendSystem("⚡ room scuttled — keys destroyed, no record kept" + scuttleReasonSuffix(e.Reason))
+			r.appendSystem("⚡ This room has been scuttled. Keys destroyed.")
+			if name != m.active {
+				r.unread++
+			}
+		case "scuttle_arm":
+			who := e.ByName
+			if who == "" {
+				who = "someone"
+			}
+			d := time.Duration(e.TTLSeconds) * time.Second
+			r.appendSystem(fmt.Sprintf("⏳ %s armed auto-scuttle — this room burns in %s", who, d))
 		}
 
 	case client.EvExecRequest:

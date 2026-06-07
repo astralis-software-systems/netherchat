@@ -159,6 +159,65 @@ func (h *Hub) IsEmpty(roomName string) bool {
 	return r == nil || len(r.members) == 0
 }
 
+// LastActivity returns the time of the room's last activity (the value Touch and
+// Join update). ok is false when the room does not exist — which the scuttle
+// janitor uses as its signal to stop. It satisfies scuttle.Hub.
+func (h *Hub) LastActivity(roomName string) (t time.Time, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	r := h.rooms[roomName]
+	if r == nil {
+		return time.Time{}, false
+	}
+	return r.lastActivity, true
+}
+
+// scuttleAttestation is the line the server emits to the room as it scuttles.
+// "Signed" in the spec is aspirational here: the relay holds no key material by
+// design (ARCHITECTURE_DECISION.md §3), so it cannot sign — the attestation is a
+// plaintext system line. The one thing kept is THAT it happened, never content.
+const scuttleAttestation = "⚡ room scuttled — keys destroyed, no record kept"
+
+// scuttleCloseGrace is the delay between broadcasting the scuttle control and
+// tearing the connections down, so the control flushes to every client (which
+// runs its /vanish ratchet on receipt) before the sockets close.
+const scuttleCloseGrace = 300 * time.Millisecond
+
+// Scuttle runs the dead-man's switch on a room (§1.6): it broadcasts an
+// ActionScuttle control to every member — telling each client to ratchet its
+// room key forward and render the attestation — then, after a short grace so the
+// control flushes, closes the room through ExpireRoom (the same TTL machinery the
+// break-glass deadline uses). reason is one of protocol.Scuttle*. Calling it for
+// a room that is already gone is a no-op.
+func (h *Hub) Scuttle(roomName, reason string) {
+	notice, _ := protocol.Encode(protocol.OpControl, protocol.Control{
+		Action: protocol.ActionScuttle, Reason: reason,
+	})
+
+	h.mu.Lock()
+	r := h.rooms[roomName]
+	if r == nil {
+		h.mu.Unlock()
+		return
+	}
+	sends := make([]func(protocol.Envelope), 0, len(r.members))
+	for _, m := range r.members {
+		sends = append(sends, m.Send)
+	}
+	h.mu.Unlock()
+
+	for _, send := range sends {
+		if send != nil {
+			send(notice)
+		}
+	}
+	h.log.Info("room scuttled", "room", roomName, "reason", reason, "members", len(sends))
+
+	time.AfterFunc(scuttleCloseGrace, func() {
+		h.ExpireRoom(roomName, scuttleAttestation)
+	})
+}
+
 // Touch records activity in a room, resetting its idle timer.
 func (h *Hub) Touch(roomName string) {
 	h.mu.Lock()

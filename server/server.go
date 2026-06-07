@@ -18,6 +18,7 @@ import (
 	"github.com/salehkreiner/netherchat/server/internal/ephemeral"
 	"github.com/salehkreiner/netherchat/server/internal/hub"
 	"github.com/salehkreiner/netherchat/server/internal/invite"
+	"github.com/salehkreiner/netherchat/server/internal/scuttle"
 	"github.com/salehkreiner/netherchat/server/internal/store"
 	"github.com/salehkreiner/netherchat/server/internal/ws"
 )
@@ -40,13 +41,29 @@ func handlerWithStore(cfg config.Config, st store.Store, log *slog.Logger) http.
 	// janitor closes each room through the hub when its deadline passes.
 	eph := ephemeral.New(log)
 	eph.Start(h.ExpireRoom)
-	transport := ws.NewServer(h, cfg, invites, eph, st, log)
+	// Dead-man's switch (§1.6): per-room idle/owner-loss scuttle, driven by the
+	// connection lifecycle in the transport. Policy comes from each room's config.
+	sc := scuttle.New(h, scuttlePolicyOf(cfg), log)
+	transport := ws.NewServer(h, cfg, invites, eph, sc, st, log)
 	rest := api.New(h, cfg, invites, eph, log)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", transport.HandleWS)
 	rest.Register(mux)
 	return mux
+}
+
+// scuttlePolicyOf adapts the room config into the scuttle manager's
+// transport-agnostic Policy (stdlib durations, heartbeat defaulted/capped).
+func scuttlePolicyOf(cfg config.Config) func(room string) scuttle.Policy {
+	return func(room string) scuttle.Policy {
+		p := cfg.Room(room).Scuttle
+		return scuttle.Policy{
+			IdleAfter:     p.IdleAfter.Std(),
+			OwnerLossBurn: p.OwnerLossBurn,
+			Heartbeat:     p.HeartbeatOrDefault(),
+		}
+	}
 }
 
 // openStore builds the message store implied by the config, or nil when

@@ -250,6 +250,33 @@ func (c *Client) SetTTL(seconds int) {
 	c.emit(EvControl{Action: protocol.ActionTTL, ByName: c.name, Self: true, TTLSeconds: seconds})
 }
 
+// ScuttleNow asks the server to scuttle the room immediately (§1.6 — /scuttle
+// now). We do not echo locally: the server orchestrates the burn and broadcasts
+// the ActionScuttle notice back to everyone, including us, so the ratchet and the
+// attestation happen uniformly via onControl.
+func (c *Client) ScuttleNow() {
+	c.enqueue(protocol.OpControl, protocol.Control{Action: protocol.ActionScuttle, ByName: c.name})
+}
+
+// ScuttleArm asks the server to arm a visible countdown (§1.6 — /scuttle arm
+// <dur>) after which the room auto-scuttles. The server broadcasts the countdown
+// notice to all participants and owns the authoritative timer.
+func (c *Client) ScuttleArm(seconds int) {
+	c.enqueue(protocol.OpControl, protocol.Control{Action: protocol.ActionScuttleArm, ByName: c.name, TTLSeconds: seconds})
+}
+
+// Epoch returns the current room-key epoch (0 before the key is established). It
+// advances by one on every /vanish or scuttle ratchet, so a test can confirm the
+// dead-man's-switch ratchet ran.
+func (c *Client) Epoch() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.rk == nil {
+		return 0
+	}
+	return c.rk.Epoch
+}
+
 // RequestInvite asks the server to mint a one-time invite token for this room.
 func (c *Client) RequestInvite() { c.enqueue(protocol.OpInviteRequest, protocol.InviteRequest{}) }
 
@@ -830,15 +857,17 @@ func (c *Client) onControl(env protocol.Envelope) {
 	if err := env.Decode(&ctrl); err != nil {
 		return
 	}
-	if ctrl.Action == protocol.ActionVanish {
-		// Everyone advances the room key deterministically; no key exchange needed.
-		// Key rotation also resets coordination state (§2.2).
+	if ctrl.Action == protocol.ActionVanish || ctrl.Action == protocol.ActionScuttle {
+		// Both /vanish and the dead-man's switch (§1.6) advance the room key
+		// deterministically and destroy the old one — forward secrecy with no key
+		// exchange — and reset coordination state (§2.2). A scuttle additionally
+		// means the room is gone; the UI renders the attestation off this event.
 		c.ratchetForward()
 		c.mu.Lock()
 		c.resetCoordinationLocked()
 		c.mu.Unlock()
 	}
-	c.emit(EvControl{Action: ctrl.Action, ByName: ctrl.ByName, TTLSeconds: ctrl.TTLSeconds})
+	c.emit(EvControl{Action: ctrl.Action, ByName: ctrl.ByName, TTLSeconds: ctrl.TTLSeconds, Reason: ctrl.Reason})
 }
 
 func (c *Client) onInviteResult(env protocol.Envelope) {

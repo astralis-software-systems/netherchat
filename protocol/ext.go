@@ -6,6 +6,22 @@ package protocol
 const (
 	ActionVanish = "vanish" // clear local history in the room (key rotation is separate, via KeyDeliver)
 	ActionTTL    = "ttl"    // set a client-side message display TTL for the room
+
+	// Dead-man's switch / auto-scuttle (§1.6). ActionScuttle is the server-to-room
+	// burn notice: every client runs the /vanish key ratchet, renders the
+	// attestation, and the room then closes. Reason carries why (idle | owner_loss
+	// | manual | armed). ActionScuttleArm announces a visible countdown to all
+	// participants (TTLSeconds) before an armed scuttle fires.
+	ActionScuttle    = "scuttle"
+	ActionScuttleArm = "scuttle_arm"
+)
+
+// Scuttle reasons carried in Control.Reason for ActionScuttle.
+const (
+	ScuttleIdle      = "idle"       // no activity for the room's idle_after window
+	ScuttleOwnerLoss = "owner_loss" // the first joiner disconnected (room non-empty)
+	ScuttleManual    = "manual"     // a participant ran /scuttle now
+	ScuttleArmed     = "armed"      // a /scuttle arm countdown reached zero
 )
 
 // Control is a room control action, relayed by the server to every member of
@@ -14,7 +30,8 @@ type Control struct {
 	Action     string `json:"action"`
 	By         string `json:"by,omitempty"`          // member id that initiated it
 	ByName     string `json:"by_name,omitempty"`     // display name, for UI
-	TTLSeconds int    `json:"ttl_seconds,omitempty"` // for ActionTTL
+	TTLSeconds int    `json:"ttl_seconds,omitempty"` // for ActionTTL / ActionScuttleArm (countdown seconds)
+	Reason     string `json:"reason,omitempty"`      // for ActionScuttle: why it scuttled
 }
 
 // ServerMessage is a plaintext message that originates at the server (an inbound

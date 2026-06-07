@@ -20,6 +20,7 @@ import (
 	"github.com/salehkreiner/netherchat/server/internal/ephemeral"
 	"github.com/salehkreiner/netherchat/server/internal/hub"
 	"github.com/salehkreiner/netherchat/server/internal/invite"
+	"github.com/salehkreiner/netherchat/server/internal/scuttle"
 	"github.com/salehkreiner/netherchat/server/internal/store"
 	"golang.org/x/time/rate"
 )
@@ -37,18 +38,19 @@ type Server struct {
 	cfg       config.Config
 	invites   *invite.Store
 	ephemeral *ephemeral.Registry
+	scuttle   *scuttle.Manager
 	store     store.Store // optional history persistence; nil when disabled
 	log       *slog.Logger
 }
 
 // NewServer constructs a transport bound to the given hub, config, invite store,
-// ephemeral-room registry, and optional message store (nil to disable
-// persistence).
-func NewServer(h *hub.Hub, cfg config.Config, invites *invite.Store, eph *ephemeral.Registry, st store.Store, log *slog.Logger) *Server {
+// ephemeral-room registry, scuttle manager (dead-man's switch), and optional
+// message store (nil to disable persistence).
+func NewServer(h *hub.Hub, cfg config.Config, invites *invite.Store, eph *ephemeral.Registry, sc *scuttle.Manager, st store.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{hub: h, cfg: cfg, invites: invites, ephemeral: eph, store: st, log: log}
+	return &Server{hub: h, cfg: cfg, invites: invites, ephemeral: eph, scuttle: sc, store: st, log: log}
 }
 
 // HandleWS is the http.HandlerFunc for the WebSocket endpoint.
@@ -133,6 +135,14 @@ func (s *Server) serve(ctx context.Context, c *websocket.Conn) {
 
 	// 4. Join the room and complete the handshake.
 	res := s.hub.Join(hello.Room, member)
+	// The first joiner founds the room: start its dead-man's-switch janitor (§1.6)
+	// and remember that THIS connection is the owner, so its departure can trigger
+	// owner_loss_burn. Ownership is the founder, not "whoever is oldest now" — once
+	// the founder is gone the room has already scuttled (or chose not to).
+	iAmOwner := res.YouAreFirst
+	if s.scuttle != nil && res.YouAreFirst {
+		s.scuttle.Start(hello.Room)
+	}
 	cn.send(mustEncode(protocol.OpWelcome, protocol.Welcome{
 		ProtocolVersion: protocol.Version,
 		YourID:          id,
@@ -181,6 +191,14 @@ func (s *Server) serve(ctx context.Context, c *websocket.Conn) {
 	empty := s.hub.Leave(hello.Room, id)
 	s.hub.Broadcast(hello.Room, id, mustEncode(protocol.OpMemberLeft, protocol.MemberLeft{ID: id}))
 	s.log.Info("member left", "room", hello.Room, "id", id, "room_empty", empty)
+	if s.scuttle != nil {
+		switch {
+		case empty:
+			s.scuttle.Stop(hello.Room) // nothing left to watch
+		case iAmOwner:
+			s.scuttle.OwnerLeft(hello.Room) // founder gone, room non-empty → maybe burn
+		}
+	}
 }
 
 // relay forwards a client frame to its destination(s). The server stamps the
@@ -213,13 +231,31 @@ func (s *Server) relay(room, fromID string, env protocol.Envelope) {
 		}
 
 	case protocol.OpControl:
-		// Control actions (vanish, ttl) carry no secrets; relay to the room.
+		// Control actions carry no secrets. Most (vanish, ttl) are pure relay; the
+		// scuttle actions (§1.6) are orchestrated by the server because closing the
+		// room is server-authoritative.
 		var ctrl protocol.Control
 		if err := env.Decode(&ctrl); err != nil {
 			return
 		}
 		ctrl.By = fromID
-		s.hub.Broadcast(room, fromID, mustEncode(protocol.OpControl, ctrl))
+		switch ctrl.Action {
+		case protocol.ActionScuttle:
+			// /scuttle now: a participant burns the room immediately. Scuttle itself
+			// broadcasts the ActionScuttle notice (with reason) to everyone, so we do
+			// not relay the request frame.
+			s.hub.Scuttle(room, protocol.ScuttleManual)
+		case protocol.ActionScuttleArm:
+			// /scuttle arm <dur>: show the countdown to all participants now, and
+			// schedule the burn. The countdown is informational; the server timer is
+			// authoritative.
+			s.hub.Broadcast(room, "", mustEncode(protocol.OpControl, ctrl))
+			if s.scuttle != nil {
+				s.scuttle.Arm(room, time.Duration(ctrl.TTLSeconds)*time.Second)
+			}
+		default:
+			s.hub.Broadcast(room, fromID, mustEncode(protocol.OpControl, ctrl))
+		}
 
 	case protocol.OpInviteRequest:
 		token, exp := s.invites.Generate(room, inviteTTL)

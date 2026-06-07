@@ -21,6 +21,7 @@ func sampleEvents() []Event {
 		Message("ops", "alice", fpr, true, false, "the database is on fire", false),
 		Message("ops", "alice", fpr, true, true, "with body", true),
 		Vanish("ops", "alice", fpr),
+		Scuttle("ops", "idle"),
 		Ack("ops", "alice", fpr, "drain-complete", "3/6"),
 		Handoff("ops", "alice", fpr, "bob", fpr2),
 		RouteFired("inc-3f9a2b71", 0, []string{"alice", "bob"}, 7200),

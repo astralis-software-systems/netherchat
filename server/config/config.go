@@ -84,11 +84,52 @@ type PersistenceConfig struct {
 // edge concern handled by `netherchat agent` against its own local allowlist; a
 // blind relay must never run commands (FEATURE_ROADMAP_FREE.md §0.1).
 type RoomConfig struct {
-	InviteOnly   bool     `toml:"invite_only"`
-	Webhook      bool     `toml:"webhook"`
-	WebhookToken string   `toml:"webhook_token"`
-	TTL          Duration `toml:"ttl"`
+	InviteOnly   bool          `toml:"invite_only"`
+	Webhook      bool          `toml:"webhook"`
+	WebhookToken string        `toml:"webhook_token"`
+	TTL          Duration      `toml:"ttl"`
+	Scuttle      ScuttlePolicy `toml:"scuttle"`
 }
+
+// ScuttlePolicy is the per-room dead-man's switch (§1.6): the room burns its keys
+// and closes itself when everyone walks away, so the default failure mode is the
+// evidence destroying itself rather than a channel someone forgot to delete.
+//
+//	[rooms.ops.scuttle]
+//	idle_after      = "30m"   # no activity for this long → scuttle (run /vanish + close)
+//	owner_loss_burn = true    # the first joiner disconnecting (room non-empty) → scuttle
+//	heartbeat       = "60s"   # how often the idle janitor checks
+//
+// A zero policy (no idle_after, owner_loss_burn=false) means the room never
+// auto-scuttles; manual /scuttle still works. Unlike the room TTL (which expires
+// a room outright), a scuttle first tells every client to ratchet its room key
+// forward (forward secrecy) and renders an attestation, then closes the room.
+type ScuttlePolicy struct {
+	IdleAfter     Duration `toml:"idle_after"`
+	OwnerLossBurn bool     `toml:"owner_loss_burn"`
+	Heartbeat     Duration `toml:"heartbeat"`
+}
+
+// Active reports whether the policy does anything automatic (idle or owner-loss).
+func (p ScuttlePolicy) Active() bool {
+	return p.IdleAfter.Std() > 0 || p.OwnerLossBurn
+}
+
+// HeartbeatOrDefault is the idle-check interval: the configured heartbeat, or a
+// 60s default. It is capped at IdleAfter so a long heartbeat can never make the
+// room overstay its idle window by more than one tick.
+func (p ScuttlePolicy) HeartbeatOrDefault() time.Duration {
+	hb := p.Heartbeat.Std()
+	if hb <= 0 {
+		hb = defaultScuttleHeartbeat
+	}
+	if idle := p.IdleAfter.Std(); idle > 0 && hb > idle {
+		hb = idle
+	}
+	return hb
+}
+
+const defaultScuttleHeartbeat = 60 * time.Second
 
 // Duration is a time.Duration that unmarshals from a TOML string like "24h".
 type Duration time.Duration

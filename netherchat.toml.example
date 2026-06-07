@@ -43,6 +43,19 @@ webhook = true            # accept POST /webhook/alerts
 webhook_token = "change-me-to-a-long-random-secret"  # required in X-Netherchat-Token
 ttl = "24h"               # ephemeral: the room is cleared after this much inactivity
 
+# --- Dead-man's switch / auto-scuttle (§1.6) ---------------------------------
+# A scuttle is stronger than ttl: when it fires it first tells every client to
+# ratchet its room key forward (forward secrecy) and renders a signed-in-spirit
+# attestation that the room scuttled — then closes the room. The default failure
+# mode becomes "the evidence destroys itself", not "someone forgot to delete it".
+[rooms.warroom.scuttle]
+idle_after      = "30m"    # no activity (any message/join/leave/ack/record) for this long → scuttle
+owner_loss_burn = true     # if the first joiner disconnects while others remain → scuttle
+heartbeat       = "60s"    # how often the idle janitor checks (default 60s; capped at idle_after)
+# Manual controls are always available in the TUI, regardless of policy:
+#   /scuttle now        burn the room immediately
+#   /scuttle arm 10m    show a visible countdown to everyone, then auto-burn
+
 # --- Trust (CLIENT-SIDE ONLY) ------------------------------------------------
 # [[trust]] entries are read by CLIENTS for /whois identity pinning. The relay
 # never reads them and never participates in any trust decision. Both fields are

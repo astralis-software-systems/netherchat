@@ -62,6 +62,11 @@ type Event struct {
 	Invitees    []string `json:"invitees,omitempty"`
 	TTLSeconds  int      `json:"ttl_seconds,omitempty"`
 
+	// Auto-scuttle (§1.6): the room burned its keys and closed. Reason is why;
+	// TTLRemaining is always 0 (the room is gone) and is a pointer so it emits.
+	Reason       string `json:"reason,omitempty"`
+	TTLRemaining *int   `json:"ttl_remaining,omitempty"`
+
 	Epoch   *uint64 `json:"epoch,omitempty"`
 	Message string  `json:"message,omitempty"`
 }
@@ -114,6 +119,17 @@ func Message(room, actor, fpr string, signed, verified bool, body string, includ
 func Vanish(room, actor, fpr string) Event {
 	e := base("vanish", room)
 	e.Actor, e.Fpr = actor, fpr
+	return e
+}
+
+// Scuttle builds a dead-man's-switch event (§1.6). reason is one of
+// protocol.Scuttle* (idle | owner_loss | manual | armed). ttl_remaining is always
+// 0 — the room is gone — and is emitted explicitly as the auditable record that
+// the room scuttled (never any content).
+func Scuttle(room, reason string) Event {
+	e := base("scuttle", room)
+	e.Reason = reason
+	e.TTLRemaining = Int(0)
 	return e
 }
 

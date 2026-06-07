@@ -69,10 +69,13 @@ func (m *Mapper) Map(ev client.Event) []Event {
 		return []Event{Handoff(m.room, e.FromName, e.FromFpr, e.ToName, e.ToFpr)}
 
 	case client.EvControl:
-		if e.Action == "vanish" { // protocol.ActionVanish
+		switch e.Action {
+		case "vanish": // protocol.ActionVanish
 			return []Event{Vanish(m.room, e.ByName, m.fprByName(e.ByName))}
+		case "scuttle": // protocol.ActionScuttle — the dead-man's switch fired (§1.6)
+			return []Event{Scuttle(m.room, e.Reason)}
 		}
-		return nil // ttl is not part of the v1 event schema
+		return nil // ttl / scuttle_arm are not part of the v1 event schema
 
 	case client.EvExecRequest:
 		if e.Self {

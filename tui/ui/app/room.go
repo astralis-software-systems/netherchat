@@ -58,8 +58,9 @@ type room struct {
 	inviteOnly bool
 	webhook    bool
 
-	ttl    time.Duration // client-side message display TTL (0 = none)
-	failed bool
+	ttl      time.Duration // client-side message display TTL (0 = none)
+	failed   bool
+	scuttled bool // the room was scuttled (§1.6): keys destroyed, room gone
 }
 
 func newRoom(name string) *room {
