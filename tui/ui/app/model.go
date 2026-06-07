@@ -28,6 +28,7 @@ import (
 type Model struct {
 	url, name, identityPath, notifyCmd string
 	webURL                             string // base URL of the web join client, for /break-glass links
+	torProxy                           string // when set, dial every room through this Tor SOCKS5 proxy (§1.5)
 	fingerprint                        string
 	source                             string                  // where the identity came from (ssh-agent, key file, generated)
 	trust                              []TrustEntry            // client-side identity pins from netherchat.toml
@@ -55,12 +56,15 @@ type Model struct {
 
 // Run connects to the initial room and runs the TUI. invite is the one-time
 // token for the initial room (empty for open rooms). webURL is the base URL of
-// the browser join client, used to build /break-glass invite links. trust holds
-// the client-side identity pins parsed from netherchat.toml.
-func Run(url, name, identityPath, room, notifyCmd, invite, webURL string, trust []TrustEntry) error {
+// the browser join client, used to build /break-glass invite links. torProxy,
+// when non-empty, routes every room's dial through that Tor SOCKS5 proxy so a
+// ws://<addr>.onion relay is reachable (§1.5). trust holds the client-side
+// identity pins parsed from netherchat.toml.
+func Run(url, name, identityPath, room, notifyCmd, invite, webURL, torProxy string, trust []TrustEntry) error {
 	m := newModel(url, name, identityPath, room, notifyCmd)
 	m.initialInvite = invite
 	m.webURL = webURL
+	m.torProxy = torProxy
 	m.trust = trust
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
@@ -102,11 +106,16 @@ type roomEventMsg struct {
 type roomGoneMsg struct{ name string }
 type tickMsg time.Time
 
-func connectRoom(url, room, name, idPath, token string) tea.Cmd {
+func connectRoom(url, room, name, idPath, token, torProxy string) tea.Cmd {
 	return func() tea.Msg {
 		c, err := client.New(url, room, name, idPath)
 		if err != nil {
 			return roomConnectedMsg{room, nil, err}
+		}
+		if torProxy != "" {
+			if err := c.UseTorProxy(torProxy); err != nil {
+				return roomConnectedMsg{room, nil, err}
+			}
 		}
 		if token != "" {
 			c.UseInviteToken(token)
@@ -136,7 +145,7 @@ func tickEvery() tea.Cmd {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, connectRoom(m.url, m.active, m.name, m.identityPath, m.initialInvite), tickEvery())
+	return tea.Batch(textinput.Blink, connectRoom(m.url, m.active, m.name, m.identityPath, m.initialInvite, m.torProxy), tickEvery())
 }
 
 // --- Update -----------------------------------------------------------------
@@ -526,7 +535,7 @@ func (m *Model) joinRoomOpts(name, token string, activate bool) tea.Cmd {
 		m.active = name
 	}
 	m.syncViewport()
-	return connectRoom(m.url, name, m.name, m.identityPath, token)
+	return connectRoom(m.url, name, m.name, m.identityPath, token, m.torProxy)
 }
 
 func (m *Model) leaveRoom(name string) tea.Cmd {

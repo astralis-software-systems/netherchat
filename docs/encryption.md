@@ -46,10 +46,10 @@ All pure Go, no cgo, so the static binary and trivial cross-compilation survive:
 
 - ✅ **Server-blind content**, as above.
 - ✅ **Forward secrecy at epoch granularity.** Once an epoch's key is ratcheted
-  away (on `/vanish`) and old keys deleted, prior messages can't be recovered.
-  This is **not** per-message forward secrecy — within one epoch all messages
-  share a key. That is weaker than Signal's Double Ratchet or MLS, by design for
-  v1.
+  away (on `/vanish`, or when a room **auto-scuttles** — §1.6) and old keys
+  deleted, prior messages can't be recovered. This is **not** per-message forward
+  secrecy — within one epoch all messages share a key. That is weaker than
+  Signal's Double Ratchet or MLS, by design for v1.
 - ⚠️ **The group key-distribution protocol is custom** (over audited primitives).
   This is the main risk surface. It should get an **independent cryptographic
   review before any paid/cloud tier**. The migration target is **MLS (RFC 9420)**;
@@ -57,6 +57,30 @@ All pure Go, no cgo, so the static binary and trivial cross-compilation survive:
   stable interface, negotiated via the protocol version.
 - ⚠️ **Metadata is not hidden.** The server sees who is in which room, message
   sizes, and timing. End-to-end encryption protects content, not metadata.
+
+## Relay authentication: the `.onion` address is the relay's key (`--tor`)
+
+The end-to-end crypto above guarantees the *server* can't read you. A separate
+question is: did you reach the *right* server, or a machine-in-the-middle?
+
+When the relay runs as a **v3 onion service** (`netherchat-server --tor`, §1.5),
+the `.onion` hostname is not a name an authority assigned — it is a Base32
+encoding of the service's **Ed25519 public key**. The Tor rendezvous succeeds
+only if the far end proves possession of the matching private key. So:
+
+> **Connecting to the expected `.onion` address proves you reached the right
+> relay.** The address authenticates the relay for free — no CA, no TLS
+> certificate, and no trust-on-first-use.
+
+This is why a war room stood up on a laptop behind CGNAT is safe to share by its
+`.onion`: an attacker who cannot steal the relay's onion key cannot impersonate
+the address. Treat the `.onion` string itself as the credential — distribute it
+over a channel you trust (the same phone bridge you use for `/verify`, §1.2).
+
+Two honest limits: this authenticates the **relay endpoint**, not the **people**
+in the room (that is still BYO-key identity + out-of-band `/verify`); and an
+*ephemeral* onion address (no `--tor-data-dir`) changes every run, so there is
+nothing to pin across restarts — pin a stable address or verify it out of band.
 
 ## What is NOT end-to-end encrypted
 

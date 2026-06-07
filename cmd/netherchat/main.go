@@ -65,8 +65,10 @@ func connectCmd(args []string) {
 	invite := fs.String("invite", "", "one-time invite token for an invite-only room")
 	webURL := fs.String("web-url", "", "base URL of the browser join client for /break-glass links (default: derived from the server URL)")
 	configPath := fs.String("config", "", "netherchat.toml for trust pinning (default: ./netherchat.toml if present)")
+	useTor := fs.Bool("tor", false, "dial the relay through a local Tor SOCKS5 proxy (for ws://<addr>.onion relays)")
+	torProxy := fs.String("tor-proxy", client.DefaultTorProxy, "Tor SOCKS5 proxy address (Tor Browser uses 127.0.0.1:9150)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: netherchat connect [ws://host:port] [--room <name>] [--name <you>] [--identity <path>] [--invite <token>] [--web-url <url>] [--config <toml>] [--notify <cmd>]")
+		fmt.Fprintln(os.Stderr, "usage: netherchat connect [ws://host:port] [--room <name>] [--name <you>] [--identity <path>] [--invite <token>] [--tor [--tor-proxy 127.0.0.1:9050]] [--web-url <url>] [--config <toml>] [--notify <cmd>]")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
@@ -75,7 +77,14 @@ func connectCmd(args []string) {
 	if url == "" {
 		url = "ws://localhost:3000"
 	}
-	if err := app.Run(url, *name, *identity, *room, *notify, *invite, *webURL, loadTrust(*configPath)); err != nil {
+	torDial := ""
+	if *useTor {
+		torDial = *torProxy
+		if torDial == "" {
+			torDial = client.DefaultTorProxy
+		}
+	}
+	if err := app.Run(url, *name, *identity, *room, *notify, *invite, *webURL, torDial, loadTrust(*configPath)); err != nil {
 		fatal(err)
 	}
 }
@@ -163,9 +172,11 @@ common flags:
   --name <you>        display name (default: $USER)
   --identity <path>   OpenSSH/age key file (default: ssh-agent → ~/.ssh/id_ed25519 → generated)
   --invite <token>    one-time invite token for an invite-only room
+  --tor               dial through a local Tor SOCKS5 proxy (connect; for .onion relays)
 
 examples:
   netherchat connect ws://localhost:3000 --room ops --name alice
+  netherchat connect --tor ws://abc123…onion:80 --room ops --name alice
   echo "build failed on main" | netherchat send ops --server ws://localhost:3000
   netherchat tail alerts | grep CRITICAL`)
 }

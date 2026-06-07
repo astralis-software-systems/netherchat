@@ -98,6 +98,55 @@ chat.example.com {
 
 Clients then connect with `netherchat connect wss://chat.example.com`.
 
+## Reachability without infra: Tor onion service (`--tor`)
+
+When you have nothing to host *on* — no public IP, behind CGNAT, VPN down, the
+incident *is* the network — one flag turns the relay into a **v3 onion service**:
+no port-forward, no DNS, no TLS cert, and the `.onion` address itself
+authenticates the relay (§1.5).
+
+**1. Install tor** (Netherchat does not bundle it):
+
+```bash
+brew install tor          # macOS
+sudo apt install tor      # Debian/Ubuntu
+apk add tor               # Alpine
+sudo pacman -S tor        # Arch
+```
+
+`tor` must be in `PATH`. `netherchat-server --tor` exits with this guidance if it
+is not found.
+
+**2. Start the relay with `--tor`:**
+
+```bash
+netherchat-server --tor
+# netherchat server listening   addr=:3000 version=…
+# tor onion service ready       addr=abc123…onion:80
+```
+
+`--tor` is **additive**: the relay still listens on its normal TCP port; the
+onion is an extra listener over the same hub, so onion and TCP clients share
+rooms. If tor fails to start or publish, the relay logs a warning and continues
+on TCP — `--tor` is best-effort and never takes the core relay down.
+
+By default the address is **ephemeral** (new on each run). For a stable `.onion`,
+persist tor's state with `--tor-data-dir ./tor-data` (back it up — it holds the
+service key that *is* your address).
+
+**3. Connect over Tor.** Each client needs a local tor SOCKS proxy (the `tor`
+daemon on `127.0.0.1:9050`, or Tor Browser on `127.0.0.1:9150`):
+
+```bash
+netherchat connect --tor ws://abc123…onion:80 --room ops --name alice
+# Tor Browser's bundled tor:
+netherchat connect --tor --tor-proxy 127.0.0.1:9150 ws://abc123…onion:80 --room ops
+```
+
+Because a v3 `.onion` address is derived from the relay's public key, reaching
+the *right* address proves you reached the *right* relay — see
+[`encryption.md`](encryption.md). There is no CA and no trust-on-first-use.
+
 ## REST endpoints
 
 | Endpoint    | Returns                                            |

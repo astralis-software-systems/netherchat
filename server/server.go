@@ -89,8 +89,10 @@ func openStore(cfg config.Config, log *slog.Logger) store.Store {
 }
 
 // Run starts the server on cfg.Server.Addr and blocks until ctx is cancelled,
-// then shuts down gracefully.
-func Run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
+// then shuts down gracefully. When tor.Enabled, it ALSO publishes a v3 onion
+// service over the same handler (and hub), so onion and TCP clients share rooms
+// — the onion is purely an additional reachability path (§1.5).
+func Run(ctx context.Context, cfg config.Config, tor TorOptions, log *slog.Logger) error {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -98,11 +100,28 @@ func Run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if st != nil {
 		defer st.Close()
 	}
+	handler := handlerWithStore(cfg, st, log)
 	srv := &http.Server{
 		Addr:              cfg.Server.Addr,
-		Handler:           handlerWithStore(cfg, st, log),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		// No WriteTimeout: WebSocket connections are long-lived.
+	}
+
+	// Optional onion listener. Best-effort: if tor fails to start or publish, the
+	// relay still serves on TCP — --tor must never take the core relay down (§1.5).
+	if tor.Enabled {
+		if onion, err := startOnion(ctx, tor.DataDir, log); err != nil {
+			log.Warn("tor onion service unavailable; continuing on TCP only", "err", err)
+		} else {
+			defer onion.close()
+			osrv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+			go func() {
+				if err := osrv.Serve(onion.listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					log.Warn("onion listener stopped", "err", err)
+				}
+			}()
+		}
 	}
 
 	errCh := make(chan error, 1)

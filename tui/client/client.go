@@ -48,9 +48,10 @@ type Client struct {
 	url         string
 	inviteToken string
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	ws     *websocket.Conn
+	ctx      context.Context
+	cancel   context.CancelFunc
+	ws       *websocket.Conn
+	dialOpts *websocket.DialOptions // nil = direct; set by UseTorProxy for SOCKS5 (Tor)
 
 	events chan Event
 	sendCh chan protocol.Envelope
@@ -166,7 +167,7 @@ func NewWithIdentity(serverURL, room, name string, id *crypto.Identity) (*Client
 // Hello, and starts the read/write loops. The session lifetime is independent of
 // dialCtx; it ends on Close or when the connection drops.
 func (c *Client) Connect(dialCtx context.Context) error {
-	conn, resp, err := websocket.Dial(dialCtx, c.url, nil)
+	conn, resp, err := websocket.Dial(dialCtx, c.url, c.dialOpts)
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
 	}
