@@ -28,8 +28,9 @@ type Model struct {
 	url, name, identityPath, notifyCmd string
 	webURL                             string // base URL of the web join client, for /break-glass links
 	fingerprint                        string
-	source                             string       // where the identity came from (ssh-agent, key file, generated)
-	trust                              []TrustEntry // client-side identity pins from netherchat.toml
+	source                             string                  // where the identity came from (ssh-agent, key file, generated)
+	trust                              []TrustEntry            // client-side identity pins from netherchat.toml
+	verified                           map[string]*verifyEntry // SAS-verification state, keyed by peer fingerprint
 
 	cmds  *command.Set
 	theme theme.Theme
@@ -68,10 +69,11 @@ func Run(url, name, identityPath, room, notifyCmd, invite, webURL string, trust 
 func newModel(url, name, identityPath, roomName, notifyCmd string) *Model {
 	m := &Model{
 		url: url, name: name, identityPath: identityPath, notifyCmd: notifyCmd,
-		cmds:    buildCommands(),
-		theme:   theme.Default(),
-		session: map[string]*room{},
-		input:   textinput.New(),
+		cmds:     buildCommands(),
+		theme:    theme.Default(),
+		session:  map[string]*room{},
+		verified: map[string]*verifyEntry{},
+		input:    textinput.New(),
 	}
 	m.input.Placeholder = "Message, or /command (try /help)…"
 	m.input.Prompt = "> "
@@ -321,7 +323,7 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 			r.ttl = time.Duration(e.TTLSeconds) * time.Second
 		}
 		for _, mem := range e.Members {
-			r.addMember(mem.ID, mem.Name)
+			r.addMember(mem.ID, mem.Name, mem.Fingerprint)
 		}
 		if len(e.Members) == 0 {
 			r.appendSystem("connected — you are the first one here")
@@ -353,7 +355,7 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 		}
 
 	case client.EvMemberJoined:
-		r.addMember(e.ID, e.Name)
+		r.addMember(e.ID, e.Name, e.Fingerprint)
 		r.appendSystem(e.Name + " joined")
 
 	case client.EvMemberLeft:
@@ -711,7 +713,12 @@ func (m *Model) membersView() string {
 		dot := m.st(m.theme.Success).Render("● ")
 		lines = append(lines, dot+m.user(m.name)+m.st(m.theme.Muted).Render(" (you)"))
 		for _, id := range r.order {
-			lines = append(lines, dot+m.user(r.members[id]))
+			mem := r.members[id]
+			row := dot + m.user(mem.name)
+			if m.isVerified(mem.fpr) {
+				row += m.st(m.theme.Success).Render(" ✓")
+			}
+			lines = append(lines, row)
 		}
 	}
 	return m.pane(m.membersW, strings.Join(lines, "\n"))

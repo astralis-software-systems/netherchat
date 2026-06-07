@@ -31,6 +31,7 @@ func buildCommands() *command.Set {
 			Complete: func(p string) []string { return command.FilterPrefix([]string{"off", "10m", "1h", "24h"}, p) }},
 		command.Command{Name: "exec", Args: "<action>", Help: "request an edge agent run a runbook action (signed, E2E)"},
 		command.Command{Name: "whois", Args: "[@handle]", Help: "show an identity's fingerprint, pin status, and published-key match"},
+		command.Command{Name: "verify", Args: "[@handle [ok]]", Help: "out-of-band verify a peer via a 5-word SAS read over a side channel"},
 		command.Command{Name: "join", Args: "<room>", Help: "join another room"},
 		command.Command{Name: "leave", Help: "leave the current room"},
 		command.Command{Name: "clear", Help: "clear the current room view"},
@@ -93,6 +94,8 @@ func (m *Model) runCommand(input string) tea.Cmd {
 		}
 	case "whois":
 		return m.runWhois(arg)
+	case "verify":
+		return m.runVerify(arg)
 	case "join":
 		if arg == "" {
 			m.addError("usage: /join <room>")
@@ -199,6 +202,7 @@ func (m *Model) whoamiText(r *room) string {
 		}
 		b.WriteString("room:        #" + r.name + "\n")
 		b.WriteString("encryption:  " + enc + "\n")
+		b.WriteString(fmt.Sprintf("verified:    %d of %d peers (SAS)\n", m.verifiedCount(), len(r.order)))
 		caps := []string{}
 		if r.inviteOnly {
 			caps = append(caps, "invite-only")

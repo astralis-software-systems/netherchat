@@ -26,6 +26,14 @@ type line struct {
 	text string
 }
 
+// memberView is the per-room cache of a member's display name and identity
+// fingerprint, so the member list and message badges can be drawn without
+// re-querying the client.
+type memberView struct {
+	name string
+	fpr  string
+}
+
 // room is the per-room client + view state. The TUI holds one client core per
 // joined room (one WebSocket each), so every room is an independent E2E session.
 type room struct {
@@ -33,8 +41,8 @@ type room struct {
 	client *client.Client
 
 	lines   []line
-	members map[string]string // id -> display name (excludes self)
-	order   []string          // member ids in join order
+	members map[string]memberView // id -> {display name, fingerprint} (excludes self)
+	order   []string              // member ids in join order
 
 	unread    int
 	keyReady  bool
@@ -48,18 +56,18 @@ type room struct {
 }
 
 func newRoom(name string) *room {
-	return &room{name: name, members: make(map[string]string)}
+	return &room{name: name, members: make(map[string]memberView)}
 }
 
-func (r *room) addMember(id, name string) {
+func (r *room) addMember(id, name, fpr string) {
 	if _, ok := r.members[id]; !ok {
 		r.order = append(r.order, id)
 	}
-	r.members[id] = name
+	r.members[id] = memberView{name: name, fpr: fpr}
 }
 
 func (r *room) removeMember(id string) string {
-	name := r.members[id]
+	name := r.members[id].name
 	delete(r.members, id)
 	for i, x := range r.order {
 		if x == id {

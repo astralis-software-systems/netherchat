@@ -183,6 +183,35 @@ func TestBreakGlassWarRoom(t *testing.T) {
 // E2E-signed message, the relay only routes ciphertext, and an agent (any room
 // member) runs it on its own host and posts a signed result back — attributable
 // by key fingerprint end to end.
+// TestSASMatchesBetweenPeers is the automated form of the §1.2 acceptance test:
+// two members in the same room must independently derive the IDENTICAL 5-word
+// Short Authentication String for each other (no MITM → words match).
+func TestSASMatchesBetweenPeers(t *testing.T) {
+	ts := httptest.NewServer(server.Handler(config.Default(), quietLogger()))
+	defer ts.Close()
+
+	alice := connect(t, ts.URL, "ops", "alice", "")
+	waitMatch[client.EvKeyReady](t, alice, nil, 5*time.Second)
+	bob := connect(t, ts.URL, "ops", "bob", "")
+	waitMatch[client.EvKeyReady](t, bob, nil, 5*time.Second)
+
+	// Alice must observe Bob (and his keys) before she can derive his SAS.
+	waitMatch[client.EvMemberJoined](t, alice, func(e client.EvMemberJoined) bool { return e.Name == "bob" }, 5*time.Second)
+
+	aw, _, aok := alice.SAS("bob")
+	bw, _, bok := bob.SAS("alice")
+	if !aok || !bok {
+		t.Fatalf("SAS unavailable: alice=%v bob=%v", aok, bok)
+	}
+	if len(aw) != 5 {
+		t.Fatalf("SAS has %d words, want 5", len(aw))
+	}
+	if strings.Join(aw, " ") != strings.Join(bw, " ") {
+		t.Fatalf("SAS mismatch — alice: %v  bob: %v", aw, bw)
+	}
+	t.Logf("agreed SAS: %s", strings.Join(aw, " "))
+}
+
 func TestEdgeExecThroughBlindRelay(t *testing.T) {
 	ts := httptest.NewServer(server.Handler(config.Default(), quietLogger()))
 	defer ts.Close()

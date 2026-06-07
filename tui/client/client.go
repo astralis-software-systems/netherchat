@@ -276,6 +276,25 @@ func (c *Client) LookupMember(name string) (id, fingerprint string, ok bool) {
 	return "", "", false
 }
 
+// SAS computes the 5-word Short Authentication String for the pairwise session
+// with the member named handle, from the shared room key and both parties' public
+// keys (§1.2). It returns the words and the peer's fingerprint. ok is false if no
+// such member is present or the room key is not established yet.
+func (c *Client) SAS(handle string) (words []string, fingerprint string, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.rk == nil {
+		return nil, "", false
+	}
+	for _, m := range c.members {
+		if strings.EqualFold(m.name, handle) {
+			words = crypto.SASWords(c.id.SignPub, c.id.KXPub, m.signPub, m.kxPub, c.rk.Key)
+			return words, crypto.Fingerprint(m.signPub), true
+		}
+	}
+	return nil, "", false
+}
+
 // Close ends the session and closes the connection.
 func (c *Client) Close() error {
 	if c.cancel != nil {
@@ -363,7 +382,7 @@ func (c *Client) onWelcome(env protocol.Envelope) {
 	members := make([]ConnMember, 0, len(w.Members))
 	for _, m := range w.Members {
 		c.addMemberLocked(m)
-		members = append(members, ConnMember{ID: m.ID, Name: m.DisplayName})
+		members = append(members, ConnMember{ID: m.ID, Name: m.DisplayName, Fingerprint: fingerprintOf(m.IdentityKey)})
 	}
 	var minted *crypto.RoomKey
 	if w.YouAreFirst {
@@ -396,7 +415,17 @@ func (c *Client) onMemberJoined(env protocol.Envelope) {
 	c.mu.Lock()
 	c.addMemberLocked(mj.Member)
 	c.mu.Unlock()
-	c.emit(EvMemberJoined{ID: mj.Member.ID, Name: mj.Member.DisplayName})
+	c.emit(EvMemberJoined{ID: mj.Member.ID, Name: mj.Member.DisplayName, Fingerprint: fingerprintOf(mj.Member.IdentityKey)})
+}
+
+// fingerprintOf returns the ssh fingerprint of an identity key from the wire, or
+// "" if the key is malformed.
+func fingerprintOf(identityKey []byte) string {
+	signPub, err := crypto.ToSignPub(identityKey)
+	if err != nil {
+		return ""
+	}
+	return crypto.Fingerprint(signPub)
 }
 
 func (c *Client) onMemberLeft(env protocol.Envelope) {

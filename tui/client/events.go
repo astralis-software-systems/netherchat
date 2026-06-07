@@ -8,8 +8,9 @@ type Event interface{ isEvent() }
 
 // ConnMember identifies an already-present room member.
 type ConnMember struct {
-	ID   string
-	Name string
+	ID          string
+	Name        string
+	Fingerprint string // ssh-keygen-format fingerprint of the member's identity key
 }
 
 // EvConnected is emitted once, after the server's Welcome is processed.
@@ -103,7 +104,7 @@ type EvMessage struct {
 }
 
 // EvMemberJoined / EvMemberLeft track room membership.
-type EvMemberJoined struct{ ID, Name string }
+type EvMemberJoined struct{ ID, Name, Fingerprint string }
 type EvMemberLeft struct{ ID, Name string }
 
 // EvError is a non-fatal error (e.g. a single message failed to decrypt).
