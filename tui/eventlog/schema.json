@@ -28,6 +28,8 @@
         "verify",
         "vanish",
         "scuttle",
+        "file_offer",
+        "file_complete",
         "exec_request",
         "exec_result",
         "key_ready",
@@ -60,6 +62,9 @@
     "ttl_seconds": { "type": "integer", "minimum": 0, "description": "Hard lifetime of the spawned incident room (route_fired events)." },
     "reason": { "type": "string", "enum": ["idle", "owner_loss", "manual", "armed"], "description": "Why the room scuttled (scuttle events, §1.6)." },
     "ttl_remaining": { "type": "integer", "minimum": 0, "description": "Seconds of room life remaining; always 0 for a scuttle (the room is gone)." },
+    "filename": { "type": "string", "description": "Sanitized artifact basename (file_offer / file_complete, §2.3) — metadata the relay never saw." },
+    "size_bytes": { "type": "integer", "minimum": 0, "description": "Artifact size in bytes (file events)." },
+    "transfer_id": { "type": "string", "pattern": "^[0-9a-f]{16}$", "description": "Content-free transfer id correlating an offer with its completion (file events)." },
     "epoch": { "type": "integer", "minimum": 0, "description": "Room key epoch (key_ready events)." },
     "message": { "type": "string", "description": "Human-readable detail (error / disconnect events)." }
   }

@@ -67,6 +67,13 @@ type Event struct {
 	Reason       string `json:"reason,omitempty"`
 	TTLRemaining *int   `json:"ttl_remaining,omitempty"`
 
+	// Ephemeral artifact relay (§2.3): a transfer was offered / completed. The
+	// filename and size are metadata the receiving client decrypted — the relay
+	// never saw them. OK (reused) reports the integrity result on file_complete.
+	Filename   string `json:"filename,omitempty"`
+	SizeBytes  int64  `json:"size_bytes,omitempty"`
+	TransferID string `json:"transfer_id,omitempty"`
+
 	Epoch   *uint64 `json:"epoch,omitempty"`
 	Message string  `json:"message,omitempty"`
 }
@@ -176,6 +183,22 @@ func ExecRequest(room, actor, fpr, cmd string, allowed *bool) Event {
 func ExecResult(room, actor, fpr, cmd string, allowed bool, exit int) Event {
 	e := base("exec_result", room)
 	e.Actor, e.Fpr, e.Cmd, e.Allowed, e.Exit = actor, fpr, cmd, Bool(allowed), Int(exit)
+	return e
+}
+
+// FileOffer builds a file_offer event (§2.3): a receiver decrypted an artifact
+// transfer offer. The filename/size are metadata the relay never saw.
+func FileOffer(room, actor, fpr, filename string, size int64, transferID string) Event {
+	e := base("file_offer", room)
+	e.Actor, e.Fpr, e.Filename, e.SizeBytes, e.TransferID = actor, fpr, filename, size, transferID
+	return e
+}
+
+// FileComplete builds a file_complete event: a transfer finished. ok is true when
+// the artifact verified (sha256) and was written; false on integrity/abort/error.
+func FileComplete(room, actor, fpr, filename string, size int64, transferID string, ok bool) Event {
+	e := base("file_complete", room)
+	e.Actor, e.Fpr, e.Filename, e.SizeBytes, e.TransferID, e.OK = actor, fpr, filename, size, transferID, Bool(ok)
 	return e
 }
 

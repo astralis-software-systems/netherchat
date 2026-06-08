@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+	"github.com/salehkreiner/netherchat/protocol"
 )
 
 // Config is the full server configuration. The [[trust]] table is the one
@@ -62,10 +63,22 @@ type RouteConfig struct {
 	ReplyURL   string            `toml:"reply_url"`   // optional: POST the links to the operator's own system
 }
 
-// LimitsConfig is the per-connection inbound rate limit.
+// LimitsConfig is the per-connection inbound rate limit plus the bounds on the
+// ephemeral artifact relay (§2.3).
 type LimitsConfig struct {
 	MessagesPerSecond float64 `toml:"messages_per_second"`
 	Burst             int     `toml:"burst"`
+
+	// MaxFileBytes caps a single artifact transfer. It is a CLIENT-evaluated policy
+	// (like [[trust]]): a blind relay cannot see a transfer's size — it is sealed —
+	// so the sender refuses larger artifacts at offer time and the receiver aborts
+	// if its in-memory buffer would exceed it. The relay never stores a byte.
+	MaxFileBytes int64 `toml:"max_file_bytes"`
+
+	// MaxConcurrentTransfers bounds in-flight transfers per room. Unlike the size
+	// cap this IS relay-enforced, because the relay sees the content-free transfer
+	// ids — it just never sees what is being transferred.
+	MaxConcurrentTransfers int `toml:"max_concurrent_transfers"`
 }
 
 // PersistenceConfig controls optional local-only message persistence. Off by
@@ -149,8 +162,13 @@ func (d Duration) Std() time.Duration { return time.Duration(d) }
 // Default returns the configuration used when no file is provided.
 func Default() Config {
 	return Config{
-		Server:      ServerConfig{Addr: ":3000"},
-		Limits:      LimitsConfig{MessagesPerSecond: 20, Burst: 40},
+		Server: ServerConfig{Addr: ":3000"},
+		Limits: LimitsConfig{
+			MessagesPerSecond:      20,
+			Burst:                  40,
+			MaxFileBytes:           protocol.DefaultMaxFileBytes,
+			MaxConcurrentTransfers: protocol.DefaultMaxConcurrentTransfers,
+		},
 		Persistence: PersistenceConfig{Enabled: false, History: 100},
 		Rooms:       map[string]RoomConfig{},
 	}
@@ -180,6 +198,12 @@ func (c *Config) normalize() {
 	}
 	if c.Limits.Burst <= 0 {
 		c.Limits.Burst = 40
+	}
+	if c.Limits.MaxFileBytes <= 0 {
+		c.Limits.MaxFileBytes = protocol.DefaultMaxFileBytes
+	}
+	if c.Limits.MaxConcurrentTransfers <= 0 {
+		c.Limits.MaxConcurrentTransfers = protocol.DefaultMaxConcurrentTransfers
 	}
 	if c.Persistence.Enabled && c.Persistence.History <= 0 {
 		c.Persistence.History = 100

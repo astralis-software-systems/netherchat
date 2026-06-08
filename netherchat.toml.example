@@ -14,6 +14,14 @@ addr = ":3000"
 # Per-connection inbound message rate limit (token bucket).
 messages_per_second = 20
 burst = 40
+# Ephemeral artifact relay (§2.3) — a secure transfer courier, never storage.
+# max_file_bytes is a CLIENT-evaluated policy: a blind relay cannot see a
+# transfer's size (it is sealed), so the sender refuses larger artifacts at offer
+# time and the receiver aborts if its in-memory buffer would exceed it.
+max_file_bytes = 52428800          # 50 MiB per artifact
+# max_concurrent_transfers IS relay-enforced (the relay sees the content-free
+# transfer ids): new offers are rejected once a room hits this many in flight.
+max_concurrent_transfers = 3
 
 [persistence]
 # Off by default — the server is purely in-memory and rooms evaporate when empty.

@@ -157,6 +157,7 @@ func usage() {
 usage:
   netherchat connect [ws://host:port] [flags]   open the terminal UI
   netherchat send    <room> "message"           send one message (or pipe stdin)
+  netherchat send    --file <path> --room <room> relay a file as a secure artifact transfer
   netherchat tail    <room> [--json]             stream messages (or the ndjson event log)
   netherchat agent   --room <room> --allow runbook.toml   run an edge-exec agent
   netherchat whoami  [--json]                     show your identity

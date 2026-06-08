@@ -146,6 +146,38 @@ func OpenMessage(rk RoomKey, senderSignPub ed25519.PublicKey, roomID, fromID str
 	return plaintext, signed, nil
 }
 
+// SealChunk encrypts one file-transfer chunk under the room key (§2.3). It is the
+// message AEAD WITHOUT a per-chunk signature: a transfer's authenticity comes from
+// the signed FileOffer and the whole-artifact SHA-256 verified on reassembly, so
+// signing every chunk would be wasted work on the hot path. The epoch is bound as
+// AAD exactly as for messages, so a chunk cannot be reinterpreted under a
+// different epoch; the chunk is opaque ciphertext to the relay, like a message
+// body.
+func SealChunk(rk RoomKey, plaintext []byte) (nonce, ciphertext []byte, err error) {
+	aead, err := chacha20poly1305.NewX(rk.Key[:])
+	if err != nil {
+		return nil, nil, fmt.Errorf("init aead: %w", err)
+	}
+	nonce = make([]byte, chacha20poly1305.NonceSizeX) // 24 bytes; random is safe with XChaCha
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, nil, fmt.Errorf("nonce: %w", err)
+	}
+	return nonce, aead.Seal(nil, nonce, plaintext, epochAD(rk.Epoch)), nil
+}
+
+// OpenChunk decrypts a chunk sealed by SealChunk under the same room-key epoch.
+func OpenChunk(rk RoomKey, nonce, ciphertext []byte) ([]byte, error) {
+	aead, err := chacha20poly1305.NewX(rk.Key[:])
+	if err != nil {
+		return nil, fmt.Errorf("init aead: %w", err)
+	}
+	pt, err := aead.Open(nil, nonce, ciphertext, epochAD(rk.Epoch))
+	if err != nil {
+		return nil, fmt.Errorf("decrypt chunk: %w", err)
+	}
+	return pt, nil
+}
+
 // epochAD is the AEAD additional-authenticated-data for a message: the epoch,
 // big-endian. Binding the epoch prevents a ciphertext from being reinterpreted
 // under a different epoch.

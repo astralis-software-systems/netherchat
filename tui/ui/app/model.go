@@ -503,6 +503,28 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 			r.appendSystem(fmt.Sprintf("🔏 sealed — record.json + minutes.md written (%d entries, %d signature(s)). Verify: netherchat verify record.json", e.Entries, e.Signers))
 		}
 
+	case client.EvFileOffer:
+		r.appendSystem(renderFileOffer(e))
+		if name != m.active {
+			r.unread++
+		}
+
+	case client.EvFileSent:
+		r.appendSystem(fmt.Sprintf("✓ %s sent (%s, %s)", e.Filename, humanBytes(e.Size), e.Elapsed.Round(time.Second)))
+
+	case client.EvFileFailed:
+		r.appendError("transfer failed: " + e.Reason)
+
+	case client.EvFileComplete:
+		if e.OK {
+			r.appendSystem(renderFileComplete(e))
+			if name != m.active {
+				r.unread++
+			}
+		} else {
+			r.appendError(renderFileComplete(e))
+		}
+
 	case client.EvError:
 		r.appendError(e.Err.Error())
 

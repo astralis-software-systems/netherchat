@@ -86,6 +86,14 @@ func (m *Mapper) Map(ev client.Event) []Event {
 	case client.EvExecResult:
 		return []Event{ExecResult(m.room, e.FromName, e.FromFingerprint, e.Cmd, e.Allowed, e.ExitCode)}
 
+	case client.EvFileOffer:
+		return []Event{FileOffer(m.room, e.From, e.Fpr, e.Filename, e.Size, e.TransferID)}
+
+	case client.EvFileComplete:
+		// fpr best-effort from the member directory (the complete event carries the
+		// display name; the offer carried the fingerprint).
+		return []Event{FileComplete(m.room, e.From, m.fprByName(e.From), e.Filename, e.Size, e.TransferID, e.OK)}
+
 	case client.EvError:
 		return []Event{ErrorEvent(m.room, e.Err.Error())}
 

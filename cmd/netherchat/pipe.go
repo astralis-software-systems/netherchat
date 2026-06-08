@@ -23,30 +23,56 @@ import (
 // leaks into a message.
 var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 
-// sendCmd implements `netherchat send <room> [message] [flags]`. With no message
-// argument it reads the message from stdin, so it composes with pipes:
+// sendCmd implements `netherchat send`. With a positional room it sends a message
+// (reading stdin if none is given), so it composes with pipes:
 //
 //	echo "build failed on main" | netherchat send ops --server ws://host:3000
 //
-// The room must be the first argument (Go's flag parser stops at the first
-// positional, so flags follow the room).
+// With --file it relays a local artifact as a secure, end-to-end-encrypted,
+// relay-blind transfer (§2.3) — the room then comes from --room:
+//
+//	netherchat send --file heap.prof --room ops --server ws://host:3000
 func sendCmd(args []string) {
 	fs := flag.NewFlagSet("send", flag.ExitOnError)
 	url := fs.String("server", "ws://localhost:3000", "server URL")
+	roomFlag := fs.String("room", "", "room (use this with --file, where there is no positional room)")
 	name := fs.String("name", defaultName(), "display name")
 	identity := fs.String("identity", "", "identity file path")
 	invite := fs.String("invite", "", "one-time invite token")
+	file := fs.String("file", "", "relay a local artifact as a secure E2E transfer instead of a message")
 	timeout := fs.Duration("timeout", 10*time.Second, "max time to wait for the room key")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, `usage: netherchat send <room> ["message"] [flags]   (reads stdin if no message)`)
+		fmt.Fprintln(os.Stderr, `usage:
+  netherchat send <room> ["message"]             send a message (reads stdin if no message)
+  netherchat send --file <path> --room <room>    relay a file as a secure artifact transfer`)
 		fs.PrintDefaults()
 	}
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+
+	// The room is the first positional (message form) or --room (file form, where
+	// the first argument is a flag and Go's parser would stop at it).
+	var room string
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		room = strings.TrimPrefix(args[0], "#")
+		_ = fs.Parse(args[1:])
+	} else {
+		_ = fs.Parse(args)
+	}
+	if *roomFlag != "" {
+		room = strings.TrimPrefix(*roomFlag, "#")
+	}
+	if room == "" {
 		fs.Usage()
 		os.Exit(2)
 	}
-	room := strings.TrimPrefix(args[0], "#")
-	_ = fs.Parse(args[1:])
+
+	if *file != "" {
+		c := dial(*url, room, *name, *identity, *invite, *timeout)
+		defer c.Close()
+		if err := sendFileAfterKey(c, *file, *timeout); err != nil {
+			fatal(err)
+		}
+		return
+	}
 
 	msg := strings.Join(fs.Args(), " ")
 	if msg == "" {
@@ -55,7 +81,7 @@ func sendCmd(args []string) {
 		msg = strings.TrimRight(string(b), "\r\n")
 	}
 	if msg == "" {
-		fatal(errors.New("nothing to send (give a message argument or pipe it via stdin)"))
+		fatal(errors.New("nothing to send (give a message argument, pipe it via stdin, or use --file)"))
 	}
 
 	c := dial(*url, room, *name, *identity, *invite, *timeout)
@@ -63,6 +89,57 @@ func sendCmd(args []string) {
 	if err := sendAfterKey(c, msg, *timeout); err != nil {
 		fatal(err)
 	}
+}
+
+// sendFileAfterKey waits for the room key, starts a secure artifact transfer, and
+// renders progress until it completes or fails (§2.3).
+func sendFileAfterKey(c *client.Client, path string, timeout time.Duration) error {
+	if err := waitForKey(c, timeout); err != nil {
+		return err
+	}
+	if err := c.SendFile(path); err != nil {
+		return err // immediate rejection (unreadable, or over the size cap at offer time)
+	}
+	for {
+		select {
+		case ev := <-c.Events():
+			switch e := ev.(type) {
+			case client.EvFileProgress:
+				fmt.Fprintf(os.Stderr, "\rsending %s (%s)... %d%%   ",
+					e.Filename, humanSize(e.TotalBytes), pctOf(e.SentChunks, e.TotalChunks))
+			case client.EvFileSent:
+				fmt.Fprintf(os.Stderr, "\r✓ %s sent (%s, %s)            \n",
+					e.Filename, humanSize(e.Size), e.Elapsed.Round(time.Second))
+				return nil
+			case client.EvFileFailed:
+				fmt.Fprintf(os.Stderr, "\r✗ transfer failed: %s            \n", e.Reason)
+				return errors.New(e.Reason)
+			}
+		case <-c.Done():
+			return errors.New("disconnected during transfer")
+		}
+	}
+}
+
+// humanSize renders a byte count like "4.2 MB" for transfer progress.
+func humanSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for x := n / unit; x >= unit; x /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGT"[exp])
+}
+
+func pctOf(done, total int) int {
+	if total <= 0 {
+		return 100
+	}
+	return done * 100 / total
 }
 
 // sendAfterKey waits until the room key is established, sends the message, then

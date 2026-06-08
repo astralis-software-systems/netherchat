@@ -34,6 +34,8 @@ func buildCommands() *command.Set {
 		command.Command{Name: "ttl", Args: "<dur|off>", Help: "set a message display TTL",
 			Complete: func(p string) []string { return command.FilterPrefix([]string{"off", "10m", "1h", "24h"}, p) }},
 		command.Command{Name: "exec", Args: "<action>", Help: "request an edge agent run a runbook action (signed, E2E)"},
+		command.Command{Name: "send", Args: "<path>", Help: "relay a file to the room as a secure artifact transfer (E2E, relay-blind)",
+			Complete: completeFilePath},
 		command.Command{Name: "ack", Args: "[tag]", Help: "ack a coordination tag (typed quorum, not a reaction); no arg lists active tags"},
 		command.Command{Name: "handoff", Args: "@handle", Help: "transfer the incident-commander (IC) token"},
 		command.Command{Name: "ic", Help: "show who currently holds incident command"},
@@ -109,6 +111,8 @@ func (m *Model) runCommand(input string) tea.Cmd {
 		if _, err := r.client.RequestExec(arg); err != nil {
 			m.addError(err.Error())
 		}
+	case "send":
+		m.runSend(r, arg)
 	case "ack":
 		m.runAck(r, arg)
 	case "handoff":

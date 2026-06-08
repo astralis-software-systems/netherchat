@@ -86,6 +86,15 @@ type Client struct {
 	sealTimer       *time.Timer       // 30s collection window
 	pendingSealHead []byte            // head of the most recent incoming SEAL_REQUEST
 	pendingSealName string            // display name of who proposed it
+
+	// Ephemeral artifact relay (§2.3). sends holds our outgoing transfers (so
+	// FileAck/FileAbort can be routed to the streaming goroutine); recvs holds the
+	// transfers we are receiving and reassembling in memory. maxFileBytes is the
+	// client-side size cap (a blind relay cannot enforce it).
+	fileMu       sync.Mutex
+	sends        map[string]*sendState
+	recvs        map[string]*recvState
+	maxFileBytes int64
 }
 
 // sealTimeout bounds how long a sealer waits for co-signatures before finalizing
@@ -173,6 +182,10 @@ func NewWithIdentity(serverURL, room, name string, id *crypto.Identity) (*Client
 		members: make(map[string]memberInfo),
 		acks:    make(map[string]map[string]bool),
 		chain:   record.NewChain(),
+
+		sends:        make(map[string]*sendState),
+		recvs:        make(map[string]*recvState),
+		maxFileBytes: protocol.DefaultMaxFileBytes,
 	}, nil
 }
 
@@ -582,6 +595,26 @@ func (c *Client) handle(env protocol.Envelope) {
 		var m protocol.Message
 		if err := env.Decode(&m); err == nil {
 			c.handleEncrypted(env.Type, m)
+		}
+	case protocol.OpFileOffer:
+		var fo protocol.FileOffer
+		if err := env.Decode(&fo); err == nil {
+			c.onFileOffer(fo)
+		}
+	case protocol.OpFileChunk:
+		var fc protocol.FileChunk
+		if err := env.Decode(&fc); err == nil {
+			c.onFileChunk(fc)
+		}
+	case protocol.OpFileAck:
+		var fa protocol.FileAck
+		if err := env.Decode(&fa); err == nil {
+			c.onFileAck(fa)
+		}
+	case protocol.OpFileAbort:
+		var fa protocol.FileAbort
+		if err := env.Decode(&fa); err == nil {
+			c.onFileAbort(fa)
 		}
 	case protocol.OpRouteFired:
 		c.onRouteFired(env)

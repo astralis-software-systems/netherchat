@@ -199,6 +199,58 @@ type EvMemberLeft struct{ ID, Name string }
 // EvError is a non-fatal error (e.g. a single message failed to decrypt).
 type EvError struct{ Err error }
 
+// --- Ephemeral artifact relay (§2.3) ----------------------------------------
+
+// EvFileOffer is emitted to a RECEIVER when a verified transfer offer arrives:
+// someone is sending an artifact. Filename is the sanitized basename.
+type EvFileOffer struct {
+	From       string
+	Fpr        string
+	Filename   string
+	Size       int64
+	TransferID string
+	At         time.Time
+}
+
+// EvFileProgress is emitted on the SENDER as chunks go out (throttled).
+type EvFileProgress struct {
+	Filename    string
+	TransferID  string
+	SentChunks  int
+	TotalChunks int
+	SentBytes   int64
+	TotalBytes  int64
+}
+
+// EvFileSent is emitted on the SENDER when the artifact has been fully streamed.
+type EvFileSent struct {
+	Filename   string
+	TransferID string
+	Size       int64
+	Elapsed    time.Duration
+}
+
+// EvFileFailed is emitted on the SENDER when a transfer it started fails.
+type EvFileFailed struct {
+	Filename   string
+	TransferID string
+	Reason     string
+}
+
+// EvFileComplete is emitted on a RECEIVER when a transfer finishes. OK is true and
+// Path is set when the artifact verified and was written; otherwise Err explains
+// the failure (integrity, abort, or write error).
+type EvFileComplete struct {
+	From       string
+	Filename   string
+	Path       string
+	Size       int64
+	TransferID string
+	OK         bool
+	Err        string
+	At         time.Time
+}
+
 // EvDisconnected is emitted once when the connection ends; Done() closes after it.
 type EvDisconnected struct{ Err error }
 
@@ -220,5 +272,10 @@ func (EvInvite) isEvent()        {}
 func (EvBreakGlass) isEvent()    {}
 func (EvMemberJoined) isEvent()  {}
 func (EvMemberLeft) isEvent()    {}
+func (EvFileOffer) isEvent()     {}
+func (EvFileProgress) isEvent()  {}
+func (EvFileSent) isEvent()      {}
+func (EvFileFailed) isEvent()    {}
+func (EvFileComplete) isEvent()  {}
 func (EvError) isEvent()         {}
 func (EvDisconnected) isEvent()  {}

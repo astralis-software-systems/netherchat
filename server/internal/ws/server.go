@@ -40,7 +40,8 @@ type Server struct {
 	invites   *invite.Store
 	ephemeral *ephemeral.Registry
 	scuttle   *scuttle.Manager
-	store     store.Store // optional history persistence; nil when disabled
+	transfers *transferTracker // per-room concurrent artifact-transfer limit (§2.3)
+	store     store.Store      // optional history persistence; nil when disabled
 	log       *slog.Logger
 
 	// frameTap, when set, receives a copy of every raw inbound relay frame BEFORE
@@ -61,7 +62,11 @@ func NewServer(h *hub.Hub, cfg config.Config, invites *invite.Store, eph *epheme
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{hub: h, cfg: cfg, invites: invites, ephemeral: eph, scuttle: sc, store: st, log: log}
+	return &Server{
+		hub: h, cfg: cfg, invites: invites, ephemeral: eph, scuttle: sc,
+		transfers: newTransferTracker(cfg.Limits.MaxConcurrentTransfers),
+		store:     st, log: log,
+	}
 }
 
 // HandleWS is the http.HandlerFunc for the WebSocket endpoint.
@@ -210,6 +215,13 @@ func (s *Server) serve(ctx context.Context, c *websocket.Conn) {
 	// 6. Departure.
 	empty := s.hub.Leave(hello.Room, id)
 	s.hub.Broadcast(hello.Room, id, mustEncode(protocol.OpMemberLeft, protocol.MemberLeft{ID: id}))
+	// A sender that drops mid-transfer aborts its transfers so receivers stop
+	// waiting and discard their buffers (§2.3).
+	for _, tid := range s.transfers.abortBy(hello.Room, id) {
+		s.hub.Broadcast(hello.Room, id, mustEncode(protocol.OpFileAbort, protocol.FileAbort{
+			TransferID: tid, Reason: "sender disconnected",
+		}))
+	}
 	s.log.Info("member left", "room", hello.Room, "id", id, "room_empty", empty)
 	if s.scuttle != nil {
 		switch {
@@ -303,6 +315,57 @@ func (s *Server) relay(room, fromID string, env protocol.Envelope) {
 		}
 		m.FromID = fromID
 		s.hub.Broadcast(room, fromID, mustEncode(env.Type, m))
+
+	case protocol.OpFileOffer:
+		// Ephemeral artifact relay (§2.3). The relay fans the offer out like a
+		// message; it sees only the content-free transfer id (to bound concurrency)
+		// and an opaque sealed Message — never the filename, size, or hash.
+		var fo protocol.FileOffer
+		if err := env.Decode(&fo); err != nil {
+			return
+		}
+		if !s.transfers.tryStart(room, fo.TransferID, fromID) {
+			s.hub.SendTo(room, fromID, mustEncode(protocol.OpError, protocol.Error{
+				Code: "transfer_limit", Message: "too many concurrent transfers in this room",
+			}))
+			return
+		}
+		fo.Sealed.FromID = fromID // stamp the authenticated sender on the sealed message
+		s.hub.Broadcast(room, fromID, mustEncode(protocol.OpFileOffer, fo))
+
+	case protocol.OpFileChunk:
+		// Forward and forget — the relay never buffers a chunk. It enforces the
+		// per-chunk size (bounding per-frame memory) and frees the transfer's slot
+		// when it forwards the final chunk. The chunk itself is opaque ciphertext.
+		var fc protocol.FileChunk
+		if err := env.Decode(&fc); err != nil {
+			return
+		}
+		if len(fc.Data) > protocol.MaxChunkWire {
+			s.hub.SendTo(room, fromID, mustEncode(protocol.OpError, protocol.Error{
+				Code: "chunk_too_large", Message: "artifact chunk exceeds the size limit",
+			}))
+			return
+		}
+		s.hub.Broadcast(room, fromID, mustEncode(protocol.OpFileChunk, fc))
+		if fc.Total > 0 && fc.Index == fc.Total-1 {
+			s.transfers.finish(room, fc.TransferID) // streaming done; free the slot
+		}
+
+	case protocol.OpFileAck:
+		var fa protocol.FileAck
+		if err := env.Decode(&fa); err != nil {
+			return
+		}
+		s.hub.Broadcast(room, fromID, mustEncode(protocol.OpFileAck, fa))
+
+	case protocol.OpFileAbort:
+		var fa protocol.FileAbort
+		if err := env.Decode(&fa); err != nil {
+			return
+		}
+		s.hub.Broadcast(room, fromID, mustEncode(protocol.OpFileAbort, fa))
+		s.transfers.finish(room, fa.TransferID)
 
 	case protocol.OpBreakGlass:
 		var bg protocol.BreakGlass
