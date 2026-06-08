@@ -57,18 +57,39 @@ changelog:
       - "^test:"
       - "^chore:"
 
-dockers_v2:
-  - id: netherchat
+dockers:
+  - id: netherchat-amd64
     ids: [netherchat-server]
     dockerfile: Dockerfile.goreleaser
-    images:
-      - salkreiner/netherchat
-    tags:
-      - "{{ .Version }}"
-      - latest
-    platforms:
-      - linux/amd64
-      - linux/arm64
+    use: buildx
+    image_templates:
+      - salkreiner/netherchat:{{ .Version }}-amd64
+      - salkreiner/netherchat:latest-amd64
+    build_flag_templates:
+      - "--platform=linux/amd64"
+    goarch: amd64
+    goos: linux
+  - id: netherchat-arm64
+    ids: [netherchat-server]
+    dockerfile: Dockerfile.goreleaser
+    use: buildx
+    image_templates:
+      - salkreiner/netherchat:{{ .Version }}-arm64
+      - salkreiner/netherchat:latest-arm64
+    build_flag_templates:
+      - "--platform=linux/arm64"
+    goarch: arm64
+    goos: linux
+
+docker_manifests:
+  - name_template: salkreiner/netherchat:{{ .Version }}
+    image_templates:
+      - salkreiner/netherchat:{{ .Version }}-amd64
+      - salkreiner/netherchat:{{ .Version }}-arm64
+  - name_template: salkreiner/netherchat:latest
+    image_templates:
+      - salkreiner/netherchat:latest-amd64
+      - salkreiner/netherchat:latest-arm64
 
 homebrew_casks:
   - name: netherchat
