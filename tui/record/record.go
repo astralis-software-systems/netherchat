@@ -61,7 +61,7 @@ const (
 // the fingerprint check; Replayed is provenance for §2.7 replay).
 type Entry struct {
 	Seq        uint64 `json:"seq"`
-	TS         int64  `json:"ts"` // unix seconds
+	TS         int64  `json:"ts"`          // unix seconds
 	AuthorID   string `json:"author_id"`   // SHA256:... fingerprint of the author's identity key
 	AuthorName string `json:"author_name"` // cosmetic display name (not authenticated)
 	AuthorKey  []byte `json:"author_key"`  // Ed25519 public key (base64); must hash to AuthorID

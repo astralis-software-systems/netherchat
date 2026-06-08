@@ -30,9 +30,9 @@ type SealedRecord struct {
 	SealedAt   string            `json:"sealed_at"` // RFC3339 UTC
 	SealedBy   string            `json:"sealed_by"` // fingerprint of the participant who ran /seal
 	Entries    []Entry           `json:"entries"`
-	HeadHash   string            `json:"head_hash"`            // hex SHA-256 of the last entry's canonical bytes
-	Signatures map[string]string `json:"signatures"`           // fingerprint -> base64 Ed25519 sig over SealSigningBytes(room, head)
-	SignerKeys map[string]string `json:"signer_keys"`          // fingerprint -> base64 Ed25519 public key (to verify Signatures)
+	HeadHash   string            `json:"head_hash"`   // hex SHA-256 of the last entry's canonical bytes
+	Signatures map[string]string `json:"signatures"`  // fingerprint -> base64 Ed25519 sig over SealSigningBytes(room, head)
+	SignerKeys map[string]string `json:"signer_keys"` // fingerprint -> base64 Ed25519 public key (to verify Signatures)
 }
 
 // NewSealedRecord assembles a record from a finished chain and the collected seal
@@ -81,12 +81,12 @@ func Parse(b []byte) (*SealedRecord, error) {
 // VerifyResult summarizes a verification. Valid is true only if the chain links,
 // every entry signature, the head hash, and every seal signature all check out.
 type VerifyResult struct {
-	Valid      bool     `json:"valid"`
-	Room       string   `json:"room"`
-	Entries    int      `json:"entries"`
-	Signers    []string `json:"signers"`         // fingerprints whose seal signature verified
-	HeadHash   string   `json:"head_hash"`       // recomputed, hex
-	Reason     string   `json:"reason,omitempty"` // failure detail when !Valid
+	Valid    bool     `json:"valid"`
+	Room     string   `json:"room"`
+	Entries  int      `json:"entries"`
+	Signers  []string `json:"signers"`          // fingerprints whose seal signature verified
+	HeadHash string   `json:"head_hash"`        // recomputed, hex
+	Reason   string   `json:"reason,omitempty"` // failure detail when !Valid
 }
 
 // Verify recomputes the chain from scratch and checks every integrity property
@@ -269,4 +269,3 @@ func shortFpr(fpr string) string {
 	}
 	return fpr[:n] + "…"
 }
-
