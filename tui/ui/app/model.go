@@ -50,6 +50,7 @@ type Model struct {
 	width, height             int
 	sidebarW, membersW, bodyH int
 	ready                     bool
+	mouseOn                   bool // Bubble Tea mouse capture (off restores native terminal selection)
 
 	initialInvite string
 }
@@ -79,6 +80,7 @@ func newModel(url, name, identityPath, roomName, notifyCmd string) *Model {
 		session:  map[string]*room{},
 		verified: map[string]*verifyEntry{},
 		input:    textinput.New(),
+		mouseOn:  true, // matches tea.WithMouseCellMotion() in Run
 	}
 	m.input.Placeholder = "Message, or /command (try /help)…"
 	m.input.Prompt = "> "
@@ -467,7 +469,13 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 		r.appendSystem(fmt.Sprintf("⚡ incident command: %s → %s", from, e.ToName))
 
 	case client.EvRecordEntry:
-		r.appendLine(line{at: e.At, kind: lineRaw, text: m.renderRecordEntry(e)})
+		// Store the entry's structure (not a frozen rendered string) so it restyles
+		// on /theme like a message and /export can decompose it.
+		r.appendLine(line{
+			at: e.At, kind: lineRecord, from: e.AuthorName, text: e.Body,
+			fpr: e.AuthorFpr, signed: true,
+			recordKind: e.Kind, actionee: e.Actionee, replayed: e.Replayed,
+		})
 		if !e.Self && name != m.active {
 			r.unread++
 		}
@@ -840,6 +848,12 @@ func (m *Model) renderLine(l line) string {
 	switch l.kind {
 	case lineRaw:
 		return l.text
+	case lineRecord:
+		// Re-render from the stored entry structure (identical to append-time output).
+		return m.renderRecordEntry(client.EvRecordEntry{
+			Kind: l.recordKind, AuthorName: l.from, Actionee: l.actionee,
+			Body: l.text, Replayed: l.replayed, At: l.at,
+		})
 	case lineSystem:
 		return m.wrap(m.st(m.theme.Muted).Italic(true).Render("* " + l.text))
 	case lineError:

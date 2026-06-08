@@ -46,6 +46,10 @@ func buildCommands() *command.Set {
 		command.Command{Name: "join", Args: "<room>", Help: "join another room"},
 		command.Command{Name: "leave", Help: "leave the current room"},
 		command.Command{Name: "clear", Help: "clear the current room view"},
+		command.Command{Name: "copy", Args: "[N|@handle]", Help: "copy a message body to the system clipboard"},
+		command.Command{Name: "export", Args: "[--json] [--out <path>]", Help: "write this room's messages to a file"},
+		command.Command{Name: "mouse", Args: "[on|off]", Help: "toggle mouse capture (off = native terminal text selection)",
+			Complete: func(p string) []string { return command.FilterPrefix([]string{"on", "off"}, p) }},
 		command.Command{Name: "quit", Help: "quit netherchat"},
 	)
 }
@@ -136,6 +140,12 @@ func (m *Model) runCommand(input string) tea.Cmd {
 			r.lines = nil
 			m.syncViewport()
 		}
+	case "copy":
+		m.runCopy(r, arg)
+	case "export":
+		m.runExport(r, arg)
+	case "mouse":
+		return m.runMouse(arg)
 	case "quit":
 		m.closeAll()
 		return tea.Quit
@@ -434,6 +444,7 @@ func (m *Model) whoamiText(r *room) string {
 	b.WriteString("identity:    " + m.sourceLabel() + "\n")
 	b.WriteString("name:        " + m.name + "\n")
 	b.WriteString("server:      " + m.url + "\n")
+	b.WriteString("mouse:       " + mouseState(m.mouseOn) + "\n")
 	if r != nil {
 		enc := "establishing…"
 		if r.keyReady {

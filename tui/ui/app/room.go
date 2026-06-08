@@ -15,6 +15,7 @@ const (
 	lineSystem                  // local notices (joins/leaves/status)
 	lineServer                  // webhook/system output — NOT E2E (plaintext marker)
 	lineExec                    // edge-exec request/result — E2E, signed, attributable
+	lineRecord                  // sealed-record entry (/decide /action /mark, or a /replay)
 	lineError
 	lineRaw // pre-rendered multi-line block (e.g. an invite QR), not wrapped
 )
@@ -31,6 +32,13 @@ type line struct {
 	// updates the badge on their earlier messages too.
 	fpr    string
 	signed bool
+
+	// For lineRecord: the record entry's structure, kept so the entry re-renders
+	// (and exports) from data rather than a frozen pre-rendered string. recordKind
+	// is decision|action|note; replayed marks an entry streamed in by /replay.
+	recordKind string
+	actionee   string
+	replayed   bool
 }
 
 // memberView is the per-room cache of a member's display name and identity
