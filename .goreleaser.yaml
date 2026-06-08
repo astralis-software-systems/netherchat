@@ -91,16 +91,6 @@ docker_manifests:
       - salkreiner/netherchat:latest-amd64
       - salkreiner/netherchat:latest-arm64
 
-homebrew_casks:
-  - name: netherchat
-    ids: [default]
-    repository:
-      owner: salehkreiner
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    homepage: "https://github.com/salehkreiner/netherchat"
-    description: "Self-hostable, end-to-end encrypted, real-time messaging for terminals"
-
 release:
   github:
     owner: salehkreiner
