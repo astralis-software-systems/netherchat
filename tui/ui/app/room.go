@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/salehkreiner/netherchat/tui/client"
+	"github.com/salehkreiner/netherchat/tui/ui/render"
 )
 
 // lineKind classifies a rendered line so the view can style it.
@@ -69,10 +70,16 @@ type room struct {
 	ttl      time.Duration // client-side message display TTL (0 = none)
 	failed   bool
 	scuttled bool // the room was scuttled (§1.6): keys destroyed, room gone
+
+	// Paste-rendering fold state (§2.6): which collapsed code blocks / stack
+	// traces are expanded, and the highest block id assigned by the last render
+	// (so /expand can validate its argument). Reset when history is cleared.
+	collapse   *render.CollapseState
+	maxBlockID int
 }
 
 func newRoom(name string) *room {
-	return &room{name: name, members: make(map[string]memberView)}
+	return &room{name: name, members: make(map[string]memberView), collapse: render.NewCollapseState()}
 }
 
 func (r *room) addMember(id, name, fpr string) {

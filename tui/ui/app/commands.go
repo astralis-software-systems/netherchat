@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,6 +49,8 @@ func buildCommands() *command.Set {
 		command.Command{Name: "join", Args: "<room>", Help: "join another room"},
 		command.Command{Name: "leave", Help: "leave the current room"},
 		command.Command{Name: "clear", Help: "clear the current room view"},
+		command.Command{Name: "expand", Args: "<id|all>", Help: "expand a collapsed code block or stack trace",
+			Complete: func(p string) []string { return command.FilterPrefix([]string{"all"}, p) }},
 		command.Command{Name: "copy", Args: "[N|@handle]", Help: "copy a message body to the system clipboard"},
 		command.Command{Name: "export", Args: "[--json] [--out <path>]", Help: "write this room's messages to a file"},
 		command.Command{Name: "mouse", Args: "[on|off]", Help: "toggle mouse capture (off = native terminal text selection)",
@@ -142,8 +145,11 @@ func (m *Model) runCommand(input string) tea.Cmd {
 	case "clear":
 		if r != nil {
 			r.lines = nil
+			r.collapse.Reset()
 			m.syncViewport()
 		}
+	case "expand":
+		m.runExpand(r, arg)
 	case "copy":
 		m.runCopy(r, arg)
 	case "export":
@@ -178,9 +184,43 @@ func (m *Model) runTheme(arg string) {
 		return
 	}
 	m.theme = th
+	m.renderer.SetTheme(th) // invalidates the render cache → code blocks re-highlight (§2.6)
 	m.applyInputTheme()
 	m.addSystem("theme set to " + th.Name + "  (font: " + th.Font + ")")
 	m.syncViewport()
+}
+
+// runExpand implements /expand <id|all> (§2.6): unfold a collapsed code block or
+// stack trace in place. Ids are the sequential numbers shown in the fold
+// affordance, scoped to the current room session. Re-rendering shows the change.
+func (m *Model) runExpand(r *room, arg string) {
+	if r == nil {
+		return
+	}
+	arg = strings.TrimSpace(arg)
+	switch {
+	case arg == "":
+		m.addError("usage: /expand <id|all>")
+	case strings.EqualFold(arg, "all"):
+		r.collapse.ExpandAll()
+		m.addSystem("expanded all collapsed blocks")
+	default:
+		id, err := strconv.Atoi(arg)
+		if err != nil || id < 1 {
+			m.addError("usage: /expand <id|all>   (id is the number shown in the collapsed block)")
+			return
+		}
+		if id > r.maxBlockID {
+			if r.maxBlockID == 0 {
+				m.addError("no collapsed blocks in this room")
+			} else {
+				m.addError(fmt.Sprintf("no block #%d — this room has blocks 1–%d", id, r.maxBlockID))
+			}
+			return
+		}
+		r.collapse.Expand(id)
+		m.addSystem(fmt.Sprintf("expanded block #%d", id))
+	}
 }
 
 func (m *Model) runTTL(r *room, arg string) {

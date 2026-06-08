@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/ui/command"
+	"github.com/salehkreiner/netherchat/tui/ui/render"
 	"github.com/salehkreiner/netherchat/tui/ui/theme"
 )
 
@@ -34,8 +35,9 @@ type Model struct {
 	trust                              []TrustEntry            // client-side identity pins from netherchat.toml
 	verified                           map[string]*verifyEntry // SAS-verification state, keyed by peer fingerprint
 
-	cmds  *command.Set
-	theme theme.Theme
+	cmds     *command.Set
+	theme    theme.Theme
+	renderer *render.Renderer // message-body paste rendering (§2.6)
 
 	session map[string]*room
 	order   []string
@@ -77,6 +79,7 @@ func newModel(url, name, identityPath, roomName, notifyCmd string) *Model {
 		url: url, name: name, identityPath: identityPath, notifyCmd: notifyCmd,
 		cmds:     buildCommands(),
 		theme:    theme.Default(),
+		renderer: render.New(theme.Default(), 80), // width set for real on first resize
 		session:  map[string]*room{},
 		verified: map[string]*verifyEntry{},
 		input:    textinput.New(),
@@ -384,6 +387,7 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 		switch e.Action {
 		case "vanish":
 			r.lines = nil
+			r.collapse.Reset() // block ids reset with the cleared history (§2.6)
 			who := e.ByName
 			if e.Self {
 				who = "you"
@@ -717,6 +721,7 @@ func (m *Model) resize(w, h int) {
 		m.vp.Width = msgW
 		m.vp.Height = m.bodyH
 	}
+	m.renderer.SetWidth(msgW) // keep paste-rendering geometry in step with the viewport
 	m.input.Width = w - 3
 	m.syncViewport()
 }
@@ -860,40 +865,62 @@ func (m *Model) icMark(isIC bool) string {
 
 func (m *Model) renderLines(r *room) string {
 	lines := make([]string, 0, len(r.lines))
+	blockID := 1 // sequential collapse ids, scoped to the room session (§2.6)
 	for _, l := range r.lines {
-		lines = append(lines, m.renderLine(l))
+		rendered, blocks := m.renderLine(r, l, blockID)
+		blockID += blocks
+		lines = append(lines, rendered)
 	}
+	r.maxBlockID = blockID - 1
 	return strings.Join(lines, "\n")
 }
 
-func (m *Model) renderLine(l line) string {
+// renderLine renders one buffer line. For chat messages it routes the body
+// through the paste renderer (§2.6), numbering any collapsible code blocks or
+// stack traces from baseID; it returns the rendered text and how many block ids
+// it consumed so the caller can advance the room-wide counter.
+func (m *Model) renderLine(r *room, l line, baseID int) (string, int) {
 	switch l.kind {
 	case lineRaw:
-		return l.text
+		return l.text, 0
 	case lineRecord:
 		// Re-render from the stored entry structure (identical to append-time output).
 		return m.renderRecordEntry(client.EvRecordEntry{
 			Kind: l.recordKind, AuthorName: l.from, Actionee: l.actionee,
 			Body: l.text, Replayed: l.replayed, At: l.at,
-		})
+		}), 0
 	case lineSystem:
-		return m.wrap(m.st(m.theme.Muted).Italic(true).Render("* " + l.text))
+		return m.wrap(m.st(m.theme.Muted).Italic(true).Render("* " + l.text)), 0
 	case lineError:
-		return m.wrap(m.st(m.theme.Error).Render("⚠ " + l.text))
+		return m.wrap(m.st(m.theme.Error).Render("⚠ " + l.text)), 0
 	}
 	ts := m.st(m.theme.Muted).Render(l.at.Format("15:04") + " ")
 	switch l.kind {
 	case lineSelf:
-		return m.wrap(ts + m.st(m.theme.Accent2).Bold(true).Render(l.from+": ") + m.inlineCode(l.text))
+		header := ts + m.st(m.theme.Accent2).Bold(true).Render(l.from+": ")
+		return m.renderBody(r, header, l.text, baseID)
 	case lineServer:
 		tag := m.st(m.theme.Warn).Render("⚙ " + l.from + " (plaintext) ")
-		return m.wrap(ts + tag + m.inlineCode(l.text))
+		return m.wrap(ts + tag + m.inlineCode(l.text)), 0
 	case lineExec:
 		tag := m.st(m.theme.Accent2).Bold(true).Render("⚡ " + l.from + " ")
-		return m.wrap(ts + tag + m.inlineCode(l.text))
+		return m.wrap(ts + tag + m.inlineCode(l.text)), 0
 	default: // lineMessage
-		return m.wrap(ts + m.user(l.from) + m.badge(l) + m.st(m.theme.Text).Render(": ") + m.inlineCode(l.text))
+		header := ts + m.user(l.from) + m.badge(l) + m.st(m.theme.Text).Render(": ")
+		return m.renderBody(r, header, l.text, baseID)
 	}
+}
+
+// renderBody composes a message header with its rendered body. A plain message
+// stays a single line — header then inline body — exactly as before (no
+// regression). A body that carries a structural block (code, diff, stack trace)
+// puts the header on its own line with the formatted block(s) below it.
+func (m *Model) renderBody(r *room, header, body string, baseID int) (string, int) {
+	out, blocks, isBlock := m.renderer.RenderBody(body, baseID, r.collapse)
+	if !isBlock {
+		return m.wrap(header + out), 0
+	}
+	return m.wrap(header) + "\n" + out, blocks
 }
 
 // badge returns the trust indicator drawn after a message sender's name (§3.3):
@@ -921,22 +948,9 @@ func (m *Model) isPinned(handle, fpr string) bool {
 	return ok && entry.Fpr != "" && entry.Fpr == fpr
 }
 
-// inlineCode styles `code` spans within a message.
-func (m *Model) inlineCode(s string) string {
-	if !strings.Contains(s, "`") {
-		return s
-	}
-	parts := strings.Split(s, "`")
-	var b strings.Builder
-	for i, p := range parts {
-		if i%2 == 1 {
-			b.WriteString(m.st(m.theme.Accent2).Render(p))
-		} else {
-			b.WriteString(p)
-		}
-	}
-	return b.String()
-}
+// inlineCode styles `code` spans within a message, delegating to the render
+// package so inline code looks identical everywhere it appears (§2.6 item 2).
+func (m *Model) inlineCode(s string) string { return m.renderer.Inline(s) }
 
 func (m *Model) user(name string) string {
 	return lipgloss.NewStyle().Foreground(m.theme.UserColor(name)).Bold(true).Render(name)
