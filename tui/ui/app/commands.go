@@ -52,7 +52,7 @@ func buildCommands() *command.Set {
 		command.Command{Name: "expand", Args: "<id|all>", Help: "expand a collapsed code block or stack trace",
 			Complete: func(p string) []string { return command.FilterPrefix([]string{"all"}, p) }},
 		command.Command{Name: "copy", Args: "[N|@handle]", Help: "copy a message body to the system clipboard"},
-		command.Command{Name: "export", Args: "[--json] [--out <path>]", Help: "write this room's messages to a file"},
+		command.Command{Name: "export", Args: "[--all] [--json] [--out <path>]", Help: "write sealed decisions to a file (--all for full history, with a warning)"},
 		command.Command{Name: "mouse", Args: "[on|off]", Help: "toggle mouse capture (off = native terminal text selection)",
 			Complete: func(p string) []string { return command.FilterPrefix([]string{"on", "off"}, p) }},
 		command.Command{Name: "quit", Help: "quit netherchat"},

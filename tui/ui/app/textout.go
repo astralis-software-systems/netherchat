@@ -30,6 +30,7 @@ type exportMsg struct {
 	fpr      string
 	signed   bool
 	replayed bool
+	sealed   bool // promoted into the record chain (/decide /action /mark) — a "sealed decision"
 }
 
 // roomMessages extracts the room buffer's message lines — peer and own chat,
@@ -41,14 +42,41 @@ func (m *Model) roomMessages(r *room) []exportMsg {
 	for _, l := range r.lines {
 		switch l.kind {
 		case lineMessage, lineServer, lineRecord:
-			out = append(out, exportMsg{l.at, l.from, l.text, l.fpr, l.signed, l.replayed})
+			// Record-chain entries (/decide /action /mark) are the "sealed decisions"
+			// the default export keeps; everything else is full history (--all only).
+			out = append(out, exportMsg{
+				at: l.at, sender: l.from, body: l.text, fpr: l.fpr,
+				signed: l.signed, replayed: l.replayed, sealed: l.kind == lineRecord,
+			})
 		case lineSelf:
 			// Self lines don't cache our own fingerprint; fill it in for export.
-			out = append(out, exportMsg{l.at, l.from, l.text, m.fingerprint, l.signed, l.replayed})
+			out = append(out, exportMsg{
+				at: l.at, sender: l.from, body: l.text, fpr: m.fingerprint,
+				signed: l.signed, replayed: l.replayed,
+			})
 		}
 	}
 	return out
 }
+
+// sealedOnly keeps just the record-chain entries (the deliberately-promoted
+// decisions/actions/notes). It is the default /export set: persisting full chat
+// history is a quiet escape hatch around "you choose what becomes a record", so
+// it is gated behind --all (§7).
+func sealedOnly(msgs []exportMsg) []exportMsg {
+	out := make([]exportMsg, 0, len(msgs))
+	for _, m := range msgs {
+		if m.sealed {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// exportAllWarning is shown before a full-history export so the persistence
+// decision is visible at the moment it is made (§7).
+const exportAllWarning = "⚠ exporting full message history — this creates a persistent record. " +
+	"Use /export (no flag) to export sealed decisions only."
 
 // --- /copy ------------------------------------------------------------------
 
@@ -103,13 +131,18 @@ func (m *Model) runExport(r *room, arg string) {
 	if r == nil {
 		return
 	}
-	asJSON, outPath, err := parseExportArgs(arg)
+	all, asJSON, outPath, err := parseExportArgs(arg)
 	if err != nil {
 		m.addError(err.Error())
 		return
 	}
 
 	msgs := m.roomMessages(r)
+	if all {
+		m.addSystem(exportAllWarning)
+	} else {
+		msgs = sealedOnly(msgs)
+	}
 	path := outPath
 	if path == "" {
 		ext := "txt"
@@ -134,24 +167,27 @@ func (m *Model) runExport(r *room, arg string) {
 	m.addSystem(fmt.Sprintf("✓ exported %d %s to %s", len(msgs), noun, path))
 }
 
-// parseExportArgs parses "--json" and "--out <path>" from the command argument.
-func parseExportArgs(arg string) (asJSON bool, out string, err error) {
+// parseExportArgs parses "--all", "--json" and "--out <path>" from the command
+// argument. Without --all the export is limited to sealed decisions (§7).
+func parseExportArgs(arg string) (all, asJSON bool, out string, err error) {
 	fields := strings.Fields(arg)
 	for i := 0; i < len(fields); i++ {
 		switch fields[i] {
+		case "--all":
+			all = true
 		case "--json":
 			asJSON = true
 		case "--out":
 			if i+1 >= len(fields) {
-				return false, "", errors.New("usage: /export [--json] [--out <path>]")
+				return false, false, "", errors.New("usage: /export [--all] [--json] [--out <path>]")
 			}
 			out = fields[i+1]
 			i++
 		default:
-			return false, "", fmt.Errorf("unknown option %q  ·  usage: /export [--json] [--out <path>]", fields[i])
+			return false, false, "", fmt.Errorf("unknown option %q  ·  usage: /export [--all] [--json] [--out <path>]", fields[i])
 		}
 	}
-	return asJSON, out, nil
+	return all, asJSON, out, nil
 }
 
 // exportText renders the buffer as one human line per message:

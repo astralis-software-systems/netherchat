@@ -30,6 +30,31 @@ max_concurrent_transfers = 3
 enabled = false
 # path = "netherchat.db"
 # history = 100          # messages replayed to a client when it joins
+# Each row is additionally encrypted AT REST with AES-256-GCM under a key derived
+# (HKDF-SHA256, "netherchat/sqlite/v1") from a server secret, so a stolen disk
+# yields ciphertext only. Prefer supplying the secret OUT OF BAND via the
+# NETHERCHAT_PERSIST_KEY environment variable — that is the only source that also
+# protects against theft of the database file itself. You MAY instead set it here
+# (committed alongside config, so weaker), or omit both and the server generates a
+# sidecar <path>.key (0600) automatically. See docs/encryption.md.
+# key = "a-long-random-operator-secret"
+
+# --- Privileged-action quorum (Two-Person Rule, §1.3) ------------------------
+# Declares how many DISTINCT authorized members must co-sign the same request
+# before a privileged action fires. quorum = 1 (the default, and today's
+# behavior) means a single actor; quorum = 2 is the classic two-person rule: a
+# second authorized member must independently co-sign before the action executes.
+#
+# Sprint 1 only RECORDS this policy so you can declare intent in config-as-code;
+# full client-verified N-of-M Ed25519 enforcement (including the edge-exec runbook
+# gate that hardens `netherchat agent --allow`) lands in Sprint 2. Set it now so
+# it is reviewed and ready.
+[action.runbook]
+quorum = 1                 # set to 2 to require a second authorized co-signer
+# [action.scuttle]
+# quorum = 2
+# [action.break_glass]
+# quorum = 3
 
 # NOTE: there is deliberately no server-side [exec]. A blind relay must never run
 # commands. /exec is an EDGE feature: it sends a signed, E2E-encrypted request the

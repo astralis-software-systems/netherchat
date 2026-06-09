@@ -7,9 +7,13 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/salehkreiner/netherchat/buildinfo"
@@ -90,13 +94,56 @@ func openStore(cfg config.Config, log *slog.Logger) store.Store {
 		log.Info("persistence: in-memory history", "limit", cfg.Persistence.History)
 		return store.NewMemory(cfg.Persistence.History)
 	}
-	st, err := store.OpenSQLite(cfg.Persistence.Path, cfg.Persistence.History)
+	secret, err := persistSecret(cfg, log)
+	if err != nil {
+		log.Error("persistence: cannot establish an at-rest key; continuing without persistence", "err", err)
+		return nil
+	}
+	st, err := store.OpenSQLite(cfg.Persistence.Path, cfg.Persistence.History, secret)
 	if err != nil {
 		log.Error("persistence: failed to open sqlite; continuing without persistence", "err", err)
 		return nil
 	}
-	log.Info("persistence: sqlite", "path", cfg.Persistence.Path, "limit", cfg.Persistence.History)
+	log.Info("persistence: sqlite (encrypted at rest)", "path", cfg.Persistence.Path, "limit", cfg.Persistence.History)
 	return st
+}
+
+// persistSecret resolves the at-rest encryption secret for the SQLite store (§7),
+// in priority order:
+//
+//  1. $NETHERCHAT_PERSIST_KEY — supplied out of band; the only source that also
+//     protects against theft of the database disk itself.
+//  2. [persistence] key in netherchat.toml.
+//  3. an auto-generated sidecar key file (<path>.key, 0600).
+//
+// The relay is blind and holds no room or identity key, so the at-rest key
+// cannot be derived from a client identity (as a client-side store could) — it is
+// an operator secret. The sidecar fallback keeps the database readable across
+// restarts with zero configuration, but a thief who takes both files defeats it;
+// we say so and recommend option 1. The store derives the AES-256 key from this
+// secret via HKDF-SHA256("netherchat/sqlite/v1"). See docs/encryption.md.
+func persistSecret(cfg config.Config, log *slog.Logger) ([]byte, error) {
+	if v := os.Getenv("NETHERCHAT_PERSIST_KEY"); v != "" {
+		return []byte(v), nil
+	}
+	if cfg.Persistence.Key != "" {
+		return []byte(cfg.Persistence.Key), nil
+	}
+	keyPath := cfg.Persistence.Path + ".key"
+	if b, err := os.ReadFile(keyPath); err == nil && len(b) > 0 {
+		return b, nil
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return nil, err
+	}
+	secret := []byte(hex.EncodeToString(raw))
+	if err := os.WriteFile(keyPath, secret, 0o600); err != nil {
+		return nil, fmt.Errorf("write sidecar key %s: %w", keyPath, err)
+	}
+	log.Warn("persistence: generated a sidecar at-rest key; for protection against disk theft set NETHERCHAT_PERSIST_KEY out of band instead",
+		"key_file", keyPath)
+	return secret, nil
 }
 
 // Run starts the server on cfg.Server.Addr and blocks until ctx is cancelled,

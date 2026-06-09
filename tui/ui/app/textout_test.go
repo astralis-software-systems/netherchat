@@ -183,12 +183,12 @@ func TestExportJSONUsesMessageTime(t *testing.T) {
 	}
 }
 
-// TestRunExportWritesFile proves /export --out writes the buffer to disk and
-// confirms the count, exercising the full command path.
+// TestRunExportWritesFile proves /export --all --out writes the full buffer to
+// disk and confirms the count, exercising the full command path.
 func TestRunExportWritesFile(t *testing.T) {
 	m, r := sampleRoom(t)
 	path := filepath.Join(t.TempDir(), "out.txt")
-	m.runExport(r, "--out "+path)
+	m.runExport(r, "--all --out "+path)
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -200,6 +200,52 @@ func TestRunExportWritesFile(t *testing.T) {
 	last := r.lines[len(r.lines)-1]
 	if last.kind != lineSystem || !strings.Contains(last.text, "exported 5 messages to "+path) {
 		t.Errorf("confirmation line = %+v", last)
+	}
+}
+
+// TestExportDefaultSealedOnly proves /export with no flag exports only sealed
+// decisions — zero when a room holds chat but nothing was promoted (§7).
+func TestExportDefaultSealedOnly(t *testing.T) {
+	m := newModel("ws://localhost:3000", "me", "", "ops", "")
+	m.fingerprint = testFpr
+	r := m.activeRoom()
+	r.lines = []line{
+		{at: at(3, 47), kind: lineMessage, from: "alice", text: "the db is on fire", fpr: testFpr, signed: true},
+		{at: at(3, 48), kind: lineSelf, from: "me", text: "rolling back", signed: true},
+	}
+	path := filepath.Join(t.TempDir(), "sealed.txt")
+	m.runExport(r, "--out "+path)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("export file not written: %v", err)
+	}
+	if len(data) != 0 {
+		t.Errorf("default export wrote %d bytes, want 0 (no sealed items)", len(data))
+	}
+	last := r.lines[len(r.lines)-1]
+	if last.kind != lineSystem || !strings.Contains(last.text, "exported 0 messages") {
+		t.Errorf("confirmation line = %+v, want 'exported 0 messages'", last)
+	}
+}
+
+// TestExportAllShowsWarning proves --all prints the persistence warning before
+// the export confirmation (§7).
+func TestExportAllShowsWarning(t *testing.T) {
+	m, r := sampleRoom(t)
+	before := len(r.lines)
+	path := filepath.Join(t.TempDir(), "all.txt")
+	m.runExport(r, "--all --out "+path)
+
+	// The first line appended by the command is the warning; the last is the
+	// confirmation — so the warning precedes the export.
+	warn := r.lines[before]
+	if warn.kind != lineSystem || !strings.Contains(warn.text, "exporting full message history") {
+		t.Errorf("first appended line = %+v, want the full-history warning", warn)
+	}
+	last := r.lines[len(r.lines)-1]
+	if !strings.Contains(last.text, "exported 5 messages") {
+		t.Errorf("last line = %+v, want the 5-message confirmation", last)
 	}
 }
 

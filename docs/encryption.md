@@ -109,3 +109,34 @@ Persistence is **off by default**. When enabled, the server stores only
 This is the unavoidable consequence of a zero-knowledge server. Durable,
 restart-surviving history would require client-side key backup, which conflicts
 with the no-escrow design and is out of scope for v1.
+
+### Encrypted at rest (§7)
+
+Even though stored rows are already E2E ciphertext, the surrounding envelope is
+plaintext — routing metadata (sender id, epoch, room) and message *shape*. A
+stolen disk should not yield even that. So when SQLite persistence is enabled,
+**each row's payload is sealed at rest with AES-256-GCM** (stdlib, pure Go — no
+cgo) under a key derived as:
+
+```
+key = HKDF-SHA256(secret, info = "netherchat/sqlite/v1")   // 32-byte AES-256 key
+row = nonce(12) || AES-256-GCM(key, nonce, json(envelope))
+```
+
+The honest caveat is **where `secret` comes from.** The relay is a *blind* relay:
+it holds no room key and no identity key, so — unlike a client-side store — the
+at-rest key **cannot** be derived from a room/identity secret. It is necessarily
+an **operator secret**, resolved in this order:
+
+1. **`NETHERCHAT_PERSIST_KEY`** (environment, supplied out of band) — the only
+   source that also protects against theft of the database file, because the key
+   is not on the disk with it. **Recommended.**
+2. **`[persistence] key`** in `netherchat.toml` — convenient but committed
+   alongside config, so weaker.
+3. An auto-generated **sidecar `<path>.key`** (`0600`) next to the database — zero
+   config and survives restarts, but a thief who takes *both* files defeats it.
+   The server logs a warning when it falls back to this.
+
+So: at-rest encryption raises the bar for a stolen disk to "stolen disk **and**
+the out-of-band key," but only if you use option 1. We state this plainly rather
+than implying the sidecar fallback is as strong as it is convenient.

@@ -18,12 +18,32 @@ import (
 // (/whois). The relay never reads, forwards, or participates in trust decisions —
 // trust is evaluated entirely client-side (FEATURE_ROADMAP_FREE.md §1.1).
 type Config struct {
-	Server      ServerConfig          `toml:"server"`
-	Limits      LimitsConfig          `toml:"limits"`
-	Persistence PersistenceConfig     `toml:"persistence"`
-	Rooms       map[string]RoomConfig `toml:"rooms"`
-	Routes      []RouteConfig         `toml:"route"`
-	Trust       []TrustEntry          `toml:"trust"`
+	Server      ServerConfig            `toml:"server"`
+	Limits      LimitsConfig            `toml:"limits"`
+	Persistence PersistenceConfig       `toml:"persistence"`
+	Rooms       map[string]RoomConfig   `toml:"rooms"`
+	Routes      []RouteConfig           `toml:"route"`
+	Actions     map[string]ActionPolicy `toml:"action"`
+	Trust       []TrustEntry            `toml:"trust"`
+}
+
+// ActionPolicy is a per-action quorum policy: the Two-Person Rule
+// (FEATURE_ROADMAP_V2.md §1.3). The table key is the action name, e.g.
+// [action.runbook]. Sprint 1 only RECORDS the policy so operators can declare it;
+// enforcement — requiring N distinct authorized members to co-sign the same
+// request hash before a privileged action fires — lands in Sprint 2. A quorum of
+// 1 (or an absent entry) is today's single-actor behavior.
+type ActionPolicy struct {
+	Quorum int `toml:"quorum"`
+}
+
+// ActionQuorum returns the configured quorum for an action (1 when unset), so a
+// future enforcement path has a single, defaulted accessor.
+func (c Config) ActionQuorum(action string) int {
+	if p, ok := c.Actions[action]; ok && p.Quorum > 0 {
+		return p.Quorum
+	}
+	return 1
 }
 
 // TrustEntry pins a handle to a fingerprint and/or a published key source. Both
@@ -88,6 +108,13 @@ type PersistenceConfig struct {
 	Enabled bool   `toml:"enabled"`
 	Path    string `toml:"path"`
 	History int    `toml:"history"` // messages to replay to a client on join
+
+	// Key is the at-rest encryption secret for the SQLite store (§7). It is
+	// optional here: prefer the NETHERCHAT_PERSIST_KEY environment variable
+	// (supplied out of band, so it is not committed alongside config), and if
+	// neither is set the server auto-generates a sidecar key file next to the DB.
+	// See docs/encryption.md and server.persistSecret.
+	Key string `toml:"key"`
 }
 
 // RoomConfig is per-room policy. Rooms absent from the config are created on
