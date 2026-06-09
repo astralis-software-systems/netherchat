@@ -202,3 +202,51 @@ type ScuttleReceiptAckBody struct {
 	SignerFpr   string `json:"signer_fpr"`
 	Sig         []byte `json:"sig"`
 }
+
+// Action names carried by ActionRequestBody.Action (the Two-Person Rule, §1.3).
+const (
+	ActionScuttleAction = "scuttle"     // /scuttle now | /scuttle arm
+	ActionBreakGlass    = "break_glass" // /break-glass
+	ActionRunbook       = "runbook"     // netherchat agent runbook execution
+)
+
+// ActionRequestBody is the END-TO-END-ENCRYPTED plaintext of an OpActionRequest
+// Message (§1.3): an initiator proposes a privileged action that does not fire
+// until QuorumNeeded distinct authorized members (the requester counts as one,
+// via this signed request) have endorsed it. Params is a human-readable, canonical
+// description of exactly what will happen — NOT a raw command — and ParamsHash is
+// the hex SHA-256 of Params, so an approver can independently verify the hash
+// matches what is displayed and binds the approval to this exact action.
+type ActionRequestBody struct {
+	RequestID    string `json:"request_id"`    // random 16-char hex correlating approvals/vetoes
+	Action       string `json:"action"`        // scuttle | break_glass | runbook
+	ParamsHash   string `json:"params_hash"`   // hex SHA-256 of Params
+	Params       string `json:"params"`        // human-readable description of what will happen
+	RequesterFpr string `json:"requester_fpr"` // Ed25519 fingerprint of the initiator (endorser #1)
+	Room         string `json:"room"`
+	QuorumNeeded int    `json:"quorum_needed"` // distinct endorsers required before the action fires
+	ExpiresUnix  int64  `json:"expires_unix"`  // the request is discarded after this (≈60s after issue)
+	Nonce        string `json:"nonce"`         // random hex bound into every approval; prevents replay
+}
+
+// ActionApprovalBody is the END-TO-END-ENCRYPTED plaintext of an OpActionApproval
+// Message (§1.3): an authorized member co-signs a pending request. Sig is the
+// Ed25519 signature over ActionApprovalSigningBytes(RequestID, ParamsHash,
+// ApproverFpr, Nonce) — domain-separated and bound to the request id, the exact
+// action (via ParamsHash), the approver, and the request nonce, so an approval of
+// one action can never be replayed to endorse a different one.
+type ActionApprovalBody struct {
+	RequestID   string `json:"request_id"`
+	ParamsHash  string `json:"params_hash"`  // the approver independently verifies this matches the request
+	ApproverFpr string `json:"approver_fpr"` // must equal the signing sender's fingerprint
+	Sig         []byte `json:"sig"`
+}
+
+// ActionVetoBody is the END-TO-END-ENCRYPTED plaintext of an OpActionVeto Message
+// (§1.3): any present member can cancel a pending request immediately. The vetoer
+// is the signed Message's sender; Reason is an optional human-readable note.
+type ActionVetoBody struct {
+	RequestID string `json:"request_id"`
+	VetoerFpr string `json:"vetoer_fpr"`
+	Reason    string `json:"reason,omitempty"`
+}

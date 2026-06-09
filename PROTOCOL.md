@@ -276,3 +276,71 @@ the server closes the room — every member receives a plaintext `server_msg`
 
 Ephemeral rooms are blind-relayed exactly like any other: the server holds only
 the room name, deadline, and routing metadata — never a key or any plaintext.
+
+## 15. Privileged-action quorum (Two-Person Rule, §1.3)
+
+Additive over v3 (no version bump). A dangerous action — `scuttle`, `break_glass`,
+or a signed `runbook` — can require *N-of-M* independent Ed25519 approvals before it
+fires. The gate is enforced **client-side over a request hash**; the relay routes
+the three frames as opaque `Message` envelopes (sealed under the room key,
+Ed25519-signed) exactly like `ack`/`roster_*`, and never sees the action, its
+parameters, or the approval count. It **cannot bypass or be coerced to bypass the
+gate** — there is no server code path that runs the action.
+
+Three opcodes, each carrying a `Message`:
+
+- `action_request` — the initiator proposes the action.
+- `action_approval` — an authorized member co-signs the request.
+- `action_veto` — any member cancels the request immediately.
+
+The end-to-end-encrypted plaintexts (inside the `Message.ciphertext`):
+
+```json
+// action_request
+{ "request_id": "a3f9c1d2e4b5a6f7",   // random 16-hex; correlates everything
+  "action": "scuttle",                 // scuttle | break_glass | runbook
+  "params_hash": "<hex sha256 of params>",
+  "params": "room=ops, reason=manual", // canonical, human-readable; NOT a raw command
+  "requester_fpr": "SHA256:…",         // must equal the signed Message's sender
+  "room": "ops",
+  "quorum_needed": 2,                  // distinct endorsers required
+  "expires_unix": 1749230460,          // discarded ~60s after issue
+  "nonce": "…" }                       // random hex, bound into every approval
+
+// action_approval
+{ "request_id": "a3f9c1d2e4b5a6f7",
+  "params_hash": "<same hex sha256>",  // the approver verifies it matches the request
+  "approver_fpr": "SHA256:…",          // must equal the signed Message's sender
+  "sig": "<base64 Ed25519>" }          // over ActionApprovalSigningBytes (below)
+
+// action_veto
+{ "request_id": "a3f9c1d2e4b5a6f7", "vetoer_fpr": "SHA256:…", "reason": "wrong room" }
+```
+
+**Counting.** The requester's signed request is **endorser #1**. An action fires
+when the number of distinct endorsers — the requester plus distinct approvers —
+reaches `quorum_needed`. So `quorum = 2` is the classic two-person rule (requester
++ one independent approver), and a single actor can never reach quorum alone. The
+initiator cannot also approve their own request; each approver counts once
+(deduplicated by fingerprint).
+
+**Approval signature.** `sig` covers a domain-separated, length-prefixed preimage
+that binds the request, the exact action, the approver, and the request nonce:
+
+```
+ActionApprovalSigningBytes =
+  field("netherchat/action-approval/v1")
+    || field(request_id) || field(params_hash) || field(approver_fpr) || field(nonce)
+```
+
+so an approval of `scuttle room=ops` cannot be replayed to endorse
+`scuttle room=prod` (different `params_hash`), attributed to another approver
+(their fingerprint is in the preimage), or replayed against a different request
+(the nonce differs). Every client — the initiator collecting quorum and any passive
+`tail` observer — verifies each approval independently and reaches the threshold on
+its own; only the initiator additionally **performs** the action. Approvals that
+arrive after execution or a veto are discarded; quorum state is in memory only.
+
+The policy lives in `netherchat.toml` (`[action.<name>] quorum = N`) and is read by
+the connecting client and the edge agent — never by the relay. `quorum = 1` is
+single-actor (the default); `quorum = 0` disables the action.

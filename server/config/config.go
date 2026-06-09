@@ -29,18 +29,23 @@ type Config struct {
 
 // ActionPolicy is a per-action quorum policy: the Two-Person Rule
 // (FEATURE_ROADMAP_V2.md §1.3). The table key is the action name, e.g.
-// [action.runbook]. Sprint 1 only RECORDS the policy so operators can declare it;
-// enforcement — requiring N distinct authorized members to co-sign the same
-// request hash before a privileged action fires — lands in Sprint 2. A quorum of
-// 1 (or an absent entry) is today's single-actor behavior.
+// [action.runbook]. Enforcement is CLIENT-SIDE and cryptographic: a privileged
+// action does not fire until `quorum` distinct authorized members (the requester
+// counts as one, via their signed request) co-sign the same request hash. quorum 1
+// (or an absent entry) is single-actor behavior; quorum 0 disables the action.
+//
+// This is a CLIENT-evaluated policy, like [[trust]]: the connecting client and the
+// edge agent read it from netherchat.toml and gate the action over Ed25519
+// approvals the relay only ever sees as ciphertext. The relay itself does not
+// enforce or even read it.
 type ActionPolicy struct {
 	Quorum int `toml:"quorum"`
 }
 
-// ActionQuorum returns the configured quorum for an action (1 when unset), so a
-// future enforcement path has a single, defaulted accessor.
+// ActionQuorum returns the configured quorum for an action: the value as written
+// when present (including 0, which disables the action), else 1 (single-actor).
 func (c Config) ActionQuorum(action string) int {
-	if p, ok := c.Actions[action]; ok && p.Quorum > 0 {
+	if p, ok := c.Actions[action]; ok {
 		return p.Quorum
 	}
 	return 1

@@ -59,6 +59,39 @@ command = "/usr/local/bin/rollback.sh canary"
 	}
 }
 
+// TestLoadRunbookQuorum proves the agent reads [action.runbook] quorum from
+// netherchat.toml (§1.3), defaulting to single-actor (1) when the file is absent or
+// the action unset, and honoring 0 (disabled).
+func TestLoadRunbookQuorum(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "netherchat.toml")
+
+	if err := os.WriteFile(path, []byte("[action.runbook]\nquorum = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadRunbookQuorum(path); got != 2 {
+		t.Fatalf("loadRunbookQuorum(quorum=2) = %d, want 2", got)
+	}
+
+	if err := os.WriteFile(path, []byte("[action.runbook]\nquorum = 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadRunbookQuorum(path); got != 0 {
+		t.Fatalf("loadRunbookQuorum(quorum=0) = %d, want 0 (disabled)", got)
+	}
+
+	// A config with no [action.runbook], and a missing file, both default to 1.
+	if err := os.WriteFile(path, []byte("[server]\naddr = \":3000\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadRunbookQuorum(path); got != 1 {
+		t.Fatalf("loadRunbookQuorum(unset) = %d, want 1", got)
+	}
+	if got := loadRunbookQuorum(filepath.Join(dir, "does-not-exist.toml")); got != 1 {
+		t.Fatalf("loadRunbookQuorum(missing) = %d, want 1", got)
+	}
+}
+
 func TestExecuteAllowed(t *testing.T) {
 	// A real, cross-platform command succeeds with exit 0 and captured output.
 	exit, out := executeAllowed(allowEntry{Cmd: "ver", Command: "go version"}, 10*time.Second, 1<<16)

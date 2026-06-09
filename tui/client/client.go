@@ -114,6 +114,11 @@ type Client struct {
 	sends        map[string]*sendState
 	recvs        map[string]*recvState
 	maxFileBytes int64
+
+	// Two-Person Rule (§1.3): every privileged-action request this client observes
+	// (whether we initiated it or not), keyed by request_id, so the quorum gate is
+	// enforced identically on every client from the frames it sees. See action.go.
+	actions map[string]*trackedAction
 }
 
 // sealTimeout bounds how long a sealer waits for co-signatures before finalizing
@@ -205,6 +210,7 @@ func NewWithIdentity(serverURL, room, name string, id *crypto.Identity) (*Client
 		sends:        make(map[string]*sendState),
 		recvs:        make(map[string]*recvState),
 		maxFileBytes: protocol.DefaultMaxFileBytes,
+		actions:      make(map[string]*trackedAction),
 	}, nil
 }
 
@@ -448,6 +454,7 @@ func (c *Client) resetCoordinationLocked() {
 	c.clearSealLocked()
 	c.clearRosterLocked()
 	c.clearReceiptLocked()
+	c.clearActionsLocked()
 }
 
 // oldestHolderLocked returns the IC holder implied by join order: the oldest
@@ -623,7 +630,8 @@ func (c *Client) handle(env protocol.Envelope) {
 	case protocol.OpMessage, protocol.OpExecRequest, protocol.OpExecResult, protocol.OpAck, protocol.OpHandoff,
 		protocol.OpRecordEntry, protocol.OpSealRequest, protocol.OpSealAck,
 		protocol.OpRosterRequest, protocol.OpRosterAck,
-		protocol.OpScuttleReceiptRequest, protocol.OpScuttleReceiptAck:
+		protocol.OpScuttleReceiptRequest, protocol.OpScuttleReceiptAck,
+		protocol.OpActionRequest, protocol.OpActionApproval, protocol.OpActionVeto:
 		var m protocol.Message
 		if err := env.Decode(&m); err == nil {
 			c.handleEncrypted(env.Type, m)
@@ -907,6 +915,21 @@ func (c *Client) handleEncrypted(op protocol.Op, m protocol.Message) {
 		var body protocol.ScuttleReceiptAckBody
 		if json.Unmarshal(pt, &body) == nil {
 			c.onScuttleReceiptAck(sender.name, sender.signPub, body.ReceiptHash, body.Sig)
+		}
+	case protocol.OpActionRequest:
+		var body protocol.ActionRequestBody
+		if json.Unmarshal(pt, &body) == nil {
+			c.onActionRequest(sender.name, fpr, body)
+		}
+	case protocol.OpActionApproval:
+		var body protocol.ActionApprovalBody
+		if json.Unmarshal(pt, &body) == nil {
+			c.onActionApproval(sender.name, sender.signPub, body)
+		}
+	case protocol.OpActionVeto:
+		var body protocol.ActionVetoBody
+		if json.Unmarshal(pt, &body) == nil {
+			c.onActionVeto(sender.name, fpr, body)
 		}
 	}
 }

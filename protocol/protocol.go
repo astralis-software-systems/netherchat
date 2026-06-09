@@ -93,6 +93,19 @@ const (
 	// the proof-of-destruction is multi-party. The relay only sees ciphertext.
 	OpScuttleReceiptRequest Op = "scuttle_receipt_request" // scuttler -> room: { receipt_hash, room_id, reason, ts, epoch_range }
 	OpScuttleReceiptAck     Op = "scuttle_receipt_ack"     // member -> scuttler: { receipt_hash, signer_fpr, sig }
+
+	// Two-Person Rule (§1.3, additive). All three carry a Message envelope sealed
+	// under the room key, exactly like OpAck/OpRoster — the relay only ever sees
+	// ciphertext, never the action type or its parameters. They gate a dangerous
+	// action (scuttle / break_glass / runbook) on N-of-M independent Ed25519
+	// approvals: the initiator's signed request is endorser #1, and the action does
+	// not fire until quorum DISTINCT signers (the requester plus quorum-1 approvers)
+	// have endorsed the same request hash. The gate is enforced client-side over the
+	// request hash; the relay cannot bypass or be coerced to bypass it. See
+	// PROTOCOL.md §15.
+	OpActionRequest  Op = "action_request"  // initiator -> room: a privileged action awaiting quorum
+	OpActionApproval Op = "action_approval" // approver -> room: a signed approval of a request hash
+	OpActionVeto     Op = "action_veto"     // member -> room: cancel a pending request immediately
 )
 
 // Envelope is the outer frame for every message on the wire. Data holds the

@@ -34,6 +34,7 @@ type Model struct {
 	source                             string                  // where the identity came from (ssh-agent, key file, generated)
 	trust                              []TrustEntry            // client-side identity pins from netherchat.toml
 	verified                           map[string]*verifyEntry // SAS-verification state, keyed by peer fingerprint
+	actionQuorum                       map[string]int          // [action.<name>] quorum from netherchat.toml (Two-Person Rule, §1.3)
 
 	cmds     *command.Set
 	theme    theme.Theme
@@ -52,7 +53,8 @@ type Model struct {
 	width, height             int
 	sidebarW, membersW, bodyH int
 	ready                     bool
-	mouseOn                   bool // Bubble Tea mouse capture (off restores native terminal selection)
+	mouseOn                   bool     // Bubble Tea mouse capture (off restores native terminal selection)
+	pending                   []string // rendered "pending approvals" panel lines for the active room (§1.3)
 
 	initialInvite string
 }
@@ -63,15 +65,27 @@ type Model struct {
 // when non-empty, routes every room's dial through that Tor SOCKS5 proxy so a
 // ws://<addr>.onion relay is reachable (§1.5). trust holds the client-side
 // identity pins parsed from netherchat.toml.
-func Run(url, name, identityPath, room, notifyCmd, invite, webURL, torProxy string, trust []TrustEntry) error {
+func Run(url, name, identityPath, room, notifyCmd, invite, webURL, torProxy string, trust []TrustEntry, actionQuorum map[string]int) error {
 	m := newModel(url, name, identityPath, room, notifyCmd)
 	m.initialInvite = invite
 	m.webURL = webURL
 	m.torProxy = torProxy
 	m.trust = trust
+	m.actionQuorum = actionQuorum
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
+}
+
+// quorumFor returns the configured quorum for a privileged action (Two-Person
+// Rule, §1.3): the number of distinct endorsers required before it fires, the
+// requester counting as one. 1 (the default) is today's single-actor behavior;
+// 0 disables the action entirely.
+func (m *Model) quorumFor(action string) int {
+	if q, ok := m.actionQuorum[action]; ok {
+		return q
+	}
+	return 1
 }
 
 func newModel(url, name, identityPath, roomName, notifyCmd string) *Model {
@@ -547,6 +561,46 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 			}
 		}
 
+	case client.EvActionRequest:
+		// A privileged action awaiting quorum (§1.3). Announce it once; the live
+		// "pending approvals" panel above the input bar tracks it from here.
+		r.appendLine(line{at: e.At, kind: lineSystem, text: m.renderActionRequest(e)})
+		if !e.Self && name != m.active {
+			r.unread++
+		}
+
+	case client.EvActionApproval:
+		who := e.ApproverName
+		if e.Self {
+			who = "you"
+		}
+		r.appendSystem(fmt.Sprintf("✓ %s approved %s  (approvals: %d/%d)", who, shortAction(e.Action), e.Count, e.Needed))
+
+	case client.EvActionExecuted:
+		if e.Self {
+			r.appendSystem(fmt.Sprintf("✓ Quorum reached (%d/%d). Executing: %s", e.Quorum, e.Quorum, shortAction(e.Action)))
+		} else {
+			r.appendSystem(fmt.Sprintf("✓ Quorum reached (%d/%d) — %s proceeding", e.Quorum, e.Quorum, shortAction(e.Action)))
+		}
+
+	case client.EvActionVetoed:
+		who := e.VetoerName
+		if e.Self {
+			who = "you"
+		}
+		msg := fmt.Sprintf("✗ %s vetoed: %s", who, shortAction(e.Action))
+		if strings.TrimSpace(e.Reason) != "" {
+			msg += fmt.Sprintf("  (reason: %s)", strings.TrimSpace(e.Reason))
+		}
+		r.appendSystem(msg)
+		if !e.Self && name != m.active {
+			r.unread++
+		}
+
+	case client.EvActionExpired:
+		r.appendSystem(fmt.Sprintf("✗ Request expired without quorum (%d/%d approvals): %s",
+			e.ApprovalsReceived, e.QuorumNeeded, shortAction(e.Action)))
+
 	case client.EvFileOffer:
 		r.appendSystem(renderFileOffer(e))
 		if name != m.active {
@@ -771,12 +825,65 @@ func (m *Model) syncViewport() {
 		return
 	}
 	r := m.activeRoom()
+	// Recompute the pending-approvals panel (§1.3) and reserve its rows from the
+	// message viewport so the side panes, viewport, panel and footer always sum to
+	// the full height.
+	m.pending = m.pendingLines(r)
+	m.vp.Height = m.rowH()
 	if r == nil {
 		m.vp.SetContent("")
 		return
 	}
 	m.vp.SetContent(m.renderLines(r))
 	m.vp.GotoBottom()
+}
+
+// rowH is the height of the central body row (viewport + side panes): the body
+// height minus the rows the pending-approvals panel reserves.
+func (m *Model) rowH() int {
+	h := m.bodyH - len(m.pending)
+	if h < 3 {
+		h = 3
+	}
+	return h
+}
+
+// pendingLines renders the "pending approvals" panel for the active room (§1.3):
+// one row per pending privileged-action request with its live endorsement count
+// and countdown. It returns nil when there is nothing pending, so the panel
+// disappears entirely. Each row is hard-capped to one terminal line.
+func (m *Model) pendingLines(r *room) []string {
+	if r == nil || r.client == nil {
+		return nil
+	}
+	pend := r.client.PendingActions()
+	if len(pend) == 0 {
+		return nil
+	}
+	cap1 := lipgloss.NewStyle().MaxWidth(max(m.width, 1))
+	lines := []string{cap1.Render(m.st(m.theme.Warn).Bold(true).Render("⚡ pending approvals"))}
+	now := time.Now()
+	const shown = 3
+	for i, p := range pend {
+		if i >= shown {
+			lines = append(lines, cap1.Render(m.st(m.theme.Muted).Render(fmt.Sprintf("  …and %d more  (/pending)", len(pend)-shown))))
+			break
+		}
+		sid := shortID(p.RequestID)
+		var hint string
+		if p.Approved {
+			hint = m.st(m.theme.Muted).Render("/veto " + sid)
+		} else {
+			hint = m.st(m.theme.Accent).Render("/approve "+sid+" confirm") + m.st(m.theme.Muted).Render("  ·  /veto "+sid)
+		}
+		row := fmt.Sprintf("  %s %s · %s · %d/%d · %ds  %s",
+			m.st(m.theme.Accent2).Render("["+sid+"]"),
+			m.st(m.theme.Text).Render(shortAction(p.Action)),
+			m.st(m.theme.Muted).Render(p.RequesterName),
+			p.Count, p.Needed, remainingSecs(p.ExpiresUnix, now), hint)
+		lines = append(lines, cap1.Render(row))
+	}
+	return lines
 }
 
 func (m *Model) View() string {
@@ -792,7 +899,12 @@ func (m *Model) View() string {
 		parts = append(parts, m.vsep(), m.membersView())
 	}
 	body := lipgloss.JoinHorizontal(lipgloss.Top, parts...)
-	return lipgloss.JoinVertical(lipgloss.Left, m.headerView(), body, m.footerView())
+	sections := []string{m.headerView(), body}
+	if len(m.pending) > 0 { // pending-approvals panel above the input bar (§1.3)
+		sections = append(sections, strings.Join(m.pending, "\n"))
+	}
+	sections = append(sections, m.footerView())
+	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
 func (m *Model) headerView() string {
@@ -1026,12 +1138,13 @@ func truncate(s string, n int) string {
 func (m *Model) wrap(s string) string { return lipgloss.NewStyle().Width(m.vp.Width).Render(s) }
 
 func (m *Model) pane(w int, content string) string {
-	return lipgloss.NewStyle().Width(w).Height(m.bodyH).MaxHeight(m.bodyH).Render(content)
+	h := m.rowH()
+	return lipgloss.NewStyle().Width(w).Height(h).MaxHeight(h).Render(content)
 }
 
 func (m *Model) vsep() string {
 	bar := m.st(m.theme.Muted).Render("│")
-	lines := make([]string, m.bodyH)
+	lines := make([]string, m.rowH())
 	for i := range lines {
 		lines[i] = bar
 	}

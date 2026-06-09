@@ -228,6 +228,76 @@ type EvScuttleReceipt struct {
 	Receipt *attest.ScuttleReceipt
 }
 
+// --- Two-Person Rule (§1.3) -------------------------------------------------
+
+// EvActionRequest is emitted when a privileged action awaiting quorum is
+// proposed: by us (Self) or by another member. The requester's signed request is
+// endorser #1, so QuorumNeeded distinct endorsers (the requester plus
+// QuorumNeeded-1 approvers) must back it before it fires. Params is the canonical,
+// human-readable description an approver verifies against ParamsHash.
+type EvActionRequest struct {
+	RequestID     string
+	Action        string // scuttle | break_glass | runbook
+	Params        string
+	ParamsHash    string
+	RequesterName string
+	RequesterFpr  string
+	QuorumNeeded  int
+	ExpiresUnix   int64
+	Self          bool
+	At            time.Time
+}
+
+// EvActionApproval is emitted as each distinct approval is counted: ApproverName
+// endorsed the request, bringing endorsements to Count of Needed (Count counts the
+// requester, so it starts at 1 and reaches Needed when the action fires). Self
+// marks our own approval echo.
+type EvActionApproval struct {
+	RequestID    string
+	Action       string
+	ApproverName string
+	ApproverFpr  string
+	Count        int // current endorsements = 1 (requester) + distinct approvers
+	Needed       int // = quorum
+	Self         bool
+	At           time.Time
+}
+
+// EvActionExecuted is emitted when a request reaches quorum. Every client that
+// independently observes quorum emits it (for display and the event stream); only
+// the initiator (Self) actually performs the gated action.
+type EvActionExecuted struct {
+	RequestID     string
+	Action        string
+	RequesterName string
+	RequesterFpr  string
+	Quorum        int
+	Self          bool // true on the initiator — the client that performs the action
+	At            time.Time
+}
+
+// EvActionVetoed is emitted when a pending request is cancelled by a veto: by us
+// (Self) or by another member. The action does not fire.
+type EvActionVetoed struct {
+	RequestID  string
+	Action     string
+	VetoerName string
+	VetoerFpr  string
+	Reason     string
+	Self       bool
+	At         time.Time
+}
+
+// EvActionExpired is emitted when a request's 60s window elapses without reaching
+// quorum. ApprovalsReceived counts the requester (so it is 1 with no approvers).
+type EvActionExpired struct {
+	RequestID         string
+	Action            string
+	ApprovalsReceived int
+	QuorumNeeded      int
+	At                time.Time
+}
+
 // EvMessage is a decrypted chat message (Self is true for the local echo of our
 // own outgoing messages). Signed reports whether a valid Ed25519 signature was
 // present (§3.3); unsigned legacy messages still arrive (Signed=false).
@@ -315,6 +385,11 @@ func (EvRosterAck) isEvent()         {}
 func (EvRosterComplete) isEvent()    {}
 func (EvScuttleReceiptAck) isEvent() {}
 func (EvScuttleReceipt) isEvent()    {}
+func (EvActionRequest) isEvent()     {}
+func (EvActionApproval) isEvent()    {}
+func (EvActionExecuted) isEvent()    {}
+func (EvActionVetoed) isEvent()      {}
+func (EvActionExpired) isEvent()     {}
 func (EvKeyReady) isEvent()          {}
 func (EvMessage) isEvent()           {}
 func (EvServerMessage) isEvent()     {}

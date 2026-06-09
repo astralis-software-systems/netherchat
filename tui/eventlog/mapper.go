@@ -68,6 +68,21 @@ func (m *Mapper) Map(ev client.Event) []Event {
 	case client.EvHandoff:
 		return []Event{Handoff(m.room, e.FromName, e.FromFpr, e.ToName, e.ToFpr)}
 
+	case client.EvActionRequest: // Two-Person Rule (§1.3)
+		return []Event{ActionRequest(m.room, e.RequesterName, e.RequesterFpr, e.Action, e.RequestID, e.QuorumNeeded, e.ExpiresUnix)}
+
+	case client.EvActionApproval:
+		return []Event{ActionApproval(m.room, e.ApproverName, e.ApproverFpr, e.RequestID, e.Count, e.Needed)}
+
+	case client.EvActionExecuted:
+		return []Event{ActionExecuted(m.room, e.RequesterName, e.RequesterFpr, e.RequestID, e.Action, e.Quorum)}
+
+	case client.EvActionVetoed:
+		return []Event{ActionVetoed(m.room, e.VetoerName, e.VetoerFpr, e.RequestID, e.Action, e.Reason)}
+
+	case client.EvActionExpired:
+		return []Event{ActionExpired(m.room, e.RequestID, e.Action, e.ApprovalsReceived, e.QuorumNeeded)}
+
 	case client.EvControl:
 		switch e.Action {
 		case "vanish": // protocol.ActionVanish

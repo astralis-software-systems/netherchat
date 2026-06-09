@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mdp/qrterminal/v3"
+	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/record"
 	"github.com/salehkreiner/netherchat/tui/ui/command"
@@ -32,6 +33,9 @@ func buildCommands() *command.Set {
 		command.Command{Name: "vanish", Help: "rotate the room key and clear history"},
 		command.Command{Name: "scuttle", Args: "[now|arm <dur>]", Help: "burn the room's keys and close it (dead-man's switch)",
 			Complete: func(p string) []string { return command.FilterPrefix([]string{"now", "arm"}, p) }},
+		command.Command{Name: "approve", Args: "<id> [confirm]", Help: "approve a pending privileged action (two-person rule); 'confirm' signs it"},
+		command.Command{Name: "veto", Args: "<id> [reason]", Help: "cancel a pending privileged action immediately"},
+		command.Command{Name: "pending", Help: "list pending privileged-action requests awaiting quorum"},
 		command.Command{Name: "ttl", Args: "<dur|off>", Help: "set a message display TTL",
 			Complete: func(p string) []string { return command.FilterPrefix([]string{"off", "10m", "1h", "24h"}, p) }},
 		command.Command{Name: "exec", Args: "<action>", Help: "request an edge agent run a runbook action (signed, E2E)"},
@@ -82,20 +86,7 @@ func (m *Model) runCommand(input string) tea.Cmd {
 		}
 		r.client.RequestInvite()
 	case "break-glass":
-		if !m.connected(r) {
-			break
-		}
-		invitees, ttl, err := parseBreakGlass(arg)
-		if err != nil {
-			m.addError(err.Error())
-			break
-		}
-		r.client.BreakGlass(invitees, int(ttl.Seconds()))
-		who := "no one yet"
-		if len(invitees) > 0 {
-			who = strings.Join(invitees, ", ")
-		}
-		m.addSystem(fmt.Sprintf("break-glass: standing up a war room (ttl %s) for %s …", ttl, who))
+		m.runBreakGlass(r, arg)
 	case "vanish":
 		if !m.connected(r) {
 			break
@@ -103,6 +94,12 @@ func (m *Model) runCommand(input string) tea.Cmd {
 		r.client.Vanish()
 	case "scuttle":
 		m.runScuttle(r, arg)
+	case "approve":
+		m.runApprove(r, arg)
+	case "veto":
+		m.runVeto(r, arg)
+	case "pending":
+		m.runPending(r)
 	case "ttl":
 		m.runTTL(r, arg)
 	case "exec":
@@ -354,11 +351,19 @@ func (m *Model) runTTL(r *room, arg string) {
 
 // runScuttle implements /scuttle (§1.6): the dead-man's switch under manual
 // control. "/scuttle now" burns the room immediately; "/scuttle arm <dur>" shows
-// a visible countdown to everyone and auto-burns when it reaches zero. Both are
-// server-orchestrated, so the burn arrives back as a scuttle control the whole
-// room renders identically.
+// a visible countdown to everyone and auto-burns when it reaches zero.
+//
+// When [action.scuttle] quorum > 1 (the Two-Person Rule, §1.3) the burn is gated:
+// the command opens an ActionRequest and the scuttle only fires once a second
+// authorized member independently approves. quorum <= 1 keeps the existing
+// single-actor behavior; quorum 0 disables the command.
 func (m *Model) runScuttle(r *room, arg string) {
 	if !m.connected(r) {
+		return
+	}
+	q := m.quorumFor(protocol.ActionScuttleAction)
+	if q == 0 {
+		m.addError("scuttle is disabled by policy ([action.scuttle] quorum = 0)")
 		return
 	}
 	fields := strings.Fields(arg)
@@ -368,6 +373,13 @@ func (m *Model) runScuttle(r *room, arg string) {
 	}
 	switch sub {
 	case "now":
+		if q > 1 {
+			params := fmt.Sprintf("room=%s, reason=manual", r.name)
+			if _, err := r.client.RequestAction(protocol.ActionScuttleAction, params, q, r.client.ScuttleNow); err != nil {
+				m.addError(err.Error())
+			}
+			return
+		}
 		r.client.ScuttleNow()
 		m.addSystem("scuttling the room now — keys will be destroyed")
 	case "arm":
@@ -380,10 +392,206 @@ func (m *Model) runScuttle(r *room, arg string) {
 			m.addError("bad duration " + fields[1] + "  (e.g. 30s, 10m, 1h)")
 			return
 		}
-		r.client.ScuttleArm(int(d.Seconds()))
+		secs := int(d.Seconds())
+		if q > 1 {
+			params := fmt.Sprintf("room=%s, reason=armed, after=%s", r.name, d)
+			if _, err := r.client.RequestAction(protocol.ActionScuttleAction, params, q, func() { r.client.ScuttleArm(secs) }); err != nil {
+				m.addError(err.Error())
+			}
+			return
+		}
+		r.client.ScuttleArm(secs)
 	default:
 		m.addError("usage: /scuttle [now|arm <dur>]")
 	}
+}
+
+// runBreakGlass implements /break-glass with Two-Person Rule gating (§1.3). When
+// [action.break_glass] quorum > 1 the war room is not created until a second
+// authorized member approves the request.
+func (m *Model) runBreakGlass(r *room, arg string) {
+	if !m.connected(r) {
+		return
+	}
+	q := m.quorumFor(protocol.ActionBreakGlass)
+	if q == 0 {
+		m.addError("break-glass is disabled by policy ([action.break_glass] quorum = 0)")
+		return
+	}
+	invitees, ttl, err := parseBreakGlass(arg)
+	if err != nil {
+		m.addError(err.Error())
+		return
+	}
+	secs := int(ttl.Seconds())
+	if q > 1 {
+		who := "no one"
+		if len(invitees) > 0 {
+			who = strings.Join(invitees, ",")
+		}
+		params := fmt.Sprintf("invite=%s, ttl=%s", who, ttl)
+		if _, err := r.client.RequestAction(protocol.ActionBreakGlass, params, q, func() { r.client.BreakGlass(invitees, secs) }); err != nil {
+			m.addError(err.Error())
+		}
+		return
+	}
+	r.client.BreakGlass(invitees, secs)
+	who := "no one yet"
+	if len(invitees) > 0 {
+		who = strings.Join(invitees, ", ")
+	}
+	m.addSystem(fmt.Sprintf("break-glass: standing up a war room (ttl %s) for %s …", ttl, who))
+}
+
+// runApprove implements /approve <id> [confirm] (§1.3). Without "confirm" it shows
+// exactly what would be endorsed — the double-confirm that prevents an accidental
+// approval. With "confirm" it signs and sends the approval. The initiator cannot
+// approve their own request.
+func (m *Model) runApprove(r *room, arg string) {
+	if !m.connected(r) {
+		return
+	}
+	fields := strings.Fields(arg)
+	if len(fields) == 0 {
+		m.addError("usage: /approve <id> [confirm]   (see /pending)")
+		return
+	}
+	id := fields[0]
+	p, ok := m.findPending(r, id)
+	if !ok {
+		m.addError(fmt.Sprintf("no pending request matching %q  (see /pending)", id))
+		return
+	}
+	if p.Initiator {
+		m.addError("you cannot approve your own request — it needs a second authorized approver")
+		return
+	}
+	if p.Approved {
+		m.addError("you have already approved this request")
+		return
+	}
+	if !(len(fields) > 1 && strings.EqualFold(fields[1], "confirm")) {
+		m.addSystem(fmt.Sprintf("you are approving: %s  (%s)\n  type  /approve %s confirm  to sign and send your approval",
+			shortAction(p.Action), p.Params, shortID(p.RequestID)))
+		return
+	}
+	if err := r.client.ApproveAction(id); err != nil {
+		m.addError(err.Error())
+	}
+}
+
+// runVeto implements /veto <id> [reason] (§1.3): cancel a pending request now.
+func (m *Model) runVeto(r *room, arg string) {
+	if !m.connected(r) {
+		return
+	}
+	fields := strings.Fields(arg)
+	if len(fields) == 0 {
+		m.addError("usage: /veto <id> [reason]")
+		return
+	}
+	id := fields[0]
+	reason := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(arg), id))
+	if err := r.client.VetoAction(id, reason); err != nil {
+		m.addError(err.Error())
+	}
+}
+
+// runPending implements /pending (§1.3): list pending action requests with their
+// current endorsement counts and time remaining.
+func (m *Model) runPending(r *room) {
+	if !m.connected(r) {
+		return
+	}
+	pend := r.client.PendingActions()
+	if len(pend) == 0 {
+		m.addSystem("no pending action requests")
+		return
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "pending action requests (%d):\n", len(pend))
+	now := time.Now()
+	for _, p := range pend {
+		secs := remainingSecs(p.ExpiresUnix, now)
+		role := ""
+		switch {
+		case p.Initiator:
+			role = "  (yours)"
+		case p.Approved:
+			role = "  (you approved)"
+		}
+		fmt.Fprintf(&b, "  [%s] %s · by %s · %d/%d · %ds remaining%s\n     params: %s\n     /approve %s confirm   ·   /veto %s\n",
+			shortID(p.RequestID), shortAction(p.Action), p.RequesterName, p.Count, p.Needed, secs, role,
+			p.Params, shortID(p.RequestID), shortID(p.RequestID))
+	}
+	m.addSystem(strings.TrimRight(b.String(), "\n"))
+}
+
+// findPending resolves an id prefix to a unique pending request in the room.
+func (m *Model) findPending(r *room, idPrefix string) (client.PendingAction, bool) {
+	var match client.PendingAction
+	n := 0
+	for _, p := range r.client.PendingActions() {
+		if strings.HasPrefix(p.RequestID, idPrefix) {
+			match = p
+			n++
+		}
+	}
+	return match, n == 1
+}
+
+// renderActionRequest builds the announcement shown to the whole room when a
+// quorum-gated action is proposed (§1.3).
+func (m *Model) renderActionRequest(e client.EvActionRequest) string {
+	who := "@" + e.RequesterName
+	if e.Self {
+		who = "you"
+	}
+	sid := shortID(e.RequestID)
+	var b strings.Builder
+	fmt.Fprintf(&b, "⚡ %s request%s: %s  (needs %d endorsers — the requester plus %d more)\n",
+		who, requestVerb(e.Self), shortAction(e.Action), e.QuorumNeeded, e.QuorumNeeded-1)
+	fmt.Fprintf(&b, "   params: %s\n", e.Params)
+	if e.Self {
+		fmt.Fprintf(&b, "   awaiting independent approval — share id %s; cancel with /veto %s\n", sid, sid)
+	} else {
+		fmt.Fprintf(&b, "   approve: /approve %s confirm    ·    veto: /veto %s [reason]\n", sid, sid)
+	}
+	fmt.Fprintf(&b, "   expires in %ds", remainingSecs(e.ExpiresUnix, time.Now()))
+	return b.String()
+}
+
+func requestVerb(self bool) string {
+	if self {
+		return ""
+	}
+	return "s"
+}
+
+// shortID is the 4-hex display prefix of a request id (e.g. "a3f9"); the slash
+// commands accept this prefix.
+func shortID(id string) string {
+	if len(id) >= 4 {
+		return id[:4]
+	}
+	return id
+}
+
+// shortAction renders an action name for display (break_glass → break-glass).
+func shortAction(a string) string {
+	if a == protocol.ActionBreakGlass {
+		return "break-glass"
+	}
+	return a
+}
+
+// remainingSecs is the whole seconds until expiresUnix from now, floored at 0.
+func remainingSecs(expiresUnix int64, now time.Time) int {
+	s := int(time.Unix(expiresUnix, 0).Sub(now).Seconds())
+	if s < 0 {
+		return 0
+	}
+	return s
 }
 
 // scuttleReasonSuffix renders the human reason a room scuttled, for the

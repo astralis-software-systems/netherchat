@@ -40,8 +40,20 @@ type Event struct {
 	BodyLen  *int   `json:"body_len,omitempty"`
 	BodyHash string `json:"body_hash,omitempty"`
 	Body     string `json:"body,omitempty"`
-	Tag      string `json:"tag,omitempty"`
-	Quorum   string `json:"quorum,omitempty"` // "<acked>/<members>" for ack events
+	Tag string `json:"tag,omitempty"`
+	// Quorum is overloaded by JSON key: a string "<acked>/<members>" for ack events
+	// (§2.2) and a number for action_executed (§1.3, the endorser count that fired the
+	// action). It is `any` so both shapes share the one "quorum" key; the action
+	// constructor stores a float64 so the value round-trips a generic JSON decode.
+	Quorum any `json:"quorum,omitempty"`
+
+	// Two-Person Rule (§1.3) — privileged-action quorum gating.
+	Action            string `json:"action,omitempty"`             // scuttle | break_glass | runbook
+	RequestID         string `json:"request_id,omitempty"`         // correlates request/approval/veto/executed/expired
+	QuorumNeeded      *int   `json:"quorum_needed,omitempty"`      // distinct endorsers required
+	QuorumCurrent     *int   `json:"quorum_current,omitempty"`    // endorsers so far (action_approval)
+	ApprovalsReceived *int   `json:"approvals_received,omitempty"` // endorsers at expiry (action_expired)
+	ExpiresUnix       int64  `json:"expires_unix,omitempty"`      // request deadline (action_request)
 
 	Target    string `json:"target,omitempty"`
 	TargetFpr string `json:"target_fpr,omitempty"`
@@ -145,6 +157,56 @@ func Scuttle(room, reason string) Event {
 func Ack(room, actor, fpr, tag, quorum string) Event {
 	e := base("ack", room)
 	e.Actor, e.Fpr, e.Tag, e.Quorum = actor, fpr, tag, quorum
+	return e
+}
+
+// --- Two-Person Rule (§1.3) -------------------------------------------------
+
+// ActionRequest builds an action_request event: a privileged action awaiting
+// quorum was proposed by actor. quorumNeeded distinct endorsers (actor plus
+// quorumNeeded-1 approvers) must back it before it fires.
+func ActionRequest(room, actor, fpr, action, requestID string, quorumNeeded int, expiresUnix int64) Event {
+	e := base("action_request", room)
+	e.Actor, e.Fpr, e.Action, e.RequestID = actor, fpr, action, requestID
+	e.QuorumNeeded = Int(quorumNeeded)
+	e.ExpiresUnix = expiresUnix
+	return e
+}
+
+// ActionApproval builds an action_approval event: actor co-signed a request,
+// bringing endorsements to current of needed.
+func ActionApproval(room, actor, fpr, requestID string, current, needed int) Event {
+	e := base("action_approval", room)
+	e.Actor, e.Fpr, e.RequestID = actor, fpr, requestID
+	e.QuorumCurrent, e.QuorumNeeded = Int(current), Int(needed)
+	return e
+}
+
+// ActionExecuted builds an action_executed event: a request reached quorum and the
+// action fired. actor is the requester; quorum is the endorser count that fired it
+// (stored as a float64 so the overloaded "quorum" key round-trips a JSON decode).
+func ActionExecuted(room, actor, fpr, requestID, action string, quorum int) Event {
+	e := base("action_executed", room)
+	e.Actor, e.Fpr, e.RequestID, e.Action = actor, fpr, requestID, action
+	e.Quorum = float64(quorum)
+	return e
+}
+
+// ActionVetoed builds an action_vetoed event: actor cancelled a pending request.
+// reason is the optional free-text note the vetoer gave.
+func ActionVetoed(room, actor, fpr, requestID, action, reason string) Event {
+	e := base("action_vetoed", room)
+	e.Actor, e.Fpr, e.RequestID, e.Action, e.Reason = actor, fpr, requestID, action, reason
+	return e
+}
+
+// ActionExpired builds an action_expired event: a request's window elapsed without
+// reaching quorum. approvalsReceived counts the requester (so it is 1 with no
+// approvers).
+func ActionExpired(room, requestID, action string, approvalsReceived, quorumNeeded int) Event {
+	e := base("action_expired", room)
+	e.RequestID, e.Action = requestID, action
+	e.ApprovalsReceived, e.QuorumNeeded = Int(approvalsReceived), Int(quorumNeeded)
 	return e
 }
 

@@ -24,6 +24,47 @@ func TestMapperScuttle(t *testing.T) {
 	}
 }
 
+// TestMapperActionEvents proves all five Two-Person Rule (§1.3) client events map
+// to the right structured tail event type carrying the expected fields.
+func TestMapperActionEvents(t *testing.T) {
+	const id = "a3f9c1d2e4b5a6f7"
+	m := NewMapper("ops", false)
+
+	req := m.Map(client.EvActionRequest{RequestID: id, Action: "scuttle", RequesterName: "alice", RequesterFpr: fpr, QuorumNeeded: 2, ExpiresUnix: 1749230400})
+	if len(req) != 1 || req[0].Type != "action_request" || req[0].Actor != "alice" || req[0].Action != "scuttle" || req[0].RequestID != id {
+		t.Fatalf("action_request mapping = %+v", req)
+	}
+	if req[0].QuorumNeeded == nil || *req[0].QuorumNeeded != 2 || req[0].ExpiresUnix != 1749230400 {
+		t.Fatalf("action_request quorum/expiry = %+v", req[0])
+	}
+
+	app := m.Map(client.EvActionApproval{RequestID: id, Action: "scuttle", ApproverName: "bob", ApproverFpr: fpr2, Count: 2, Needed: 2})
+	if len(app) != 1 || app[0].Type != "action_approval" || app[0].Actor != "bob" {
+		t.Fatalf("action_approval mapping = %+v", app)
+	}
+	if app[0].QuorumCurrent == nil || *app[0].QuorumCurrent != 2 || app[0].QuorumNeeded == nil || *app[0].QuorumNeeded != 2 {
+		t.Fatalf("action_approval quorum = %+v", app[0])
+	}
+
+	exe := m.Map(client.EvActionExecuted{RequestID: id, Action: "scuttle", RequesterName: "alice", RequesterFpr: fpr, Quorum: 2})
+	if len(exe) != 1 || exe[0].Type != "action_executed" || exe[0].Actor != "alice" || exe[0].Quorum != float64(2) {
+		t.Fatalf("action_executed mapping = %+v (quorum %v)", exe, exe[0].Quorum)
+	}
+
+	vet := m.Map(client.EvActionVetoed{RequestID: id, Action: "scuttle", VetoerName: "bob", VetoerFpr: fpr2, Reason: "wrong room"})
+	if len(vet) != 1 || vet[0].Type != "action_vetoed" || vet[0].Actor != "bob" || vet[0].Reason != "wrong room" {
+		t.Fatalf("action_vetoed mapping = %+v", vet)
+	}
+
+	exp := m.Map(client.EvActionExpired{RequestID: id, Action: "scuttle", ApprovalsReceived: 1, QuorumNeeded: 2})
+	if len(exp) != 1 || exp[0].Type != "action_expired" {
+		t.Fatalf("action_expired mapping = %+v", exp)
+	}
+	if exp[0].ApprovalsReceived == nil || *exp[0].ApprovalsReceived != 1 {
+		t.Fatalf("action_expired approvals_received = %+v", exp[0])
+	}
+}
+
 // TestMapperControlNonScuttle proves ttl and scuttle_arm controls are not part of
 // the v1 event schema (they map to nothing).
 func TestMapperControlNonScuttle(t *testing.T) {

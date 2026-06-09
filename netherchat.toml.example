@@ -40,21 +40,26 @@ enabled = false
 # key = "a-long-random-operator-secret"
 
 # --- Privileged-action quorum (Two-Person Rule, §1.3) ------------------------
-# Declares how many DISTINCT authorized members must co-sign the same request
-# before a privileged action fires. quorum = 1 (the default, and today's
-# behavior) means a single actor; quorum = 2 is the classic two-person rule: a
-# second authorized member must independently co-sign before the action executes.
+# How many DISTINCT authorized members must endorse the same request before a
+# privileged action fires. The initiator's signed request is endorser #1, so
+# quorum = 2 is the classic two-person rule: a single actor cannot proceed — a
+# second authorized member must independently approve before the action executes.
+#   quorum = 1  → single actor (the default, today's behavior)
+#   quorum = 2  → the requester plus one independent approver
+#   quorum = 0  → the action is disabled entirely
 #
-# Sprint 1 only RECORDS this policy so you can declare intent in config-as-code;
-# full client-verified N-of-M Ed25519 enforcement (including the edge-exec runbook
-# gate that hardens `netherchat agent --allow`) lands in Sprint 2. Set it now so
-# it is reviewed and ready.
+# Enforcement is CLIENT-SIDE and cryptographic (N-of-M Ed25519 over the request
+# hash); the relay routes the request/approval/veto frames as opaque ciphertext and
+# cannot bypass the gate. This is a CLIENT-evaluated policy (like [[trust]]): the
+# connecting client (for /scuttle and /break-glass) and the edge agent (for runbook
+# execution) read it here. Run `netherchat agent --config netherchat.toml` so the
+# agent picks up [action.runbook].
 [action.runbook]
-quorum = 1                 # set to 2 to require a second authorized co-signer
-# [action.scuttle]
-# quorum = 2
+quorum = 2                 # require a second authorized co-signer before any runbook action runs
+[action.scuttle]
+quorum = 2                 # /scuttle now and /scuttle arm require a second approver
 # [action.break_glass]
-# quorum = 3
+# quorum = 3               # opening a war room requires three endorsers (requester + 2)
 
 # NOTE: there is deliberately no server-side [exec]. A blind relay must never run
 # commands. /exec is an EDGE feature: it sends a signed, E2E-encrypted request the

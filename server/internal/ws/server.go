@@ -302,17 +302,20 @@ func (s *Server) relay(room, fromID string, env protocol.Envelope) {
 	case protocol.OpExecRequest, protocol.OpExecResult, protocol.OpAck, protocol.OpHandoff,
 		protocol.OpRecordEntry, protocol.OpSealRequest, protocol.OpSealAck,
 		protocol.OpRosterRequest, protocol.OpRosterAck,
-		protocol.OpScuttleReceiptRequest, protocol.OpScuttleReceiptAck:
+		protocol.OpScuttleReceiptRequest, protocol.OpScuttleReceiptAck,
+		protocol.OpActionRequest, protocol.OpActionApproval, protocol.OpActionVeto:
 		// Edge exec, coordination primitives (ack/handoff), sealed-record frames
-		// (record entries, seal requests/acks), and roster-attestation frames
-		// (roster requests/acks, §1.4): the relay treats all of these exactly like
-		// chat messages — opaque E2E envelopes (sealed under the room key,
-		// Ed25519-signed) it fans out to the room verbatim. It never sees the
-		// command, the ack tag, the handoff target, the recorded decision, the head
-		// being sealed, or the membership set being attested, and never runs, counts,
-		// chains, or signs anything; the record chain, quorum, IC token, and roster
-		// attestation are all computed client-side from the signed payloads
-		// (FEATURE_ROADMAP_FREE.md §0.1, §1.4, §2.2; FEATURE_ROADMAP_V2.md §1.4).
+		// (record entries, seal requests/acks), roster-attestation frames (roster
+		// requests/acks, §1.4), and Two-Person Rule frames (action request/approval/
+		// veto, §1.3): the relay treats all of these exactly like chat messages —
+		// opaque E2E envelopes (sealed under the room key, Ed25519-signed) it fans out
+		// to the room verbatim. It never sees the command, the ack tag, the handoff
+		// target, the recorded decision, the head being sealed, the membership set, or
+		// the gated action and its parameters, and never runs, counts, chains, signs,
+		// or gates anything; the record chain, quorum, IC token, roster attestation,
+		// and the privileged-action quorum are all computed client-side from the
+		// signed payloads — the relay cannot bypass or be coerced to bypass the gate
+		// (FEATURE_ROADMAP_FREE.md §0.1, §1.4, §2.2; FEATURE_ROADMAP_V2.md §1.3, §1.4).
 		var m protocol.Message
 		if err := env.Decode(&m); err != nil {
 			return

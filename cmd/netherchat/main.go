@@ -15,6 +15,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/eventlog"
@@ -86,32 +87,49 @@ func connectCmd(args []string) {
 			torDial = client.DefaultTorProxy
 		}
 	}
-	if err := app.Run(url, *name, *identity, *room, *notify, *invite, *webURL, torDial, loadTrust(*configPath)); err != nil {
+	cfg := clientConfig(*configPath)
+	if err := app.Run(url, *name, *identity, *room, *notify, *invite, *webURL, torDial, trustOf(cfg), actionQuorums(cfg)); err != nil {
 		fatal(err)
 	}
 }
 
-// loadTrust reads the client-side [[trust]] pins from netherchat.toml. Trust is a
-// purely client-side concern; a missing or unreadable file just means no pins.
-func loadTrust(path string) []app.TrustEntry {
+// clientConfig loads netherchat.toml for the CLIENT-side concerns it cares about —
+// [[trust]] pins (/whois) and [action.*] quorum policy (the Two-Person Rule, §1.3).
+// Both are evaluated client-side; the relay never reads them. A missing or
+// unreadable file is fine: it just means no pins and default (single-actor) quorums.
+func clientConfig(path string) config.Config {
 	if path == "" {
 		if _, err := os.Stat("netherchat.toml"); err == nil {
 			path = "netherchat.toml"
 		}
 	}
 	if path == "" {
-		return nil
+		return config.Default()
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "netherchat: warning: could not read %s for trust pinning: %v\n", path, err)
-		return nil
+		fmt.Fprintf(os.Stderr, "netherchat: warning: could not read %s: %v\n", path, err)
+		return config.Default()
 	}
+	return cfg
+}
+
+// trustOf maps the config's [[trust]] pins into the app's TrustEntry type.
+func trustOf(cfg config.Config) []app.TrustEntry {
 	out := make([]app.TrustEntry, 0, len(cfg.Trust))
 	for _, t := range cfg.Trust {
 		out = append(out, app.TrustEntry{Handle: t.Handle, Fpr: t.Fpr, KeysURL: t.KeysURL})
 	}
 	return out
+}
+
+// actionQuorums extracts the per-action quorum policy the TUI gates on (§1.3).
+func actionQuorums(cfg config.Config) map[string]int {
+	return map[string]int{
+		protocol.ActionScuttleAction: cfg.ActionQuorum(protocol.ActionScuttleAction),
+		protocol.ActionBreakGlass:    cfg.ActionQuorum(protocol.ActionBreakGlass),
+		protocol.ActionRunbook:       cfg.ActionQuorum(protocol.ActionRunbook),
+	}
 }
 
 func defaultName() string {

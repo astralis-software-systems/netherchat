@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+	"github.com/salehkreiner/netherchat/protocol"
+	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/eventlog"
 	"github.com/salehkreiner/netherchat/tui/output"
@@ -32,8 +34,9 @@ func agentCmd(args []string) {
 	identity := fs.String("identity", "", "identity key (default: ssh-agent → ~/.ssh/id_ed25519 → generated)")
 	maxOutput := fs.Int("max-output", 16<<10, "cap on bytes of command output posted back")
 	jsonMode := fs.Bool("json", false, "emit an ndjson exec event stream to stdout (audit log stays on stderr)")
+	configPath := fs.String("config", "", "netherchat.toml for [action.runbook] quorum (default: ./netherchat.toml if present)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: netherchat agent --room <room> --allow runbook.toml [--json] [--server ws://...] [--name <host>]")
+		fmt.Fprintln(os.Stderr, "usage: netherchat agent --room <room> --allow runbook.toml [--config netherchat.toml] [--json] [--server ws://...] [--name <host>]")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
@@ -46,6 +49,10 @@ func agentCmd(args []string) {
 	if err != nil {
 		fatal(err)
 	}
+	// Two-Person Rule (§1.3): when [action.runbook] quorum > 1, the agent does not
+	// run a requested action until quorum independent members co-sign — gating the
+	// edge-exec runbook feature behind the cryptographic quorum.
+	quorum := loadRunbookQuorum(*configPath)
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
@@ -54,9 +61,9 @@ func agentCmd(args []string) {
 	defer c.Close()
 
 	log.Info("agent online",
-		"room", room0, "identity", c.Fingerprint(), "source", c.Source(), "actions", len(rb))
-	fmt.Fprintf(os.Stderr, "netherchat agent watching #%s as %s — %d allowed action(s)\n",
-		room0, c.Fingerprint(), len(rb))
+		"room", room0, "identity", c.Fingerprint(), "source", c.Source(), "actions", len(rb), "runbook_quorum", quorum)
+	fmt.Fprintf(os.Stderr, "netherchat agent watching #%s as %s — %d allowed action(s), runbook quorum %d\n",
+		room0, c.Fingerprint(), len(rb), quorum)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -72,7 +79,7 @@ func agentCmd(args []string) {
 					continue // never act on our own echo
 				}
 				_, inRunbook := rb[e.Cmd]
-				willRun := e.Signed && inRunbook
+				willRun := e.Signed && inRunbook && quorum >= 1
 				if *jsonMode {
 					_ = output.WriteJSON(eventlog.ExecRequest(room0, e.FromName, e.FromFingerprint, e.Cmd, eventlog.Bool(willRun)))
 				}
@@ -80,6 +87,26 @@ func agentCmd(args []string) {
 					// Refuse to run an unsigned request: we must be able to
 					// attribute every action to an identity key.
 					log.Warn("exec IGNORED (unsigned request)", "cmd", e.Cmd, "by", e.FromName)
+					continue
+				}
+				if inRunbook && quorum == 0 {
+					log.Warn("exec DENIED (runbook disabled: [action.runbook] quorum = 0)", "cmd", e.Cmd, "by", e.FromName)
+					_ = c.PostExecResult(e.ID, e.Cmd, false, 0, "runbook execution is disabled by policy (quorum = 0)")
+					continue
+				}
+				if inRunbook && quorum > 1 {
+					// Two-Person Rule (§1.3): open an ActionRequest and run the command
+					// only once quorum independent members co-sign it. The agent is the
+					// initiator (endorser #1) and never self-approves.
+					req := e
+					params := fmt.Sprintf("cmd=%s, requested_by=%s", e.Cmd, e.FromName)
+					if _, err := c.RequestAction(protocol.ActionRunbook, params, quorum, func() {
+						go runRunbookAction(c, rb, req, *maxOutput, log, room0, *name, *jsonMode)
+					}); err != nil {
+						log.Warn("could not open quorum request; not running un-gated", "err", err, "cmd", e.Cmd)
+					} else {
+						log.Info("exec AWAITING QUORUM", "cmd", e.Cmd, "quorum", quorum, "by", e.FromName)
+					}
 					continue
 				}
 				go runRunbookAction(c, rb, e, *maxOutput, log, room0, *name, *jsonMode)
@@ -105,6 +132,26 @@ type allowEntry struct {
 
 type runbookFile struct {
 	Allow []allowEntry `toml:"allow"`
+}
+
+// loadRunbookQuorum reads [action.runbook] quorum from netherchat.toml (§1.3),
+// defaulting to ./netherchat.toml if present. A missing/unreadable file means the
+// default single-actor behavior (quorum 1).
+func loadRunbookQuorum(path string) int {
+	if path == "" {
+		if _, err := os.Stat("netherchat.toml"); err == nil {
+			path = "netherchat.toml"
+		}
+	}
+	if path == "" {
+		return 1
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "netherchat agent: warning: could not read %s: %v\n", path, err)
+		return 1
+	}
+	return cfg.ActionQuorum(protocol.ActionRunbook)
 }
 
 // loadRunbook parses runbook.toml into a name→action map.

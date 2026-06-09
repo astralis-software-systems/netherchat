@@ -17,6 +17,9 @@ Type these in the message box. Tab completes command names and arguments.
 | `/vanish` | Rotate the room key forward (HKDF ratchet) and clear history for everyone — messages from before are no longer decryptable. |
 | `/ttl <dur\|off>` | Set a client-side message display TTL (e.g. `/ttl 1h`, `/ttl off`). |
 | `/exec <action>` | Send a signed, E2E-encrypted request for a `netherchat agent` to run a runbook action on its own host. The relay never runs anything. See below. |
+| `/approve <id> [confirm]` | Approve a pending privileged action (the **Two-Person Rule**). Without `confirm` it shows exactly what you'd endorse; `confirm` signs and sends. You cannot approve your own request. See below. |
+| `/veto <id> [reason]` | Cancel a pending privileged action immediately. Any member may veto. See below. |
+| `/pending` | List pending privileged-action requests with their endorsement counts and time remaining. See below. |
 | `/ack [tag]` | Ack a coordination tag (e.g. `/ack drain-complete`). The member list shows a running quorum (`drain-complete 3/6`). No argument lists active tags. A typed coordination primitive — **not** a reaction. See below. |
 | `/handoff @handle` | Transfer the incident-commander (IC) token to another member. The IC holder is shown with a `⚡` in the member list. See below. |
 | `/ic` | Show who currently holds incident command in this room. |
@@ -166,6 +169,56 @@ Then from the TUI: `/exec drain`. Every attempt (allowed or denied) is logged
 locally on the agent host, attributed to the requester's key fingerprint, and the
 result is a signed E2E message everyone in the room can verify.
 
+## The Two-Person Rule — `/approve`, `/veto`, `/pending`
+
+Some actions are too dangerous for one person. The two-person rule turns "we always
+get a second set of eyes" from a sticky note into a **cryptographic gate**: a
+privileged action does not fire until *N* distinct authorized members have signed
+the same request hash. It is enforced client-side over Ed25519 signatures — the
+relay routes the request/approval/veto frames as opaque ciphertext and cannot
+bypass or be coerced to bypass it.
+
+Declare the policy in `netherchat.toml` (a client-side policy, like `[[trust]]`):
+
+```toml
+[action.scuttle]
+quorum = 2          # /scuttle now and /scuttle arm need a second approver
+[action.break_glass]
+quorum = 2          # opening a war room needs a second approver
+[action.runbook]
+quorum = 2          # a netherchat agent runs a runbook action only after a second approver
+```
+
+`quorum = 1` (the default) is single-actor — today's behavior, unchanged.
+`quorum = 0` disables the action entirely. The requester's signed request counts as
+endorser #1, so `quorum = 2` is the classic two-person rule: the requester **plus
+one independent approver**. A single actor can never reach quorum alone.
+
+When a gated `/scuttle` or `/break-glass` is run (or an agent receives a runbook
+`/exec`), the room sees:
+
+```
+⚡ @alice requests: scuttle  (needs 2 endorsers — the requester plus 1 more)
+   params: room=ops, reason=manual
+   approve: /approve a3f9 confirm    ·    veto: /veto a3f9 [reason]
+   expires in 60s
+```
+
+A live **pending-approvals panel** above the input bar tracks every open request
+with its endorsement count and countdown. Each approver runs `/approve <id>` to see
+exactly what they would endorse, then `/approve <id> confirm` to sign — the
+double-confirm prevents an accidental approval. When quorum is reached the action
+executes (`✓ Quorum reached (2/2). Executing: scuttle`); any member can `/veto <id>`
+to cancel it immediately, and a request that sits for 60s without quorum expires.
+
+Security properties: the initiator cannot approve their own request; each member
+counts once (duplicates don't increment); the `params_hash` binds an approval to the
+exact action, so an approval of `scuttle room=ops` can't be replayed to approve
+`scuttle room=prod`; approvals arriving after execution or veto are discarded; and
+quorum state is in memory only (a client restart clears pending requests). For the
+agent runbook gate, run `netherchat agent --config netherchat.toml` so it reads
+`[action.runbook]`.
+
 ## Keys
 
 | Key | Action |
@@ -226,8 +279,13 @@ a breaking change) and an RFC3339-UTC `ts`. A `message` event reports `signed`,
 `verified`, `body_len`, and `body_hash` (`sha256:<hex>` of the plaintext) — but
 **never the body** unless you add `--include-bodies` (an explicit opt-in that
 creates a local content record). Event types: `join`, `leave`, `message`, `ack`,
-`verify`, `vanish`, `exec_request`, `exec_result`, `key_ready`, `error`,
-`disconnect`.
+`handoff`, `route_fired`, `verify`, `vanish`, `scuttle`, `file_offer`,
+`file_complete`, `exec_request`, `exec_result`, `action_request`,
+`action_approval`, `action_executed`, `action_vetoed`, `action_expired`,
+`key_ready`, `error`, `disconnect`. The five `action_*` events (§1.3) record the
+full lifecycle of a two-person-rule request — who proposed it, each approval with
+the running `quorum_current`/`quorum_needed`, and whether it executed, was vetoed,
+or expired — as a metadata-only audit trail (never the action's raw command).
 
 `netherchat schema` prints the JSON Schema (draft-07) for v1 events so downstream
 tools can validate the stream.
