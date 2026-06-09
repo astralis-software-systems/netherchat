@@ -25,6 +25,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/salehkreiner/netherchat/protocol"
+	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/internal/crypto"
 	"github.com/salehkreiner/netherchat/tui/record"
 )
@@ -91,6 +92,19 @@ type Client struct {
 	// attester, plus the membership snapshot it finalizes from.
 	roster     *cosignRound
 	rosterMeta rosterMeta
+
+	// Scuttle receipt (§1.5). firstEpoch is the first epoch we held a key, for the
+	// receipt's epoch_range.first. receiptRound/Core/Hash hold an in-progress
+	// co-sign round (the /scuttle-now initiator); receiptOnDone fires after it
+	// finalizes (to trigger the burn); receiptDone latches so a room produces at
+	// most one receipt from this client.
+	firstEpoch    uint64
+	firstEpochSet bool
+	receiptRound  *cosignRound
+	receiptCore   attest.ReceiptCore
+	receiptHash   []byte
+	receiptOnDone func()
+	receiptDone   bool
 
 	// Ephemeral artifact relay (§2.3). sends holds our outgoing transfers (so
 	// FileAck/FileAbort can be routed to the streaming goroutine); recvs holds the
@@ -282,12 +296,21 @@ func (c *Client) SetTTL(seconds int) {
 	c.emit(EvControl{Action: protocol.ActionTTL, ByName: c.name, Self: true, TTLSeconds: seconds})
 }
 
-// ScuttleNow asks the server to scuttle the room immediately (§1.6 — /scuttle
-// now). We do not echo locally: the server orchestrates the burn and broadcasts
-// the ActionScuttle notice back to everyone, including us, so the ratchet and the
-// attestation happen uniformly via onControl.
+// ScuttleNow scuttles the room immediately (§1.6 — /scuttle now). Before asking
+// the server to burn it, we collect co-signatures for the scuttle receipt (§1.5)
+// while the room is still alive — the server tears a scuttled room down within a
+// short grace window, so there is no time to collect them afterward. When the
+// receipt finalizes we trigger the actual (server-orchestrated) burn; the
+// ActionScuttle broadcast then comes back to everyone and the ratchet happens
+// uniformly via onControl. If we cannot produce a receipt (no key yet), we just
+// burn.
 func (c *Client) ScuttleNow() {
-	c.enqueue(protocol.OpControl, protocol.Control{Action: protocol.ActionScuttle, ByName: c.name})
+	triggerBurn := func() {
+		c.enqueue(protocol.OpControl, protocol.Control{Action: protocol.ActionScuttle, ByName: c.name})
+	}
+	if !c.startReceiptRound(protocol.ScuttleManual, triggerBurn) {
+		triggerBurn()
+	}
 }
 
 // ScuttleArm asks the server to arm a visible countdown (§1.6 — /scuttle arm
@@ -424,6 +447,7 @@ func (c *Client) resetCoordinationLocked() {
 	c.lastMsg = lastMessage{}
 	c.clearSealLocked()
 	c.clearRosterLocked()
+	c.clearReceiptLocked()
 }
 
 // oldestHolderLocked returns the IC holder implied by join order: the oldest
@@ -598,7 +622,8 @@ func (c *Client) handle(env protocol.Envelope) {
 		c.onKeyDeliver(env)
 	case protocol.OpMessage, protocol.OpExecRequest, protocol.OpExecResult, protocol.OpAck, protocol.OpHandoff,
 		protocol.OpRecordEntry, protocol.OpSealRequest, protocol.OpSealAck,
-		protocol.OpRosterRequest, protocol.OpRosterAck:
+		protocol.OpRosterRequest, protocol.OpRosterAck,
+		protocol.OpScuttleReceiptRequest, protocol.OpScuttleReceiptAck:
 		var m protocol.Message
 		if err := env.Decode(&m); err == nil {
 			c.handleEncrypted(env.Type, m)
@@ -667,6 +692,7 @@ func (c *Client) onWelcome(env protocol.Envelope) {
 		if rk, err := crypto.NewRoomKey(0); err == nil {
 			c.rk = &rk
 			minted = &rk
+			c.noteFirstEpochLocked(rk.Epoch)
 		}
 	}
 	c.mu.Unlock()
@@ -777,6 +803,7 @@ func (c *Client) onKeyDeliver(env protocol.Envelope) {
 	}
 	c.mu.Lock()
 	c.rk = &rk
+	c.noteFirstEpochLocked(rk.Epoch)
 	c.mu.Unlock()
 
 	c.emit(EvKeyReady{Epoch: rk.Epoch})
@@ -871,6 +898,16 @@ func (c *Client) handleEncrypted(op protocol.Op, m protocol.Message) {
 		if json.Unmarshal(pt, &body) == nil {
 			c.onRosterAck(sender.name, sender.signPub, body.SetHash, body.Sig)
 		}
+	case protocol.OpScuttleReceiptRequest:
+		var body protocol.ScuttleReceiptRequestBody
+		if json.Unmarshal(pt, &body) == nil {
+			c.onScuttleReceiptRequest(sender.name, body.RoomID, body.ReceiptHash)
+		}
+	case protocol.OpScuttleReceiptAck:
+		var body protocol.ScuttleReceiptAckBody
+		if json.Unmarshal(pt, &body) == nil {
+			c.onScuttleReceiptAck(sender.name, sender.signPub, body.ReceiptHash, body.Sig)
+		}
 	}
 }
 
@@ -920,6 +957,15 @@ func (c *Client) onControl(env protocol.Envelope) {
 	var ctrl protocol.Control
 	if err := env.Decode(&ctrl); err != nil {
 		return
+	}
+	if ctrl.Action == protocol.ActionScuttle {
+		// A scuttle is destruction: emit a signed receipt — proof there is no record
+		// (§1.5) — BEFORE the key is zeroized. If we initiated /scuttle now we
+		// already produced one (with co-signatures collected while the room was
+		// live); for a server-triggered scuttle (idle / owner_loss / armed) or a
+		// peer's manual scuttle, we self-sign one here. Each present client may write
+		// its own receipt — that is expected, and each is independently verifiable.
+		c.writeSelfReceiptIfNeeded(ctrl.Reason)
 	}
 	if ctrl.Action == protocol.ActionVanish || ctrl.Action == protocol.ActionScuttle {
 		// Both /vanish and the dead-man's switch (§1.6) advance the room key

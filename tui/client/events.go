@@ -209,6 +209,25 @@ type EvRosterComplete struct {
 	Total       int
 }
 
+// EvScuttleReceiptAck is emitted as receipt co-signatures arrive during a
+// /scuttle now we initiated: ByName co-signed, bringing the running total to
+// Count of Total present members. Self marks our own co-signature of a peer's
+// receipt request.
+type EvScuttleReceiptAck struct {
+	ByName string
+	Count  int
+	Total  int
+	Self   bool
+}
+
+// EvScuttleReceipt is emitted when this client produces a scuttle receipt (§1.5):
+// the signed proof that the room and its keys were destroyed. The consumer writes
+// Receipt to disk — it is the only surviving artifact. Multiple present clients
+// may each emit their own; each is independently verifiable.
+type EvScuttleReceipt struct {
+	Receipt *attest.ScuttleReceipt
+}
+
 // EvMessage is a decrypted chat message (Self is true for the local echo of our
 // own outgoing messages). Signed reports whether a valid Ed25519 signature was
 // present (§3.3); unsigned legacy messages still arrive (Signed=false).
@@ -283,31 +302,33 @@ type EvFileComplete struct {
 // EvDisconnected is emitted once when the connection ends; Done() closes after it.
 type EvDisconnected struct{ Err error }
 
-func (EvConnected) isEvent()      {}
-func (EvRouteFired) isEvent()     {}
-func (EvAck) isEvent()            {}
-func (EvHandoff) isEvent()        {}
-func (EvRecordEntry) isEvent()    {}
-func (EvSealRequest) isEvent()    {}
-func (EvSealAck) isEvent()        {}
-func (EvSealComplete) isEvent()   {}
-func (EvRosterRequest) isEvent()  {}
-func (EvRosterAck) isEvent()      {}
-func (EvRosterComplete) isEvent() {}
-func (EvKeyReady) isEvent()       {}
-func (EvMessage) isEvent()        {}
-func (EvServerMessage) isEvent()  {}
-func (EvControl) isEvent()        {}
-func (EvExecRequest) isEvent()    {}
-func (EvExecResult) isEvent()     {}
-func (EvInvite) isEvent()         {}
-func (EvBreakGlass) isEvent()     {}
-func (EvMemberJoined) isEvent()   {}
-func (EvMemberLeft) isEvent()     {}
-func (EvFileOffer) isEvent()      {}
-func (EvFileProgress) isEvent()   {}
-func (EvFileSent) isEvent()       {}
-func (EvFileFailed) isEvent()     {}
-func (EvFileComplete) isEvent()   {}
-func (EvError) isEvent()          {}
-func (EvDisconnected) isEvent()   {}
+func (EvConnected) isEvent()         {}
+func (EvRouteFired) isEvent()        {}
+func (EvAck) isEvent()               {}
+func (EvHandoff) isEvent()           {}
+func (EvRecordEntry) isEvent()       {}
+func (EvSealRequest) isEvent()       {}
+func (EvSealAck) isEvent()           {}
+func (EvSealComplete) isEvent()      {}
+func (EvRosterRequest) isEvent()     {}
+func (EvRosterAck) isEvent()         {}
+func (EvRosterComplete) isEvent()    {}
+func (EvScuttleReceiptAck) isEvent() {}
+func (EvScuttleReceipt) isEvent()    {}
+func (EvKeyReady) isEvent()          {}
+func (EvMessage) isEvent()           {}
+func (EvServerMessage) isEvent()     {}
+func (EvControl) isEvent()           {}
+func (EvExecRequest) isEvent()       {}
+func (EvExecResult) isEvent()        {}
+func (EvInvite) isEvent()            {}
+func (EvBreakGlass) isEvent()        {}
+func (EvMemberJoined) isEvent()      {}
+func (EvMemberLeft) isEvent()        {}
+func (EvFileOffer) isEvent()         {}
+func (EvFileProgress) isEvent()      {}
+func (EvFileSent) isEvent()          {}
+func (EvFileFailed) isEvent()        {}
+func (EvFileComplete) isEvent()      {}
+func (EvError) isEvent()             {}
+func (EvDisconnected) isEvent()      {}

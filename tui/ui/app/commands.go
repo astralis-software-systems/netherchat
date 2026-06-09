@@ -321,6 +321,12 @@ func writeArtifact(path string, a artifact) error {
 	return os.WriteFile(path, b, 0o644)
 }
 
+// receiptFilename is the scuttle-receipt output path (§1.5):
+// netherchat-receipt-<room>-<timestamp>.json in the working directory.
+func receiptFilename(room string) string {
+	return fmt.Sprintf("netherchat-receipt-%s-%s.json", exportRoomName(room), time.Now().Format("20060102-150405"))
+}
+
 func (m *Model) runTTL(r *room, arg string) {
 	if !m.connected(r) {
 		return

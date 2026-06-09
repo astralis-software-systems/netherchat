@@ -87,6 +87,12 @@ const (
 	// every present member signs the hash of the sorted member-fingerprint set.
 	OpRosterRequest Op = "roster_request" // attester -> room: { set_hash, room_id, epoch, expires_unix }
 	OpRosterAck     Op = "roster_ack"     // member -> attester: { set_hash, signer_fpr, sig }
+
+	// Scuttle receipt (§1.5, additive). Same E2E-Message envelope. Before keys are
+	// zeroized, a scuttling client may collect co-signatures over a receipt hash so
+	// the proof-of-destruction is multi-party. The relay only sees ciphertext.
+	OpScuttleReceiptRequest Op = "scuttle_receipt_request" // scuttler -> room: { receipt_hash, room_id, reason, ts, epoch_range }
+	OpScuttleReceiptAck     Op = "scuttle_receipt_ack"     // member -> scuttler: { receipt_hash, signer_fpr, sig }
 )
 
 // Envelope is the outer frame for every message on the wire. Data holds the

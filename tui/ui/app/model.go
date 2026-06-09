@@ -529,6 +529,24 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 			r.appendSystem(fmt.Sprintf("✓ %s written — %d of %d members co-signed. Verify: netherchat verify %s", path, e.Signers, e.Total, path))
 		}
 
+	case client.EvScuttleReceiptAck:
+		if !e.Self {
+			r.appendSystem(fmt.Sprintf("✓ %s co-signed the scuttle receipt  (%d/%d)", e.ByName, e.Count, e.Total))
+		}
+
+	case client.EvScuttleReceipt:
+		// The room is being destroyed; the receipt is the only surviving artifact
+		// (§1.5). Write it to the working directory, like a sealed record.
+		path := receiptFilename(e.Receipt.Room)
+		if err := writeArtifact(path, e.Receipt); err != nil {
+			r.appendError("scuttle receipt write failed: " + err.Error())
+		} else {
+			r.appendSystem(fmt.Sprintf("⚡ Room scuttled. Receipt written to %s\nVerify with: netherchat verify %s", path, path))
+			if name != m.active {
+				r.unread++
+			}
+		}
+
 	case client.EvFileOffer:
 		r.appendSystem(renderFileOffer(e))
 		if name != m.active {

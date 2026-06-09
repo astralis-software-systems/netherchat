@@ -29,3 +29,20 @@ func RosterSigningBytes(room string, epoch uint64, setHash []byte) []byte {
 	buf.Write(setHash) // raw 32 bytes, fixed size
 	return buf.Bytes()
 }
+
+// ScuttleReceiptSigningBytes returns the canonical bytes a scuttle-receipt
+// co-signature covers (§1.5): a member attesting "this room's keys were
+// destroyed, per this receipt." The receipt hash already commits to the room,
+// epoch range, reason, timestamp, and member set (it is the SHA-256 of the
+// canonical receipt), so the preimage only needs the domain-separation tag to
+// keep a receipt signature distinct from every other signature kind.
+//
+// Layout (receipt v1):
+//
+//	field("netherchat/receipt/v1") || receiptHash[32]
+func ScuttleReceiptSigningBytes(receiptHash []byte) []byte {
+	var buf bytes.Buffer
+	writeField(&buf, []byte("netherchat/receipt/v1")) // domain-separation tag
+	buf.Write(receiptHash)                            // raw 32 bytes, fixed size
+	return buf.Bytes()
+}

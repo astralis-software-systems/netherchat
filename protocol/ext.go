@@ -178,3 +178,27 @@ type RosterAckBody struct {
 	SignerFpr string `json:"signer_fpr"`
 	Sig       []byte `json:"sig"`
 }
+
+// ScuttleReceiptRequestBody is the END-TO-END-ENCRYPTED plaintext of an
+// OpScuttleReceiptRequest Message (§1.5): a scuttling client proposes a receipt,
+// identified by ReceiptHash (SHA-256 of the canonical receipt bytes). Present
+// members co-sign with an OpScuttleReceiptAck before keys are zeroized. The
+// remaining fields are context for display/sanity; ReceiptHash is what is signed.
+type ScuttleReceiptRequestBody struct {
+	ReceiptHash []byte `json:"receipt_hash"`
+	RoomID      string `json:"room_id"`
+	Reason      string `json:"reason"`
+	TS          int64  `json:"ts"`
+	EpochFirst  uint64 `json:"epoch_first"`
+	EpochLast   uint64 `json:"epoch_last"`
+}
+
+// ScuttleReceiptAckBody is the END-TO-END-ENCRYPTED plaintext of an
+// OpScuttleReceiptAck Message (§1.5): a member co-signs ReceiptHash. Sig is
+// Ed25519 over ScuttleReceiptSigningBytes(ReceiptHash) (domain-separated),
+// verifiable against the sender's identity key.
+type ScuttleReceiptAckBody struct {
+	ReceiptHash []byte `json:"receipt_hash"`
+	SignerFpr   string `json:"signer_fpr"`
+	Sig         []byte `json:"sig"`
+}

@@ -22,6 +22,8 @@ func verifyArtifact(path string, jsonMode bool) int {
 	switch detectArtifact(b) {
 	case "roster":
 		return verifyRosterBytes(b, jsonMode)
+	case "receipt":
+		return verifyReceiptBytes(b, jsonMode)
 	default:
 		// A sealed record carries "netherchat_record"; an unrecognized shape falls
 		// through to the record verifier, which reports a clear parse error.
@@ -77,6 +79,41 @@ func verifyRosterBytes(b []byte, jsonMode bool) int {
 	output.WriteHuman("VALID roster — %d member%s, %d signature(s) verified\n",
 		res.Members, plural(res.Members, "", "s"), len(res.Signers))
 	output.WriteHuman("  room: %s  epoch: %d\n  set_hash: %s\n", res.Room, res.Epoch, res.SetHash)
+	for _, s := range res.Signers {
+		output.WriteHuman("  signed: %s\n", s)
+	}
+	return 0
+}
+
+// verifyReceiptBytes parses and verifies a scuttle receipt, printing the verdict
+// and returning the exit code.
+func verifyReceiptBytes(b []byte, jsonMode bool) int {
+	r, err := attest.ParseReceipt(b)
+	if err != nil {
+		output.WriteError(jsonMode, err)
+		return 1
+	}
+	res, err := attest.VerifyReceipt(r)
+	if err != nil {
+		output.WriteError(jsonMode, err)
+		return 1
+	}
+
+	if jsonMode {
+		_ = output.WriteJSON(res)
+		if res.Valid {
+			return 0
+		}
+		return 1
+	}
+
+	if !res.Valid {
+		output.WriteHuman("INVALID receipt — %s\n", res.Error)
+		return 1
+	}
+	output.WriteHuman("VALID receipt — room %s scuttled at %s, %s, %d signature(s) verified\n",
+		res.Room, res.ScuttledAt, res.Reason, len(res.Signers))
+	output.WriteHuman("  receipt_hash: %s\n", res.ReceiptHash)
 	for _, s := range res.Signers {
 		output.WriteHuman("  signed: %s\n", s)
 	}
