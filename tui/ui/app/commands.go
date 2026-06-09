@@ -44,6 +44,8 @@ func buildCommands() *command.Set {
 		command.Command{Name: "action", Args: "@handle <text>", Help: "record an action item assigned to someone"},
 		command.Command{Name: "mark", Help: "promote the most recent message into the record as a note"},
 		command.Command{Name: "seal", Help: "seal the record: collect signatures, write record.json + minutes.md"},
+		command.Command{Name: "roster", Args: "[--signed] [--out <path>]", Help: "show who holds the keys; --signed writes a co-signed attestation",
+			Complete: func(p string) []string { return command.FilterPrefix([]string{"--signed", "--out"}, p) }},
 		command.Command{Name: "whois", Args: "[@handle]", Help: "show an identity's fingerprint, pin status, and published-key match"},
 		command.Command{Name: "verify", Args: "[@handle [ok]]", Help: "out-of-band verify a peer via a 5-word SAS read over a side channel"},
 		command.Command{Name: "join", Args: "<room>", Help: "join another room"},
@@ -130,6 +132,8 @@ func (m *Model) runCommand(input string) tea.Cmd {
 		m.runMark(r)
 	case "seal":
 		m.runSeal(r)
+	case "roster":
+		m.runRoster(r, arg)
 	case "whois":
 		return m.runWhois(arg)
 	case "verify":
@@ -221,6 +225,100 @@ func (m *Model) runExpand(r *room, arg string) {
 		r.collapse.Expand(id)
 		m.addSystem(fmt.Sprintf("expanded block #%d", id))
 	}
+}
+
+// runRoster implements /roster (§1.4). With no flag it prints the current
+// member list with fingerprints and verification status (no artifact). With
+// --signed it starts a co-signing round; the finished roster.json is written
+// when EvRosterComplete arrives. --out chooses the path.
+func (m *Model) runRoster(r *room, arg string) {
+	signed, out, err := parseRosterArgs(arg)
+	if err != nil {
+		m.addError(err.Error())
+		return
+	}
+	if !signed {
+		if r == nil {
+			m.addError("not in a room")
+			return
+		}
+		m.addSystem(m.rosterText(r))
+		return
+	}
+	if !m.connected(r) {
+		return
+	}
+	r.rosterOut = out
+	if err := r.client.SignRoster(m.verifiedFprSet()); err != nil {
+		m.addError(err.Error())
+		return
+	}
+	m.addSystem("roster: collecting co-signatures from present members…")
+}
+
+// parseRosterArgs parses "--signed" and "--out <path>" from /roster.
+func parseRosterArgs(arg string) (signed bool, out string, err error) {
+	fields := strings.Fields(arg)
+	for i := 0; i < len(fields); i++ {
+		switch fields[i] {
+		case "--signed":
+			signed = true
+		case "--out":
+			if i+1 >= len(fields) {
+				return false, "", fmt.Errorf("usage: /roster [--signed] [--out <path>]")
+			}
+			out = fields[i+1]
+			i++
+		default:
+			return false, "", fmt.Errorf("unknown option %q  ·  usage: /roster [--signed] [--out <path>]", fields[i])
+		}
+	}
+	return signed, out, nil
+}
+
+// rosterText renders the live roster: every member that holds the room key this
+// epoch, with fingerprint and SAS-verification status. It is the cryptographic
+// answer to "who can read this right now" (§1.4), printed locally.
+func (m *Model) rosterText(r *room) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "roster of #%s (%d member(s)) — who holds the keys this epoch:\n", r.name, len(r.order)+1)
+	fmt.Fprintf(&b, "  %-16s %s  (you)\n", m.name, m.fingerprint)
+	for _, id := range r.order {
+		mem := r.members[id]
+		status := "unverified"
+		if m.isVerified(mem.fpr) {
+			status = "✓ verified"
+		}
+		fmt.Fprintf(&b, "  %-16s %s  %s\n", mem.name, mem.fpr, status)
+	}
+	b.WriteString("  (run /roster --signed to write a co-signed attestation)")
+	return b.String()
+}
+
+// verifiedFprSet returns the set of peer fingerprints this client has
+// SAS-verified, for stamping the roster's per-member "verified" flag.
+func (m *Model) verifiedFprSet() map[string]bool {
+	out := make(map[string]bool, len(m.verified))
+	for fpr, e := range m.verified {
+		if e != nil && e.verified {
+			out[fpr] = true
+		}
+	}
+	return out
+}
+
+// artifact is anything that can render itself to canonical JSON bytes for
+// /seal, /roster --signed, and the scuttle receipt — written by writeArtifact.
+type artifact interface{ Marshal() ([]byte, error) }
+
+// writeArtifact marshals a signed artifact and writes it to path (0644). The
+// artifact is a deliberately-created file the operator chose to keep.
+func writeArtifact(path string, a artifact) error {
+	b, err := a.Marshal()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o644)
 }
 
 func (m *Model) runTTL(r *room, arg string) {

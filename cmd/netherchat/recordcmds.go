@@ -32,18 +32,25 @@ func verifyCmd(args []string) {
 	}
 	path := args[0]
 	_ = fs.Parse(args[1:])
-	os.Exit(verifyFile(path, *jsonMode))
+	os.Exit(verifyArtifact(path, *jsonMode))
 }
 
-// verifyFile loads, parses, and verifies a sealed record, printing the verdict
-// and returning the process exit code (0 = VALID, 1 = TAMPERED/error) so it
-// composes in scripts and CI. It is shared by `verify` and `replay --verify-only`.
+// verifyFile loads and verifies a sealed RECORD specifically, returning the
+// process exit code. It is used by `replay --verify-only`, which only ever deals
+// with records; the `verify` command itself dispatches by artifact type (see
+// verifyArtifact).
 func verifyFile(path string, jsonMode bool) int {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		output.WriteError(jsonMode, err)
 		return 1
 	}
+	return verifyRecordBytes(b, jsonMode)
+}
+
+// verifyRecordBytes parses and verifies a sealed record from bytes, printing the
+// verdict and returning the exit code (0 = VALID, 1 = TAMPERED/error).
+func verifyRecordBytes(b []byte, jsonMode bool) int {
 	rec, err := record.Parse(b)
 	if err != nil {
 		output.WriteError(jsonMode, err)

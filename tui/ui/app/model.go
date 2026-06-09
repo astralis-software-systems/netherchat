@@ -507,6 +507,28 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 			r.appendSystem(fmt.Sprintf("🔏 sealed — record.json + minutes.md written (%d entries, %d signature(s)). Verify: netherchat verify record.json", e.Entries, e.Signers))
 		}
 
+	case client.EvRosterRequest:
+		if !e.Self {
+			r.appendSystem(fmt.Sprintf("📋 a roster attestation was proposed (%d member set) — co-signing", e.Members))
+		}
+
+	case client.EvRosterAck:
+		if !e.Self {
+			r.appendSystem(fmt.Sprintf("✓ %s co-signed the roster  (%d/%d)", e.ByName, e.Count, e.Total))
+		}
+
+	case client.EvRosterComplete:
+		path := r.rosterOut
+		if path == "" {
+			path = "roster.json"
+		}
+		r.rosterOut = ""
+		if err := writeArtifact(path, e.Attestation); err != nil {
+			r.appendError("roster complete but writing " + path + " failed: " + err.Error())
+		} else {
+			r.appendSystem(fmt.Sprintf("✓ %s written — %d of %d members co-signed. Verify: netherchat verify %s", path, e.Signers, e.Total, path))
+		}
+
 	case client.EvFileOffer:
 		r.appendSystem(renderFileOffer(e))
 		if name != m.active {

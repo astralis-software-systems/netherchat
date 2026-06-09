@@ -156,3 +156,25 @@ type SealAckBody struct {
 	HeadHash []byte `json:"head_hash"`
 	Sig      []byte `json:"sig"`
 }
+
+// RosterRequestBody is the END-TO-END-ENCRYPTED plaintext of an OpRosterRequest
+// Message (§1.4): an attester proposes attesting the room's membership set,
+// identified by SetHash (SHA-256 of the sorted member fingerprints). Present
+// members whose own view of the set and epoch matches co-sign with an
+// OpRosterAck. SetHash is the raw 32-byte hash (base64 on the wire).
+type RosterRequestBody struct {
+	SetHash     []byte `json:"set_hash"`
+	RoomID      string `json:"room_id"`
+	Epoch       uint64 `json:"epoch"`
+	ExpiresUnix int64  `json:"expires_unix"`
+}
+
+// RosterAckBody is the END-TO-END-ENCRYPTED plaintext of an OpRosterAck Message
+// (§1.4): a member co-signs SetHash. Sig is Ed25519 over RosterSigningBytes(room,
+// epoch, SetHash) (domain-separated, room- and epoch-bound), verifiable against
+// the sender's identity key.
+type RosterAckBody struct {
+	SetHash   []byte `json:"set_hash"`
+	SignerFpr string `json:"signer_fpr"`
+	Sig       []byte `json:"sig"`
+}

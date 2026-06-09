@@ -300,15 +300,18 @@ func (s *Server) relay(room, fromID string, env protocol.Envelope) {
 		}))
 
 	case protocol.OpExecRequest, protocol.OpExecResult, protocol.OpAck, protocol.OpHandoff,
-		protocol.OpRecordEntry, protocol.OpSealRequest, protocol.OpSealAck:
-		// Edge exec, coordination primitives (ack/handoff), and sealed-record frames
-		// (record entries, seal requests/acks): the relay treats all of these
-		// exactly like chat messages — opaque E2E envelopes (sealed under the room
-		// key, Ed25519-signed) it fans out to the room verbatim. It never sees the
-		// command, the ack tag, the handoff target, the recorded decision, or the
-		// head being sealed, and never runs, counts, chains, or signs anything; the
-		// record chain, quorum, and IC token are all computed client-side from the
-		// signed payloads (FEATURE_ROADMAP_FREE.md §0.1, §1.4, §2.2).
+		protocol.OpRecordEntry, protocol.OpSealRequest, protocol.OpSealAck,
+		protocol.OpRosterRequest, protocol.OpRosterAck:
+		// Edge exec, coordination primitives (ack/handoff), sealed-record frames
+		// (record entries, seal requests/acks), and roster-attestation frames
+		// (roster requests/acks, §1.4): the relay treats all of these exactly like
+		// chat messages — opaque E2E envelopes (sealed under the room key,
+		// Ed25519-signed) it fans out to the room verbatim. It never sees the
+		// command, the ack tag, the handoff target, the recorded decision, the head
+		// being sealed, or the membership set being attested, and never runs, counts,
+		// chains, or signs anything; the record chain, quorum, IC token, and roster
+		// attestation are all computed client-side from the signed payloads
+		// (FEATURE_ROADMAP_FREE.md §0.1, §1.4, §2.2; FEATURE_ROADMAP_V2.md §1.4).
 		var m protocol.Message
 		if err := env.Decode(&m); err != nil {
 			return

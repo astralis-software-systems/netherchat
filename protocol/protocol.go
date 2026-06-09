@@ -80,6 +80,13 @@ const (
 	OpRecordEntry Op = "record_entry" // member -> room: a new append-only chain entry (decision/action/note)
 	OpSealRequest Op = "seal_request" // sealer -> room: { head_hash } — propose sealing the chain at this head
 	OpSealAck     Op = "seal_ack"     // member -> room: { head_hash, sig } — co-sign the proposed head
+
+	// Signed roster attestation (§1.4, additive). Like the seal frames, both carry
+	// a Message envelope sealed under the room key — the relay only sees ciphertext.
+	// A portable, co-signed answer to "who could decrypt this room at epoch N":
+	// every present member signs the hash of the sorted member-fingerprint set.
+	OpRosterRequest Op = "roster_request" // attester -> room: { set_hash, room_id, epoch, expires_unix }
+	OpRosterAck     Op = "roster_ack"     // member -> attester: { set_hash, signer_fpr, sig }
 )
 
 // Envelope is the outer frame for every message on the wire. Data holds the

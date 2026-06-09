@@ -76,6 +76,10 @@ type room struct {
 	// (so /expand can validate its argument). Reset when history is cleared.
 	collapse   *render.CollapseState
 	maxBlockID int
+
+	// rosterOut is the --out path stashed by /roster --signed, applied when the
+	// co-signed attestation finishes (§1.4). Empty means the default roster.json.
+	rosterOut string
 }
 
 func newRoom(name string) *room {

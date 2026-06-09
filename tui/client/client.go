@@ -87,6 +87,11 @@ type Client struct {
 	pendingSealHead []byte            // head of the most recent incoming SEAL_REQUEST
 	pendingSealName string            // display name of who proposed it
 
+	// Roster attestation (§1.4): the in-progress co-sign round when we are the
+	// attester, plus the membership snapshot it finalizes from.
+	roster     *cosignRound
+	rosterMeta rosterMeta
+
 	// Ephemeral artifact relay (§2.3). sends holds our outgoing transfers (so
 	// FileAck/FileAbort can be routed to the streaming goroutine); recvs holds the
 	// transfers we are receiving and reassembling in memory. maxFileBytes is the
@@ -418,6 +423,7 @@ func (c *Client) resetCoordinationLocked() {
 	c.chain.Reset()
 	c.lastMsg = lastMessage{}
 	c.clearSealLocked()
+	c.clearRosterLocked()
 }
 
 // oldestHolderLocked returns the IC holder implied by join order: the oldest
@@ -591,7 +597,8 @@ func (c *Client) handle(env protocol.Envelope) {
 	case protocol.OpKeyDeliver:
 		c.onKeyDeliver(env)
 	case protocol.OpMessage, protocol.OpExecRequest, protocol.OpExecResult, protocol.OpAck, protocol.OpHandoff,
-		protocol.OpRecordEntry, protocol.OpSealRequest, protocol.OpSealAck:
+		protocol.OpRecordEntry, protocol.OpSealRequest, protocol.OpSealAck,
+		protocol.OpRosterRequest, protocol.OpRosterAck:
 		var m protocol.Message
 		if err := env.Decode(&m); err == nil {
 			c.handleEncrypted(env.Type, m)
@@ -853,6 +860,16 @@ func (c *Client) handleEncrypted(op protocol.Op, m protocol.Message) {
 		var body protocol.SealAckBody
 		if json.Unmarshal(pt, &body) == nil {
 			c.onSealAck(m.FromID, sender.name, sender.signPub, body.HeadHash, body.Sig)
+		}
+	case protocol.OpRosterRequest:
+		var body protocol.RosterRequestBody
+		if json.Unmarshal(pt, &body) == nil {
+			c.onRosterRequest(sender.name, body.SetHash, body.Epoch)
+		}
+	case protocol.OpRosterAck:
+		var body protocol.RosterAckBody
+		if json.Unmarshal(pt, &body) == nil {
+			c.onRosterAck(sender.name, sender.signPub, body.SetHash, body.Sig)
 		}
 	}
 }
