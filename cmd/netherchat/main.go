@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/salehkreiner/netherchat/protocol"
@@ -74,9 +75,15 @@ func connectCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: netherchat connect [ws://host:port] [--room <name>] [--name <you>] [--identity <path>] [--invite <token>] [--tor [--tor-proxy 127.0.0.1:9050]] [--web-url <url>] [--config <toml>] [--notify <cmd>]")
 		fs.PrintDefaults()
 	}
+	// The server URL is an optional leading positional; peel it off before parsing
+	// the flags, or Go's flag parser stops at it and silently ignores --room/--name
+	// (so they fall back to defaults — the same reason sendCmd peels its positional
+	// room first). This is what made --name lose to defaultName() ($USER).
+	var url string
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		url, args = args[0], args[1:]
+	}
 	_ = fs.Parse(args)
-
-	url := fs.Arg(0)
 	if url == "" {
 		url = "ws://localhost:3000"
 	}
