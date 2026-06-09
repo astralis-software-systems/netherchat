@@ -210,17 +210,12 @@
 }
 
 /* faux client window */
-.lp-hero-art {
-  perspective: 1400px;
-}
 .lp-window {
   border-radius: 14px;
   border: 1px solid var(--border-strong);
   background: color-mix(in srgb, var(--bg) 88%, black);
   box-shadow: var(--shadow);
   overflow: hidden;
-  transform: rotateY(-9deg) rotateX(3deg);
-  transform-origin: center;
 }
 .lp-window-bar {
   display: flex;
