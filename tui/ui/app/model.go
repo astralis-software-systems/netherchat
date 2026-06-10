@@ -72,7 +72,14 @@ func Run(url, name, identityPath, room, notifyCmd, invite, webURL, torProxy stri
 	m.torProxy = torProxy
 	m.trust = trust
 	m.actionQuorum = actionQuorum
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// Enable Bubble Tea mouse capture only when the model defaults to it. On Windows
+	// it defaults OFF so the user keeps native terminal text selection (capture
+	// steals the mouse); mac/Linux terminals handle capture better and default ON.
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	if m.mouseOn {
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	p := tea.NewProgram(m, opts...)
 	_, err := p.Run()
 	return err
 }
@@ -96,8 +103,11 @@ func newModel(url, name, identityPath, roomName, notifyCmd string) *Model {
 		renderer: render.New(theme.Default(), 80), // width set for real on first resize
 		session:  map[string]*room{},
 		verified: map[string]*verifyEntry{},
-		input:    textinput.New(),
-		mouseOn:  true, // matches tea.WithMouseCellMotion() in Run
+		input: textinput.New(),
+		// Default mouse capture off on Windows (it blocks native terminal text
+		// selection); on by default on mac/Linux. Run mirrors this when starting the
+		// program; /mouse on|off toggles it on every platform.
+		mouseOn: runtime.GOOS != "windows",
 	}
 	m.input.Placeholder = "Message, or /command (try /help)…"
 	m.input.Prompt = "> "

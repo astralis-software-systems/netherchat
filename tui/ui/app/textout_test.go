@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -249,12 +250,14 @@ func TestExportAllShowsWarning(t *testing.T) {
 	}
 }
 
-// TestMouseToggle proves /mouse flips state and returns the correct Bubble Tea
-// command for each direction.
+// TestMouseToggle proves the per-OS default (off on Windows so native terminal
+// selection works, on elsewhere) and that /mouse flips state and returns the
+// correct Bubble Tea command for each direction on every platform.
 func TestMouseToggle(t *testing.T) {
 	m := newModel("ws://localhost:3000", "me", "", "ops", "")
-	if !m.mouseOn {
-		t.Fatal("mouse should default on (matches tea.WithMouseCellMotion)")
+	wantDefault := runtime.GOOS != "windows"
+	if m.mouseOn != wantDefault {
+		t.Fatalf("default mouseOn = %v, want %v on %s", m.mouseOn, wantDefault, runtime.GOOS)
 	}
 
 	cmd := m.runMouse("off")
