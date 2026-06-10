@@ -41,6 +41,8 @@ func main() {
 		agentCmd(os.Args[2:])
 	case "bridge":
 		bridgeCmd(os.Args[2:])
+	case "pair":
+		pairCmd(os.Args[2:])
 	case "whoami":
 		whoamiCmd(os.Args[2:])
 	case "verify":
@@ -204,6 +206,7 @@ usage:
   netherchat beacon-link <room> [--ttl 2h]       mint a read-only status-beacon link (§1.2)
   netherchat agent   --room <room> --allow runbook.toml   run an edge-exec agent
   netherchat bridge  --room <room> --on decision,ack --post <url>  fire signed callbacks on typed events (§1.6)
+  netherchat pair    --lan | --manual [--join]    form a relay-LESS P2P war room (§1.1 Sneakernet)
   netherchat whoami  [--json]                     show your identity
   netherchat verify  <record.json> [--json]       verify a sealed record's hash chain + signatures
   netherchat replay  <record.json> --into <room>  stream a sealed record into a room for a retro

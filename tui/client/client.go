@@ -23,17 +23,14 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/internal/crypto"
 	"github.com/salehkreiner/netherchat/tui/record"
 )
 
-const (
-	readLimitBytes = 1 << 20
-	writeTimeout   = 10 * time.Second
-)
+// writeTimeout bounds a single transport write (see RelayTransport.Send).
+const writeTimeout = 10 * time.Second
 
 type memberInfo struct {
 	name    string
@@ -49,10 +46,10 @@ type Client struct {
 	url         string
 	inviteToken string
 
-	ctx      context.Context
-	cancel   context.CancelFunc
-	ws       *websocket.Conn
-	dialOpts *websocket.DialOptions // nil = direct; set by UseTorProxy for SOCKS5 (Tor)
+	ctx       context.Context
+	cancel    context.CancelFunc
+	transport Transport              // relay (WebSocket) or direct (P2P TCP / loopback)
+	dialOpts  *websocket.DialOptions // nil = direct; set by UseTorProxy for SOCKS5 (Tor)
 
 	events chan Event
 	sendCh chan protocol.Envelope
@@ -218,19 +215,29 @@ func NewWithIdentity(serverURL, room, name string, id *crypto.Identity) (*Client
 	}, nil
 }
 
-// Connect dials the server (using dialCtx for the dial timeout only), sends the
-// Hello, and starts the read/write loops. The session lifetime is independent of
-// dialCtx; it ends on Close or when the connection drops.
+// Connect dials the relay server over WebSocket (using dialCtx for the dial
+// timeout only), then runs the protocol over it. The session lifetime is
+// independent of dialCtx; it ends on Close or when the connection drops.
 func (c *Client) Connect(dialCtx context.Context) error {
-	conn, resp, err := websocket.Dial(dialCtx, c.url, c.dialOpts)
-	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
-	}
+	rt, err := DialRelay(dialCtx, c.url, c.dialOpts)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", c.url, err)
 	}
-	conn.SetReadLimit(readLimitBytes)
-	c.ws = conn
+	return c.ConnectWith(rt)
+}
+
+// ConnectWith runs the protocol over an already-established transport. This is the
+// Sneakernet entry point (§1.1): a direct peer-to-peer transport (or the host's
+// in-process loopback to its own coordinator) is handed in here, and from this
+// point on the client behaves identically to the relay path — same Hello/Welcome
+// handshake, same encryption, same commands. The transport is now owned by the
+// client and is closed by Close.
+func (c *Client) ConnectWith(t Transport) error {
+	recvCh, err := t.Recv()
+	if err != nil {
+		return err
+	}
+	c.transport = t
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 
 	go c.writeLoop()
@@ -242,9 +249,14 @@ func (c *Client) Connect(dialCtx context.Context) error {
 		KXKey:           c.id.KXPub[:],
 		InviteToken:     c.inviteToken,
 	})
-	go c.readLoop()
+	go c.readLoop(recvCh)
 	return nil
 }
+
+// Transport returns the transport this client is running over (nil before
+// Connect). The TUI reads it to render the mode indicator (relay vs direct) and
+// /whoami; /peers inspects it when it is a direct transport.
+func (c *Client) Transport() Transport { return c.transport }
 
 // Send encrypts text under the current room key, transmits it, and emits a local
 // echo. It errors if the room key is not yet established.
@@ -558,6 +570,20 @@ func (c *Client) LookupMember(name string) (id, fingerprint string, ok bool) {
 	return "", "", false
 }
 
+// Members returns this client's current view of the room membership (every member
+// it knows about except itself), each with its display name and identity
+// fingerprint. /peers renders it; it is transport-agnostic, so it works the same in
+// relay and Sneakernet (direct) mode.
+func (c *Client) Members() []ConnMember {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]ConnMember, 0, len(c.members))
+	for id, m := range c.members {
+		out = append(out, ConnMember{ID: id, Name: m.name, Fingerprint: crypto.Fingerprint(m.signPub)})
+	}
+	return out
+}
+
 // SAS computes the 5-word Short Authentication String for the pairwise session
 // with the member named handle, from the shared room key and both parties' public
 // keys (§1.2). It returns the words and the peer's fingerprint. ok is false if no
@@ -577,29 +603,38 @@ func (c *Client) SAS(handle string) (words []string, fingerprint string, ok bool
 	return nil, "", false
 }
 
-// Close ends the session and closes the connection.
+// Close ends the session and closes the transport.
 func (c *Client) Close() error {
 	if c.cancel != nil {
 		c.cancel()
 	}
-	if c.ws != nil {
-		return c.ws.Close(websocket.StatusNormalClosure, "bye")
+	if c.transport != nil {
+		return c.transport.Close()
 	}
 	return nil
 }
 
 // --- internal ---
 
-func (c *Client) readLoop() {
+func (c *Client) readLoop(recvCh <-chan []byte) {
 	defer close(c.done)
-	for {
+	for b := range recvCh {
 		var env protocol.Envelope
-		if err := wsjson.Read(c.ctx, c.ws, &env); err != nil {
-			c.emit(EvDisconnected{Err: err})
-			return
+		if err := json.Unmarshal(b, &env); err != nil {
+			continue // a frame we cannot even parse is dropped, not fatal
 		}
 		c.handle(env)
 	}
+	// The Recv channel closed: the connection ended. Surface the underlying reason
+	// when the transport tracked it, else a generic close.
+	err := error(nil)
+	if et, ok := c.transport.(errTransport); ok {
+		err = et.lastErr()
+	}
+	if err == nil {
+		err = errors.New("connection closed")
+	}
+	c.emit(EvDisconnected{Err: err})
 }
 
 func (c *Client) writeLoop() {
@@ -608,10 +643,11 @@ func (c *Client) writeLoop() {
 		case <-c.ctx.Done():
 			return
 		case env := <-c.sendCh:
-			wctx, cancel := context.WithTimeout(c.ctx, writeTimeout)
-			err := wsjson.Write(wctx, c.ws, env)
-			cancel()
+			b, err := json.Marshal(env)
 			if err != nil {
+				continue // an envelope we cannot marshal is a programming bug; skip it
+			}
+			if err := c.transport.Send(b); err != nil {
 				c.cancel()
 				return
 			}

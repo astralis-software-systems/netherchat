@@ -52,6 +52,8 @@ func buildCommands() *command.Set {
 		command.Command{Name: "seal", Help: "seal the record: collect signatures, write record.json + minutes.md"},
 		command.Command{Name: "roster", Args: "[--signed] [--out <path>]", Help: "show who holds the keys; --signed writes a co-signed attestation",
 			Complete: func(p string) []string { return command.FilterPrefix([]string{"--signed", "--out"}, p) }},
+		command.Command{Name: "peers", Help: "list room members and the transport (relay or direct, §1.1)"},
+		command.Command{Name: "pair", Help: "connect without a relay — how to start a Sneakernet session (§1.1)"},
 		command.Command{Name: "whois", Args: "[@handle]", Help: "show an identity's fingerprint, pin status, and published-key match"},
 		command.Command{Name: "verify", Args: "[@handle [ok]]", Help: "out-of-band verify a peer via a 5-word SAS read over a side channel"},
 		command.Command{Name: "join", Args: "<room>", Help: "join another room"},
@@ -82,6 +84,14 @@ func (m *Model) runCommand(input string) tea.Cmd {
 		m.addSystem(fmt.Sprintf("recommended font for %q: %s\n  set it in your terminal's preferences — a TUI cannot change the terminal font.\n  (the web client honors per-theme fonts directly.)", m.theme.Name, m.theme.Font))
 	case "whoami":
 		m.addSystem(m.whoamiText(r))
+	case "peers":
+		m.runPeers(r)
+	case "pair":
+		m.addSystem("This room is connected through the relay.\n" +
+			"To form a relay-LESS war room (Sneakernet, §1.1) when the relay is down or suspect:\n" +
+			"  netherchat pair --lan      discover peers on the local network, then /pair one\n" +
+			"  netherchat pair --manual   exchange a signed offer/answer blob (VPN / direct reachability)\n" +
+			"Same end-to-end crypto, no server. See docs/self-hosting.md → Sneakernet Mode.")
 	case "invite":
 		if !m.connected(r) {
 			break
@@ -898,12 +908,52 @@ func (m *Model) helpText() string {
 	return b.String()
 }
 
+// transportLabel renders how the active room is connected: the relay URL, or
+// "direct (… no relay)" in a Sneakernet session (§1.1). In the TUI this is the
+// relay; the direct transport is used by `netherchat pair`.
+func (m *Model) transportLabel(r *room) string {
+	if r == nil || r.client == nil {
+		return "relay " + m.url + " (connecting…)"
+	}
+	t := r.client.Transport()
+	if t == nil {
+		return "relay " + m.url + " (connecting…)"
+	}
+	if t.PeerID() != "" { // a direct peer connection has a peer fingerprint
+		return "direct (" + t.RemoteAddr() + ", no relay)"
+	}
+	return "relay (" + t.RemoteAddr() + ")"
+}
+
+// runPeers lists the room members and the transport, for /peers. It is
+// transport-agnostic — the same view in relay and Sneakernet (direct) mode.
+func (m *Model) runPeers(r *room) {
+	if !m.connected(r) {
+		return
+	}
+	var b strings.Builder
+	b.WriteString("transport: " + m.transportLabel(r) + "\n")
+	peers := r.client.Members()
+	if len(peers) == 0 {
+		b.WriteString("no other peers in this room yet")
+	} else {
+		for _, p := range peers {
+			name := p.Name
+			if name == "" {
+				name = "(unnamed)"
+			}
+			b.WriteString(fmt.Sprintf("  %-16s %s\n", name, p.Fingerprint))
+		}
+	}
+	m.addSystem(strings.TrimRight(b.String(), "\n"))
+}
+
 func (m *Model) whoamiText(r *room) string {
 	var b strings.Builder
 	b.WriteString("fingerprint: " + m.fingerprint + "\n")
 	b.WriteString("identity:    " + m.sourceLabel() + "\n")
 	b.WriteString("name:        " + m.name + "\n")
-	b.WriteString("server:      " + m.url + "\n")
+	b.WriteString("transport:   " + m.transportLabel(r) + "\n")
 	b.WriteString("mouse:       " + mouseState(m.mouseOn) + "\n")
 	if r != nil {
 		enc := "establishing…"

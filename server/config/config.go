@@ -25,6 +25,16 @@ type Config struct {
 	Routes      []RouteConfig           `toml:"route"`
 	Actions     map[string]ActionPolicy `toml:"action"`
 	Trust       []TrustEntry            `toml:"trust"`
+	Direct      DirectConfig            `toml:"direct"`
+}
+
+// DirectConfig holds Sneakernet Mode (§1.1) defaults read CLIENT-side by
+// `netherchat pair`: the listening port for direct peer connections and whether to
+// advertise on the LAN via mDNS. Like [[trust]] and [action.*], the relay never
+// reads it — relay-less pairing involves no server.
+type DirectConfig struct {
+	Port         int  `toml:"port"`          // 0 = a free port
+	LANDiscovery bool `toml:"lan_discovery"` // advertise/discover on the LAN via mDNS
 }
 
 // ActionPolicy is a per-action quorum policy: the Two-Person Rule

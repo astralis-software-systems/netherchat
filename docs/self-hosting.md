@@ -147,6 +147,68 @@ Because a v3 `.onion` address is derived from the relay's public key, reaching
 the *right* address proves you reached the *right* relay — see
 [`encryption.md`](encryption.md). There is no CA and no trust-on-first-use.
 
+## Sneakernet Mode — a war room with no relay (`netherchat pair`, §1.1)
+
+The whole thesis of Netherchat is that the normal channel cannot be trusted — and
+the relay is the one component that thesis never turned on. When the relay host is
+compromised, suspect, or simply unreachable, **Sneakernet Mode forms a war room
+with no server at all.** Same BYO-key identity, same NaCl group crypto, same epoch
+forward secrecy (`/vanish`), same sealed records (`/seal`) and scuttle receipts —
+the only thing that changes is the transport. This works because the relay was
+already blind: it routed ciphertext and held no keys, so removing it changes
+nothing above the transport layer.
+
+Two ways to connect with no relay:
+
+```bash
+# LAN auto-discovery (same network): both run this; one /pairs the other
+netherchat pair --lan --room ops --name alice
+netherchat pair --lan --room ops --name bob       # discovers alice → /pair <fpr>
+
+# Manual blob (a VPN, or any direct reachability): one offers, the other joins
+netherchat pair --manual --room ops --name alice          # prints a signed offer
+netherchat pair --manual --join --room ops --name bob     # paste alice's offer
+```
+
+`--lan` advertises via mDNS (`_netherchat._tcp`) and lists discovered peers with
+their fingerprints. **Discovery is never trust:** mDNS tells you someone is there;
+your keys tell you who they are. A discovered peer is only a *candidate* — you
+`/pair <fingerprint>` after verifying it out of band (or matching a `[[trust]]`
+pin), and the Ed25519 handshake then proves the peer really holds that key. The
+direct TCP connection is authenticated by the identity keys **before any message
+frame is exchanged**, so a rogue process on the host's address cannot impersonate
+it.
+
+> ### Honest scope: no NAT traversal
+>
+> Sneakernet works **on a LAN** and **via manual blob exchange**. It does **NOT**
+> support general NAT traversal — if the two machines are on different networks
+> without a shared LAN, you need the manual blob exchange **and** both machines
+> must be reachable by the IP addresses in the offer blob (e.g. both on a VPN, both
+> on the same LAN, or one machine port-forwarded).
+>
+> This is a deliberate design decision. General P2P NAT traversal requires a
+> STUN/TURN rendezvous server, which re-introduces infrastructure cost and a
+> trusted third party — exactly what Sneakernet Mode is designed to avoid.
+>
+> - **Teams on different networks:** use the relay (the default mode).
+> - **Teams on the same LAN or in the same room:** use `--lan`.
+> - **Teams with a shared VPN or direct reachability:** use `--manual`.
+
+Topology note: for two peers the connection is fully direct. For more than two, the
+peer that initiated (the offerer / LAN host) coordinates membership and relays
+between members — still no external infrastructure, and that peer is a full room
+member who holds the key anyway, not a separate server. It works well for small
+groups; for larger groups use the relay.
+
+Configure defaults in `netherchat.toml`:
+
+```toml
+[direct]
+port = 7777          # listening port for direct connections (0 = a free port)
+lan_discovery = true # advertise on the LAN via mDNS
+```
+
 ## REST endpoints
 
 | Endpoint    | Returns                                            |
