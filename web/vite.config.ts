@@ -15,18 +15,23 @@ import { resolve } from "node:path";
 // origin, and map "/join" -> "/join.html" (one rewrite rule; see docs).
 const RELAY = process.env.NETHERCHAT_RELAY ?? "http://localhost:3000";
 
-// joinRoute serves the join client at the clean "/join" path (its file is
-// join.html) in both the dev server and `vite preview`, preserving the query
-// string that carries ?room=…&token=….
-function joinRoute(): Plugin {
+// cleanRoutes serves the clean "/join" and "/beacon" paths (their files are
+// join.html / beacon.html) in both the dev server and `vite preview`, preserving
+// the query string (?room=…&token=… / ?room=…&key=…). Only the bare page paths are
+// rewritten; the relay's REST endpoints "/beacon/<room>" (a deeper path) are NOT
+// touched here and are reverse-proxied to the relay instead (see server.proxy).
+function cleanRoutes(): Plugin {
   const rewrite = (req: Connect.IncomingMessage): void => {
     const url = req.url ?? "";
-    if (url === "/join" || url.startsWith("/join?")) {
-      req.url = "/join.html" + url.slice("/join".length);
+    for (const page of ["/join", "/beacon"]) {
+      if (url === page || url.startsWith(page + "?")) {
+        req.url = page + ".html" + url.slice(page.length);
+        return;
+      }
     }
   };
   return {
-    name: "netherchat-join-route",
+    name: "netherchat-clean-routes",
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {
         rewrite(req);
@@ -43,7 +48,7 @@ function joinRoute(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [joinRoute()],
+  plugins: [cleanRoutes()],
   build: {
     outDir: "dist",
     emptyOutDir: true,
@@ -51,6 +56,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "index.html"),
         join: resolve(__dirname, "join.html"),
+        beacon: resolve(__dirname, "beacon.html"),
       },
     },
   },
@@ -74,6 +80,10 @@ export default defineConfig({
           });
         },
       },
+      // The beacon REST API (§1.2): GET/PUT/DELETE /beacon/<room>. The trailing
+      // segment distinguishes it from the "/beacon" page (rewritten to beacon.html
+      // by cleanRoutes), so the page and the API coexist on one origin.
+      "/beacon/": { target: RELAY, changeOrigin: true },
     },
   },
 });

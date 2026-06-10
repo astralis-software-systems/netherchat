@@ -35,6 +35,8 @@ func main() {
 		sendCmd(os.Args[2:])
 	case "tail":
 		tailCmd(os.Args[2:])
+	case "beacon-link":
+		beaconLinkCmd(os.Args[2:])
 	case "agent":
 		agentCmd(os.Args[2:])
 	case "whoami":
@@ -95,9 +97,22 @@ func connectCmd(args []string) {
 		}
 	}
 	cfg := clientConfig(*configPath)
-	if err := app.Run(url, *name, *identity, *room, *notify, *invite, *webURL, torDial, trustOf(cfg), actionQuorums(cfg)); err != nil {
+	if err := app.Run(url, *name, *identity, *room, *notify, *invite, *webURL, torDial, trustOf(cfg), actionQuorums(cfg), beaconTokens(cfg)); err != nil {
 		fatal(err)
 	}
+}
+
+// beaconTokens extracts each room's beacon write token from netherchat.toml so the
+// TUI can authorize /beacon set|clear (§1.2). A dedicated beacon_token wins;
+// otherwise the room's webhook_token is reused, mirroring the server's BeaconAuth.
+func beaconTokens(cfg config.Config) map[string]string {
+	out := make(map[string]string, len(cfg.Rooms))
+	for name, rc := range cfg.Rooms {
+		if tok, ok := rc.BeaconAuth(); ok {
+			out[name] = tok
+		}
+	}
+	return out
 }
 
 // clientConfig loads netherchat.toml for the CLIENT-side concerns it cares about —
@@ -184,6 +199,7 @@ usage:
   netherchat send    <room> "message"           send one message (or pipe stdin)
   netherchat send    --file <path> --room <room> relay a file as a secure artifact transfer
   netherchat tail    <room> [--json]             stream messages (or the ndjson event log)
+  netherchat beacon-link <room> [--ttl 2h]       mint a read-only status-beacon link (§1.2)
   netherchat agent   --room <room> --allow runbook.toml   run an edge-exec agent
   netherchat whoami  [--json]                     show your identity
   netherchat verify  <record.json> [--json]       verify a sealed record's hash chain + signatures

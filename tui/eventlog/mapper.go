@@ -89,6 +89,10 @@ func (m *Mapper) Map(ev client.Event) []Event {
 			return []Event{Vanish(m.room, e.ByName, m.fprByName(e.ByName))}
 		case "scuttle": // protocol.ActionScuttle — the dead-man's switch fired (§1.6)
 			return []Event{Scuttle(m.room, e.Reason)}
+		case "beacon_set": // protocol.ActionBeaconSet (§1.2)
+			return []Event{BeaconSet(m.room, e.ByName, m.fprByName(e.ByName), e.TTLSeconds)}
+		case "beacon_cleared": // protocol.ActionBeaconCleared (§1.2)
+			return []Event{BeaconCleared(m.room, e.ByName, m.fprByName(e.ByName))}
 		}
 		return nil // ttl / scuttle_arm are not part of the v1 event schema
 

@@ -28,6 +28,8 @@
         "verify",
         "vanish",
         "scuttle",
+        "beacon_set",
+        "beacon_cleared",
         "file_offer",
         "file_complete",
         "exec_request",

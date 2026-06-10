@@ -18,6 +18,7 @@ import (
 	"github.com/salehkreiner/netherchat/buildinfo"
 	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/server/config"
+	"github.com/salehkreiner/netherchat/server/internal/beacon"
 	"github.com/salehkreiner/netherchat/server/internal/ephemeral"
 	"github.com/salehkreiner/netherchat/server/internal/hub"
 	"github.com/salehkreiner/netherchat/server/internal/invite"
@@ -35,16 +36,17 @@ type API struct {
 	cfg       config.Config
 	invites   *invite.Store
 	ephemeral *ephemeral.Registry
+	beacons   *beacon.Store
 	log       *slog.Logger
 }
 
-// New constructs an API bound to the hub, config, invite store, and ephemeral
-// registry.
-func New(h *hub.Hub, cfg config.Config, invites *invite.Store, eph *ephemeral.Registry, log *slog.Logger) *API {
+// New constructs an API bound to the hub, config, invite store, ephemeral
+// registry, and beacon store.
+func New(h *hub.Hub, cfg config.Config, invites *invite.Store, eph *ephemeral.Registry, beacons *beacon.Store, log *slog.Logger) *API {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{hub: h, cfg: cfg, invites: invites, ephemeral: eph, log: log}
+	return &API{hub: h, cfg: cfg, invites: invites, ephemeral: eph, beacons: beacons, log: log}
 }
 
 // Register wires the REST routes onto the mux. Go 1.22+ method+path patterns.
@@ -53,6 +55,11 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /version", a.version)
 	mux.HandleFunc("GET /rooms", a.rooms)
 	mux.HandleFunc("POST /webhook/{room}", a.webhook)
+	// Status Beacon (§1.2): PUT/DELETE write (token-gated), GET reads (no auth — the
+	// ciphertext is useless without the beacon key, which never reaches the server).
+	mux.HandleFunc("PUT /beacon/{room}", a.beaconPut)
+	mux.HandleFunc("GET /beacon/{room}", a.beaconGet)
+	mux.HandleFunc("DELETE /beacon/{room}", a.beaconDelete)
 }
 
 // webhook injects an inbound message into a room from an external system (CI,

@@ -1,10 +1,11 @@
 // Standalone interop check (no test runner): decrypts the Go-produced vector and
 // runs the browser crypto round-trips. Run with: npx vite-node scripts/interop-check.ts
 // (a worker-free alternative to vitest for restricted environments).
-import { fromB64 } from "../src/crypto/base64";
+import { fromB64, toB64 } from "../src/crypto/base64";
 import { newRoomKey, ratchet, wrapRoomKey, unwrapRoomKey, sealMessage, openMessage } from "../src/crypto/group";
 import { newEphemeralIdentity, fingerprint } from "../src/crypto/identity";
 import { signingBytes } from "../src/crypto/signing";
+import { deriveBeaconKey, openBeacon } from "../src/crypto/beacon";
 
 // Protocol v3 vector (room-bound signature) from protocol's TestGenInteropVector.
 const VECTOR = {
@@ -99,6 +100,33 @@ check("decrypts Go-sealed message", new TextDecoder().decode(pt) === VECTOR.plai
   const id = newEphemeralIdentity();
   check("fingerprint format", /^[0-9A-F]{4}(:[0-9A-F]{4}){7}$/.test(fingerprint(id.signPub)));
   check("fresh identity each call", !newEphemeralIdentity().signPub.every((v, i) => v === id.signPub[i]));
+}
+
+// 9. Status Beacon (§1.2): the browser derives the same beacon key Go does and
+// decrypts a Go-sealed beacon blob — proving the beacon link reads what the TUI
+// wrote. Vector from crypto's TestGenBeaconInteropVector (room key 0x00..0x1f).
+const BEACON = {
+  beaconKeyB64: "o4qq5R8jF5zoXjiPj3reJsRFk/3Iok9ZFyJR0PJSAQQ=",
+  status: "SEV1 declared, cause under investigation",
+  blobB64:
+    "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXS7PWgytZDWAVsDrYMITE9OUrOPwZG3lWI/MvHt45gZZR5pZiyVYm/8+S9ocwrYnsP8ONSBOz3IE=",
+};
+{
+  const roomKey = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) roomKey[i] = i;
+  check("derives Go beacon key", toB64(deriveBeaconKey(roomKey)) === BEACON.beaconKeyB64);
+
+  const text = openBeacon(fromB64(BEACON.beaconKeyB64), fromB64(BEACON.blobB64));
+  check("decrypts Go-sealed beacon", text === BEACON.status);
+
+  // The message room key cannot read the beacon — a beacon reader never sees msgs.
+  let threw = false;
+  try {
+    openBeacon(roomKey, fromB64(BEACON.blobB64));
+  } catch {
+    threw = true;
+  }
+  check("room key cannot read beacon", threw);
 }
 
 console.log(failures === 0 ? "\nALL INTEROP CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);

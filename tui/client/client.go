@@ -119,6 +119,10 @@ type Client struct {
 	// (whether we initiated it or not), keyed by request_id, so the quorum gate is
 	// enforced identically on every client from the frames it sees. See action.go.
 	actions map[string]*trackedAction
+
+	// Status Beacon (§1.2): the per-room token authorizing beacon writes over REST
+	// (PUT/DELETE /beacon/<room>). Read-only beacon GETs need no token. See beacon.go.
+	beaconToken string
 }
 
 // sealTimeout bounds how long a sealer waits for co-signatures before finalizing

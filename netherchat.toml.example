@@ -75,6 +75,13 @@ quorum = 2                 # /scuttle now and /scuttle arm require a second appr
 
 [rooms.ops]
 invite_only = true        # joining requires a one-time invite token (/invite)
+# Status Beacon (§1.2): out-of-band, read-only incident status for stakeholders who
+# must NOT be in the war room. /beacon set publishes a status line encrypted to a
+# SEPARATE key (HKDF of the room secret); the relay stores one ciphertext blob it
+# cannot read, the single opt-in, TTL'd exception to zero-persistence. A room can
+# have a beacon only if beacon_token (or webhook_token) is set.
+beacon_token = "change-me-to-a-long-random-secret"  # authorizes PUT/DELETE /beacon/ops
+beacon_ttl   = "1h"                                 # how long a beacon persists (hard max 24h)
 
 [rooms.alerts]
 webhook = true            # accept POST /webhook/alerts

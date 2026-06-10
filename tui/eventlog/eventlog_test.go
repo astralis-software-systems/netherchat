@@ -22,6 +22,8 @@ func sampleEvents() []Event {
 		Message("ops", "alice", fpr, true, true, "with body", true),
 		Vanish("ops", "alice", fpr),
 		Scuttle("ops", "idle"),
+		BeaconSet("ops", "alice", fpr, 3600),
+		BeaconCleared("ops", "alice", fpr),
 		FileOffer("ops", "alice", fpr, "heap.prof", 4194304, "3f9a2b71c4d5e6f0"),
 		FileComplete("ops", "alice", fpr, "heap.prof", 4194304, "3f9a2b71c4d5e6f0", true),
 		Ack("ops", "alice", fpr, "drain-complete", "3/6"),

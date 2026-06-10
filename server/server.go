@@ -19,6 +19,7 @@ import (
 	"github.com/salehkreiner/netherchat/buildinfo"
 	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/server/internal/api"
+	"github.com/salehkreiner/netherchat/server/internal/beacon"
 	"github.com/salehkreiner/netherchat/server/internal/ephemeral"
 	"github.com/salehkreiner/netherchat/server/internal/hub"
 	"github.com/salehkreiner/netherchat/server/internal/invite"
@@ -60,7 +61,11 @@ func handlerWithStore(cfg config.Config, st store.Store, tap func([]byte), log *
 	if tap != nil {
 		transport.SetFrameTap(tap)
 	}
-	rest := api.New(h, cfg, invites, eph, log)
+	// Status Beacon store (§1.2): the single bounded exception to zero-persistence.
+	// Purged when a room is torn down (scuttle / ephemeral deadline / idle TTL).
+	beacons := beacon.New()
+	h.SetOnClose(beacons.Delete)
+	rest := api.New(h, cfg, invites, eph, beacons, log)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", transport.HandleWS)

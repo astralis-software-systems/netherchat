@@ -14,6 +14,15 @@ const (
 	// participants (TTLSeconds) before an armed scuttle fires.
 	ActionScuttle    = "scuttle"
 	ActionScuttleArm = "scuttle_arm"
+
+	// Status Beacon (§1.2): informational notices broadcast when a member sets or
+	// clears the out-of-band beacon. The beacon CONTENT travels via REST (encrypted
+	// to a separate beacon key the relay never holds); these control frames carry
+	// only metadata — who acted, and the lifetime — so a `tail --json` observer can
+	// record beacon changes in the structured event stream. They are pure relay
+	// (the default broadcast path); the server takes no action on them.
+	ActionBeaconSet     = "beacon_set"
+	ActionBeaconCleared = "beacon_cleared"
 )
 
 // Scuttle reasons carried in Control.Reason for ActionScuttle.

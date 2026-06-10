@@ -95,6 +95,37 @@ They are clearly marked in the UI ("plaintext") so no one mistakes them:
 If you need a bot/integration message to be E2E, it must come from a real client
 that holds the room key — not from a webhook.
 
+## Status Beacon — the one bounded exception to zero-persistence (§1.2)
+
+The Status Beacon is the **single place the relay deliberately holds room state**.
+It exists so out-of-band stakeholders (a VP, a support lead, a client) can watch a
+live incident status without being put in the war room — where they would see the
+raw chatter and widen the blast radius.
+
+It is a deviation from "the relay stores nothing", so it is fenced in tightly:
+
+- **One ciphertext blob per room.** `/beacon set` overwrites the previous value;
+  there is no history.
+- **Encrypted to a SEPARATE key.** The beacon is sealed under
+  `beacon_key = HKDF-SHA256(room_key, "netherchat/beacon/v1")[:32]`, derived from
+  but **distinct from** the message group key. A beacon reader who holds
+  `beacon_key` can read the status and **nothing else** — it cannot decrypt room
+  messages, which use `room_key` directly.
+- **The relay still cannot read it.** Only ciphertext is PUT to the relay; the
+  beacon key is never sent to the server. A `GET /beacon/<room>` returns opaque
+  bytes — useless without the key.
+- **Opt-in per room.** A room can have a beacon only if it sets `beacon_token` (or
+  reuses its `webhook_token`). It is never default-on.
+- **Explicitly TTL'd and auto-purged.** Each beacon has a lifetime (capped by
+  `beacon_ttl`, hard max 24h) after which it auto-expires, and it is purged the
+  moment the room scuttles or otherwise closes.
+
+The reader's link, `…/beacon?room=<room>&key=<base64 beacon_key>`, carries the
+beacon key (not the room key) and confers **no membership**: it is a read-only view
+of one mutable line. The status and the room therefore have **different
+cryptographic visibility boundaries** derived from the same session — the whole
+point of the feature.
+
 ## Persistence and history (important caveat)
 
 Persistence is **off by default**. When enabled, the server stores only

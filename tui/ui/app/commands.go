@@ -38,6 +38,8 @@ func buildCommands() *command.Set {
 		command.Command{Name: "pending", Help: "list pending privileged-action requests awaiting quorum"},
 		command.Command{Name: "ttl", Args: "<dur|off>", Help: "set a message display TTL",
 			Complete: func(p string) []string { return command.FilterPrefix([]string{"off", "10m", "1h", "24h"}, p) }},
+		command.Command{Name: "beacon", Args: `set "<text>" | clear | status | link [--ttl 2h]`, Help: "out-of-band read-only status beacon (encrypted to a separate key)",
+			Complete: func(p string) []string { return command.FilterPrefix([]string{"set", "clear", "status", "link"}, p) }},
 		command.Command{Name: "exec", Args: "<action>", Help: "request an edge agent run a runbook action (signed, E2E)"},
 		command.Command{Name: "send", Args: "<path>", Help: "relay a file to the room as a secure artifact transfer (E2E, relay-blind)",
 			Complete: completeFilePath},
@@ -102,6 +104,8 @@ func (m *Model) runCommand(input string) tea.Cmd {
 		m.runPending(r)
 	case "ttl":
 		m.runTTL(r, arg)
+	case "beacon":
+		m.runBeacon(r, arg)
 	case "exec":
 		if !m.connected(r) {
 			break
@@ -590,6 +594,106 @@ func remainingSecs(expiresUnix int64, now time.Time) int {
 	s := int(time.Unix(expiresUnix, 0).Sub(now).Seconds())
 	if s < 0 {
 		return 0
+	}
+	return s
+}
+
+// defaultBeaconTTL is the beacon link's default lifetime, and the persistence
+// requested by /beacon set (the server clamps it to the room's beacon_ttl). The
+// hard ceiling is 24h.
+const defaultBeaconTTL = time.Hour
+const maxBeaconTTL = 24 * time.Hour
+
+// runBeacon implements /beacon (§1.2): publish, clear, read, or link an out-of-band
+// status beacon. The status is encrypted to a beacon key DISTINCT from the room key
+// and stored on the relay as opaque ciphertext, so a beacon reader can see status
+// without ever reading room messages.
+func (m *Model) runBeacon(r *room, arg string) {
+	if !m.connected(r) {
+		return
+	}
+	sub, rest, _ := strings.Cut(strings.TrimSpace(arg), " ")
+	switch strings.ToLower(sub) {
+	case "set":
+		status := unquote(strings.TrimSpace(rest))
+		if status == "" {
+			m.addError(`usage: /beacon set "<status text>"`)
+			return
+		}
+		r.client.SetBeacon(status, int(defaultBeaconTTL.Seconds()))
+	case "clear":
+		r.client.ClearBeacon()
+	case "status":
+		r.client.FetchBeaconStatus()
+	case "link":
+		m.runBeaconLink(r, rest)
+	case "":
+		m.addError(`usage: /beacon set "<text>" | clear | status | link [--ttl 2h]`)
+	default:
+		m.addError("unknown /beacon subcommand " + sub + `  ·  set "<text>" | clear | status | link`)
+	}
+}
+
+// runBeaconLink mints the read-only beacon URL embedding the beacon key — the only
+// thing a reader needs to decrypt the status (and nothing else). The link confers
+// no room membership and cannot read messages.
+func (m *Model) runBeaconLink(r *room, arg string) {
+	ttl, err := parseBeaconLinkTTL(arg)
+	if err != nil {
+		m.addError(err.Error())
+		return
+	}
+	key, ok := r.client.BeaconKeyB64()
+	if !ok {
+		m.addError("room key not established yet — cannot derive the beacon key")
+		return
+	}
+	link := m.beaconLink(r.name, key, int(ttl.Seconds()))
+	m.addSystem("beacon read-only link (status only — confers no room access; share out of band):\n  " + link)
+}
+
+// beaconLink builds the browser read URL for a room beacon: the web /beacon page
+// with the room, the base64 beacon key, and the link's stated lifetime.
+func (m *Model) beaconLink(room, keyB64 string, ttlSeconds int) string {
+	base := strings.TrimRight(m.webBase(), "/")
+	q := url.Values{"room": {room}, "key": {keyB64}, "ttl": {strconv.Itoa(ttlSeconds)}}
+	return base + "/beacon?" + q.Encode()
+}
+
+// parseBeaconLinkTTL parses an optional "--ttl <dur>" (default 1h, max 24h).
+func parseBeaconLinkTTL(arg string) (time.Duration, error) {
+	fields := strings.Fields(arg)
+	ttl := defaultBeaconTTL
+	for i := 0; i < len(fields); i++ {
+		flag := fields[i]
+		val := ""
+		if eq := strings.IndexByte(flag, '='); eq >= 0 {
+			flag, val = flag[:eq], flag[eq+1:]
+		} else if i+1 < len(fields) {
+			val = fields[i+1]
+			i++
+		}
+		if strings.TrimLeft(flag, "-") != "ttl" {
+			return 0, fmt.Errorf("usage: /beacon link [--ttl 2h]")
+		}
+		d, perr := time.ParseDuration(val)
+		if perr != nil || d <= 0 {
+			return 0, fmt.Errorf("bad --ttl %q  (e.g. 30m, 1h, 24h)", val)
+		}
+		ttl = d
+	}
+	if ttl > maxBeaconTTL {
+		ttl = maxBeaconTTL
+	}
+	return ttl, nil
+}
+
+// unquote strips one layer of surrounding single or double quotes from s.
+func unquote(s string) string {
+	if len(s) >= 2 {
+		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+			return s[1 : len(s)-1]
+		}
 	}
 	return s
 }

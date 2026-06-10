@@ -36,6 +36,11 @@ type Hub struct {
 	rooms map[string]*room
 	cfg   config.Config
 	log   *slog.Logger
+
+	// onClose, if set, is called with a room name whenever that room is torn down
+	// out of band (scuttle, ephemeral deadline, idle TTL) — used to purge the room's
+	// Status Beacon (§1.2). It is set once at startup, before any room exists.
+	onClose func(room string)
 }
 
 // New returns a hub and starts the TTL janitor that expires idle rooms whose
@@ -47,6 +52,16 @@ func New(cfg config.Config, log *slog.Logger) *Hub {
 	h := &Hub{rooms: make(map[string]*room), cfg: cfg, log: log}
 	go h.janitor()
 	return h
+}
+
+// SetOnClose registers a callback fired with a room name when that room is torn
+// down out of band (scuttle / ephemeral deadline / idle TTL). Set once at startup.
+func (h *Hub) SetOnClose(fn func(room string)) { h.onClose = fn }
+
+func (h *Hub) fireClose(room string) {
+	if h.onClose != nil {
+		h.onClose(room)
+	}
 }
 
 // JoinResult tells the transport what follow-up actions to take after a member
@@ -130,6 +145,7 @@ func (h *Hub) ExpireRoom(roomName, reason string) {
 
 	h.log.Info("room expired", "room", roomName, "members", len(members))
 	closeMembers(members, reason)
+	h.fireClose(roomName) // purge the room's beacon (§1.2)
 }
 
 // closeMembers sends a closing system notice to each member and then terminates
@@ -340,5 +356,6 @@ func (h *Hub) expireIdleRooms() {
 	for _, v := range victims {
 		h.log.Info("room expired (idle ttl)", "room", v.name, "members", len(v.members))
 		closeMembers(v.members, "this room has expired (ttl) and is closing")
+		h.fireClose(v.name) // purge the room's beacon (§1.2)
 	}
 }

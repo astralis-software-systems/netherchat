@@ -65,6 +65,23 @@ func TestMapperActionEvents(t *testing.T) {
 	}
 }
 
+// TestMapperBeaconEvents proves the beacon_set/beacon_cleared controls (§1.2) map
+// to the corresponding metadata-only events (never any status content).
+func TestMapperBeaconEvents(t *testing.T) {
+	m := NewMapper("ops", false)
+	m.Map(client.EvMemberJoined{ID: "1", Name: "alice", Fingerprint: fpr}) // seed the directory
+
+	set := m.Map(client.EvControl{Action: "beacon_set", ByName: "alice", TTLSeconds: 3600})
+	if len(set) != 1 || set[0].Type != "beacon_set" || set[0].Actor != "alice" || set[0].TTLSeconds != 3600 || set[0].Fpr != fpr {
+		t.Fatalf("beacon_set mapping = %+v", set)
+	}
+
+	clr := m.Map(client.EvControl{Action: "beacon_cleared", ByName: "alice"})
+	if len(clr) != 1 || clr[0].Type != "beacon_cleared" || clr[0].Actor != "alice" {
+		t.Fatalf("beacon_cleared mapping = %+v", clr)
+	}
+}
+
 // TestMapperControlNonScuttle proves ttl and scuttle_arm controls are not part of
 // the v1 event schema (they map to nothing).
 func TestMapperControlNonScuttle(t *testing.T) {

@@ -16,6 +16,7 @@ Type these in the message box. Tab completes command names and arguments.
 | `/break-glass --invite a,b --ttl 4h` | Stand up an ephemeral, invite-only **war room** with a hard TTL and a one-time browser join link for each named person. See below. |
 | `/vanish` | Rotate the room key forward (HKDF ratchet) and clear history for everyone — messages from before are no longer decryptable. |
 | `/ttl <dur\|off>` | Set a client-side message display TTL (e.g. `/ttl 1h`, `/ttl off`). |
+| `/beacon set "<text>"` · `clear` · `status` · `link [--ttl 2h]` | Out-of-band, read-only **status beacon** (§1.2). `set` publishes a status line encrypted to a separate key; `status` reads it; `clear` removes it; `link` mints a read-only browser URL to share with stakeholders who never join the room. See below. |
 | `/exec <action>` | Send a signed, E2E-encrypted request for a `netherchat agent` to run a runbook action on its own host. The relay never runs anything. See below. |
 | `/approve <id> [confirm]` | Approve a pending privileged action (the **Two-Person Rule**). Without `confirm` it shows exactly what you'd endorse; `confirm` signs and sends. You cannot approve your own request. See below. |
 | `/veto <id> [reason]` | Cancel a pending privileged action immediately. Any member may veto. See below. |
@@ -218,6 +219,46 @@ exact action, so an approval of `scuttle room=ops` can't be replayed to approve
 quorum state is in memory only (a client restart clears pending requests). For the
 agent runbook gate, run `netherchat agent --config netherchat.toml` so it reads
 `[action.runbook]`.
+
+## Status Beacon — out-of-band incident status (`/beacon`)
+
+During a SEV1, execs and support leads want status without being dropped into the
+war room (where they'd see raw chatter and widen the blast radius). The beacon
+publishes a single mutable status line readable through a short-TTL link, encrypted
+to a **separate key** so a reader sees the status but **never the room messages**.
+
+Enable it per room in `netherchat.toml`:
+
+```toml
+[rooms.ops]
+beacon_token = "a-long-random-secret"   # authorizes /beacon set and /beacon clear
+beacon_ttl   = "1h"                      # how long a beacon persists (max 24h)
+```
+
+Then, from the TUI:
+
+```
+/beacon set "Cause isolated, mitigation deploying, ETA 20m"   # publish/update
+/beacon status                                                # read it back (decrypts locally)
+/beacon clear                                                 # remove it
+/beacon link --ttl 2h                                         # mint a read-only browser URL
+```
+
+`netherchat beacon-link <room> --ttl 2h` does the same from the shell (it joins the
+room briefly to derive the beacon key, prints the URL, and exits). The URL looks
+like `https://chat.example.com/beacon?room=ops&key=<base64>&ttl=7200`: paste it into
+your (untrusted, persisted) corporate chat and stakeholders watch a live status
+line. The `key` is the **beacon key only** — it cannot decrypt messages and confers
+no membership.
+
+How it stays honest: the status is sealed with
+`beacon_key = HKDF-SHA256(room_key, "netherchat/beacon/v1")`, distinct from the
+message key; the relay stores **one ciphertext blob per room** (the single,
+opt-in, TTL'd exception to zero-persistence) and cannot read it; and the beacon is
+auto-purged when the room scuttles. The read view is a stripped, read-only web page
+— no message list, no join. See [encryption.md](encryption.md) for the full
+write-up. Beacon changes appear in `tail --json` as `beacon_set` / `beacon_cleared`
+events (metadata only — never the status text).
 
 ## Keys
 

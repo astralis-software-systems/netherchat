@@ -298,6 +298,26 @@ type EvActionExpired struct {
 	At                time.Time
 }
 
+// --- Status Beacon (§1.2) ---------------------------------------------------
+
+// EvBeaconResult is the outcome of a /beacon set or /beacon clear: OK on success,
+// or Err with a reason. Action is "set" or "clear".
+type EvBeaconResult struct {
+	Action string // "set" | "clear"
+	OK     bool
+	Err    string
+}
+
+// EvBeaconStatus is the result of /beacon status: the decrypted status line (when
+// Set), the time it was last updated, or Err on failure. Set is false when no
+// beacon exists for the room.
+type EvBeaconStatus struct {
+	Set       bool
+	Text      string
+	UpdatedAt time.Time
+	Err       string
+}
+
 // EvMessage is a decrypted chat message (Self is true for the local echo of our
 // own outgoing messages). Signed reports whether a valid Ed25519 signature was
 // present (§3.3); unsigned legacy messages still arrive (Signed=false).
@@ -390,6 +410,8 @@ func (EvActionApproval) isEvent()    {}
 func (EvActionExecuted) isEvent()    {}
 func (EvActionVetoed) isEvent()      {}
 func (EvActionExpired) isEvent()     {}
+func (EvBeaconResult) isEvent()      {}
+func (EvBeaconStatus) isEvent()      {}
 func (EvKeyReady) isEvent()          {}
 func (EvMessage) isEvent()           {}
 func (EvServerMessage) isEvent()     {}

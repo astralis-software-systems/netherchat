@@ -134,6 +134,52 @@ type RoomConfig struct {
 	WebhookToken string        `toml:"webhook_token"`
 	TTL          Duration      `toml:"ttl"`
 	Scuttle      ScuttlePolicy `toml:"scuttle"`
+
+	// Status Beacon (§1.2): out-of-band, read-only incident status. BeaconToken
+	// gates PUT/DELETE /beacon/<room> (opt-in: a room with no beacon_token — and no
+	// webhook_token to fall back on — cannot have a beacon set). BeaconTTL caps how
+	// long a beacon persists before it auto-purges (default 24h, hard max 24h). The
+	// relay stores only ciphertext; the beacon key is never sent to it.
+	BeaconToken string   `toml:"beacon_token"`
+	BeaconTTL   Duration `toml:"beacon_ttl"`
+}
+
+// BeaconAuth returns the token that authorizes beacon writes for a room and
+// whether the beacon is enabled at all (§1.2). A dedicated beacon_token wins;
+// otherwise the room's webhook_token is reused. A room with neither cannot have a
+// beacon set — beacons are strictly opt-in, never default-on.
+func (c RoomConfig) BeaconAuth() (token string, enabled bool) {
+	if c.BeaconToken != "" {
+		return c.BeaconToken, true
+	}
+	if c.WebhookToken != "" {
+		return c.WebhookToken, true
+	}
+	return "", false
+}
+
+// BeaconMaxTTL is the hard ceiling on a beacon's lifetime regardless of config.
+const BeaconMaxTTL = 24 * time.Hour
+
+// BeaconLifetime clamps a requested beacon TTL (seconds) to [1m, configured max],
+// where the configured max is beacon_ttl (default 24h), itself capped at
+// BeaconMaxTTL. A non-positive request falls back to 1h.
+func (c RoomConfig) BeaconLifetime(requestedSeconds int) time.Duration {
+	max := c.BeaconTTL.Std()
+	if max <= 0 || max > BeaconMaxTTL {
+		max = BeaconMaxTTL
+	}
+	d := time.Duration(requestedSeconds) * time.Second
+	if d <= 0 {
+		d = time.Hour
+	}
+	if d > max {
+		d = max
+	}
+	if d < time.Minute {
+		d = time.Minute
+	}
+	return d
 }
 
 // ScuttlePolicy is the per-room dead-man's switch (§1.6): the room burns its keys

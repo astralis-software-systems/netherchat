@@ -35,6 +35,7 @@ type Model struct {
 	trust                              []TrustEntry            // client-side identity pins from netherchat.toml
 	verified                           map[string]*verifyEntry // SAS-verification state, keyed by peer fingerprint
 	actionQuorum                       map[string]int          // [action.<name>] quorum from netherchat.toml (Two-Person Rule, §1.3)
+	beaconTokens                       map[string]string       // room -> beacon_token from netherchat.toml (Status Beacon, §1.2)
 
 	cmds     *command.Set
 	theme    theme.Theme
@@ -65,13 +66,14 @@ type Model struct {
 // when non-empty, routes every room's dial through that Tor SOCKS5 proxy so a
 // ws://<addr>.onion relay is reachable (§1.5). trust holds the client-side
 // identity pins parsed from netherchat.toml.
-func Run(url, name, identityPath, room, notifyCmd, invite, webURL, torProxy string, trust []TrustEntry, actionQuorum map[string]int) error {
+func Run(url, name, identityPath, room, notifyCmd, invite, webURL, torProxy string, trust []TrustEntry, actionQuorum map[string]int, beaconTokens map[string]string) error {
 	m := newModel(url, name, identityPath, room, notifyCmd)
 	m.initialInvite = invite
 	m.webURL = webURL
 	m.torProxy = torProxy
 	m.trust = trust
 	m.actionQuorum = actionQuorum
+	m.beaconTokens = beaconTokens
 	// Enable Bubble Tea mouse capture only when the model defaults to it. On Windows
 	// it defaults OFF so the user keeps native terminal text selection (capture
 	// steals the mouse); mac/Linux terminals handle capture better and default ON.
@@ -340,6 +342,9 @@ func (m *Model) onRoomConnected(msg roomConnectedMsg) tea.Cmd {
 	}
 	r.client = msg.c
 	r.connected = true
+	if tok := m.beaconTokens[msg.name]; tok != "" {
+		msg.c.UseBeaconToken(tok) // authorize /beacon set|clear for this room (§1.2)
+	}
 	if m.fingerprint == "" {
 		m.fingerprint = msg.c.Fingerprint()
 		m.source = msg.c.Source()
@@ -442,6 +447,23 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 			}
 			d := time.Duration(e.TTLSeconds) * time.Second
 			r.appendSystem(fmt.Sprintf("⏳ %s armed auto-scuttle — this room burns in %s", who, d))
+		case "beacon_set":
+			// Another member updated the out-of-band status beacon (§1.2). Informational
+			// — no content crosses the room; the status went out via REST.
+			who := e.ByName
+			if who == "" {
+				who = "someone"
+			}
+			r.appendSystem("📡 " + who + " updated the status beacon")
+			if name != m.active {
+				r.unread++
+			}
+		case "beacon_cleared":
+			who := e.ByName
+			if who == "" {
+				who = "someone"
+			}
+			r.appendSystem("📡 " + who + " cleared the status beacon")
 		}
 
 	case client.EvExecRequest:
@@ -610,6 +632,30 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 	case client.EvActionExpired:
 		r.appendSystem(fmt.Sprintf("✗ Request expired without quorum (%d/%d approvals): %s",
 			e.ApprovalsReceived, e.QuorumNeeded, shortAction(e.Action)))
+
+	case client.EvBeaconResult:
+		switch {
+		case e.Err != "":
+			r.appendError("beacon " + e.Action + " failed: " + e.Err)
+		case e.Action == "clear":
+			r.appendSystem("✓ beacon cleared")
+		default:
+			r.appendSystem("✓ beacon updated")
+		}
+
+	case client.EvBeaconStatus:
+		switch {
+		case e.Err != "":
+			r.appendError("beacon status failed: " + e.Err)
+		case !e.Set:
+			r.appendSystem("beacon: (not set)")
+		default:
+			when := ""
+			if !e.UpdatedAt.IsZero() {
+				when = "  (updated " + e.UpdatedAt.Local().Format("15:04:05") + ")"
+			}
+			r.appendSystem("beacon: " + e.Text + when)
+		}
 
 	case client.EvFileOffer:
 		r.appendSystem(renderFileOffer(e))

@@ -227,6 +227,23 @@ func RouteFired(room string, triggerRule int, invitees []string, ttlSeconds int)
 	return e
 }
 
+// BeaconSet builds a beacon_set event (§1.2): actor published/updated the room's
+// out-of-band status beacon with a lifetime of ttlSeconds. The status content is
+// never in the event stream — only that a beacon was set.
+func BeaconSet(room, actor, fpr string, ttlSeconds int) Event {
+	e := base("beacon_set", room)
+	e.Actor, e.Fpr, e.TTLSeconds = actor, fpr, ttlSeconds
+	return e
+}
+
+// BeaconCleared builds a beacon_cleared event (§1.2): actor removed the room's
+// beacon.
+func BeaconCleared(room, actor, fpr string) Event {
+	e := base("beacon_cleared", room)
+	e.Actor, e.Fpr = actor, fpr
+	return e
+}
+
 func Verify(room, actor, fpr, target, targetFpr string, ok bool) Event {
 	e := base("verify", room)
 	e.Actor, e.Fpr, e.Target, e.TargetFpr, e.OK = actor, fpr, target, targetFpr, Bool(ok)
