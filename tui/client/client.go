@@ -876,7 +876,13 @@ func (c *Client) handleEncrypted(op protocol.Op, m protocol.Message) {
 		var body protocol.AckBody
 		if json.Unmarshal(pt, &body) == nil && body.Tag != "" {
 			quorum := c.recordAck(body.Tag, fpr)
-			c.emit(EvAck{Tag: body.Tag, Actor: sender.name, Fpr: fpr, Quorum: quorum, At: now})
+			// Carry the original frame signature and the bytes it covers so the
+			// Two-Way Bridge (§1.6) can forward verifiable provenance.
+			signBytes := protocol.SigningBytes(c.room, m.FromID, m.Epoch, m.Nonce, m.Ciphertext)
+			c.emit(EvAck{
+				Tag: body.Tag, Actor: sender.name, Fpr: fpr, Quorum: quorum, At: now,
+				Sig: m.Sig, SignBytes: signBytes, Raw: append([]byte(nil), pt...),
+			})
 		}
 	case protocol.OpHandoff:
 		var body protocol.HandoffBody
@@ -888,7 +894,10 @@ func (c *Client) handleEncrypted(op protocol.Op, m protocol.Message) {
 	case protocol.OpRecordEntry:
 		var e record.Entry
 		if json.Unmarshal(pt, &e) == nil {
-			c.onRecordEntry(e)
+			// Pass the frame signature and the bytes it covers so the Two-Way
+			// Bridge (§1.6) can forward verifiable provenance for decision/action.
+			signBytes := protocol.SigningBytes(c.room, m.FromID, m.Epoch, m.Nonce, m.Ciphertext)
+			c.onRecordEntry(e, m.Sig, signBytes, pt)
 		}
 	case protocol.OpSealRequest:
 		var body protocol.SealRequestBody

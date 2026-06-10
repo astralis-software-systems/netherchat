@@ -82,23 +82,27 @@ func (c *Client) appendRecord(kind, actionee, body string) error {
 	if err := c.sealAndSend(protocol.OpRecordEntry, b); err != nil {
 		return err
 	}
-	c.emitRecordEntry(e, true)
+	c.emitRecordEntry(e, true, nil, nil, nil)
 	return nil
 }
 
-// emitRecordEntry surfaces a chain entry to the consumer.
-func (c *Client) emitRecordEntry(e record.Entry, self bool) {
+// emitRecordEntry surfaces a chain entry to the consumer. sig/signBytes/raw carry
+// the originating frame's provenance for the Two-Way Bridge (§1.6) and are nil for
+// our own echo (we never receive our own frame back).
+func (c *Client) emitRecordEntry(e record.Entry, self bool, sig, signBytes, raw []byte) {
 	c.emit(EvRecordEntry{
 		Seq: e.Seq, Kind: e.Kind, AuthorName: e.AuthorName, AuthorFpr: e.AuthorID,
 		Actionee: e.Actionee, Body: e.Body, Self: self, Replayed: e.Replayed, At: time.Unix(e.TS, 0),
+		Sig: sig, SignBytes: signBytes, Raw: raw,
 	})
 }
 
 // onRecordEntry handles a decrypted record entry from another member: verify it
 // and that it links onto our chain, append, and echo. A rejected entry (bad
 // signature, fork, out of order) is surfaced as an error and dropped, leaving the
-// local chain a valid prefix.
-func (c *Client) onRecordEntry(e record.Entry) {
+// local chain a valid prefix. sig/signBytes/raw are the originating frame's
+// provenance, forwarded to the consumer for the Two-Way Bridge (§1.6).
+func (c *Client) onRecordEntry(e record.Entry, sig, signBytes, raw []byte) {
 	c.mu.Lock()
 	err := c.chain.AppendRemote(e)
 	c.mu.Unlock()
@@ -106,7 +110,7 @@ func (c *Client) onRecordEntry(e record.Entry) {
 		c.emit(EvError{Err: fmt.Errorf("record entry rejected: %w", err)})
 		return
 	}
-	c.emitRecordEntry(e, false)
+	c.emitRecordEntry(e, false, sig, signBytes, raw)
 }
 
 // Seal drives the multi-party seal handshake (§1.4). Its behavior depends on

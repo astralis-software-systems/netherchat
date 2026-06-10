@@ -115,13 +115,24 @@ type EvKeyReady struct{ Epoch uint64 }
 // EvAck is a decrypted, signature-verified coordination ack (§2.2): someone ran
 // /ack <tag>. Quorum is the running "<acked>/<members>" count from THIS client's
 // view of the room at the moment the ack was counted. Self marks our own echo.
+//
+// Sig/SignBytes/Raw carry the event's provenance for the Two-Way Bridge (§1.6),
+// populated only on the inbound (wire) path — a peer's ack we decrypted and
+// verified. Sig is the acker's raw Ed25519 signature over the in-room frame;
+// SignBytes is the exact protocol.SigningBytes(...) that Sig covers (so a
+// receiver can re-verify provenance against the acker's public key); Raw is the
+// decrypted event JSON. They are nil on our own echo (Self) and never carry key
+// material.
 type EvAck struct {
-	Tag    string
-	Actor  string // display name of the acker
-	Fpr    string // ssh fingerprint of the acker's identity key
-	Quorum string // e.g. "3/6"
-	Self   bool
-	At     time.Time
+	Tag       string
+	Actor     string // display name of the acker
+	Fpr       string // ssh fingerprint of the acker's identity key
+	Quorum    string // e.g. "3/6"
+	Self      bool
+	At        time.Time
+	Sig       []byte // raw Ed25519 signature over the original frame (nil on Self)
+	SignBytes []byte // canonical bytes Sig covers — protocol.SigningBytes(...) (nil on Self)
+	Raw       []byte // the raw decrypted event JSON (nil on Self)
 }
 
 // EvHandoff is a decrypted, signature-verified incident-commander handoff (§2.2):
@@ -149,6 +160,13 @@ type EvRecordEntry struct {
 	Self       bool
 	Replayed   bool
 	At         time.Time
+
+	// Provenance for the Two-Way Bridge (§1.6), populated only on the inbound
+	// (wire) path — a peer's entry we decrypted and verified. See EvAck for the
+	// meaning of each; nil on our own echo (Self) and on replayed entries.
+	Sig       []byte // raw Ed25519 signature over the original frame
+	SignBytes []byte // canonical bytes Sig covers — protocol.SigningBytes(...)
+	Raw       []byte // the raw decrypted event JSON
 }
 
 // EvSealRequest is emitted when a seal of the record is proposed (§1.4): either

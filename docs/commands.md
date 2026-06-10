@@ -260,6 +260,148 @@ auto-purged when the room scuttles. The read view is a stripped, read-only web p
 write-up. Beacon changes appear in `tail --json` as `beacon_set` / `beacon_cleared`
 events (metadata only — never the status text).
 
+## Two-Way Bridge — closing the alert→ack→resolve loop (`netherchat bridge`)
+
+Inbound already works: an alert fires a webhook, a `[[route]]` rule spawns a war
+room, the on-call joins. The loop closes here. When someone acks in the room, the
+bridge fires a templated callback to **your own** system (PagerDuty, Alertmanager,
+Slack, an ITSM webhook) so one `/ack` actually resolves the page — and the callback
+carries the **original in-room Ed25519 signature**, so the receiver can verify the
+action came from a real room member, not a forged `curl`.
+
+```bash
+netherchat bridge --room ops \
+  --on decision,ack \
+  --post http://localhost:9999/callback \
+  --json
+```
+
+The honesty constraint *is* the feature. The relay is **blind** — it cannot read a
+decision to act on it — so the bridge can't be a server-side component. It joins as
+an ordinary **decrypting member**, decrypts the events it subscribes to, and fires
+callbacks **from the edge**. That is exactly why provenance works: the signature
+comes from the in-room frame, not from a server's say-so.
+
+```
+--room      room to join and watch (required)
+--on        event types to fire on: decision, action, ack, seal, vanish, scuttle
+            (default: decision,action,ack)
+--post      URL to POST callbacks to (required) — YOUR system; Astralis makes no
+            outbound calls on your behalf
+--template  path to a Go text/template for the POST body (default: built-in JSON)
+--name      display name in the room (default: bridge)
+--identity  identity file (generated if not found)
+--json      emit an ndjson stream of bridge events to stdout
+```
+
+### Ephemerality guard (by design, not a limitation)
+
+> **Callbacks are fire-and-forget with in-memory retry only** (bounded exponential
+> backoff: 1s, 2s, 4s — one attempt plus three retries). **If the bridge restarts,
+> pending callbacks are lost.** This is intentional: a durable on-disk queue would
+> re-introduce persistence and violate Netherchat's zero-persistence constraint. For
+> reliable delivery, run the bridge on stable infrastructure and make the receiver
+> **idempotent**.
+
+### Callback headers
+
+Every POST carries:
+
+| Header | Value |
+|---|---|
+| `Content-Type` | `application/json` |
+| `X-Netherchat-Room` | the room name |
+| `X-Netherchat-Event` | `decision` / `action` / `ack` / `seal` / `vanish` / `scuttle` |
+| `X-Netherchat-Actor` | the actor's display name |
+| `X-Netherchat-Fpr` | the actor's Ed25519 fingerprint (`SHA256:…`) |
+| `X-Netherchat-Sig` | base64 of the **original** Ed25519 signature from the event |
+| `X-Netherchat-Ts` | RFC3339 timestamp |
+
+`X-Netherchat-Fpr` and `X-Netherchat-Sig` are present for the per-event-signed types
+(`decision`, `action`, `ack`) — the default `--on` set. `vanish` and `scuttle` travel
+as **unsigned relay control frames**, so they carry no per-event signature; `seal` is
+multi-party co-signed and has no single forwardable signature. Those events fire the
+callback (with `--on` opt-in) but omit the `Sig`/`Fpr` headers.
+
+### POST body template
+
+Without `--template`, the body is this built-in JSON (rendered injection-safe — a
+decision or tag containing a quote still yields valid JSON):
+
+```json
+{
+  "room":      "ops",
+  "event":     "ack",
+  "actor":     "alice",
+  "actor_fpr": "SHA256:…",
+  "text":      "drain-complete",
+  "ts":        "2026-06-10T03:14:22Z",
+  "sig":       "<base64 Ed25519 sig>"
+}
+```
+
+A custom Go `text/template` (`--template pd-resolve.tmpl`) has these variables:
+
+| Variable | Meaning |
+|---|---|
+| `.Room` | room name |
+| `.Event` | event type |
+| `.Actor` | actor display name |
+| `.ActorFpr` | actor Ed25519 fingerprint |
+| `.Text` | human description — ack: the tag · decision: the text · action: `@handle: text` · seal: `room sealed, N decisions recorded` · vanish: `room keys rotated by @actor` · scuttle: `room scuttled, reason: <reason>` |
+| `.Ts` | RFC3339 timestamp |
+| `.Sig` | base64 of the original Ed25519 signature |
+| `.Raw` | the raw decrypted event JSON (for advanced templates) |
+
+`.RoomSecret` is deliberately **not** a variable — key material can never be
+exfiltrated through a template. A `{{json .Field}}` helper is available so custom
+templates can embed any value as a valid JSON literal.
+
+### Example use cases
+
+```bash
+# Resolve a PagerDuty incident when someone acks
+netherchat bridge --room ops --on ack \
+  --post https://events.pagerduty.com/v2/enqueue --template pd-resolve.tmpl
+
+# Silence an Alertmanager alert on a decision
+netherchat bridge --room ops --on decision \
+  --post http://alertmanager:9093/api/v2/silences --template silence.tmpl
+
+# Post status to Slack from the encrypted war room (not the other way around)
+netherchat bridge --room ops --on decision,ack \
+  --post https://hooks.slack.com/services/... --template slack.tmpl
+
+# Generic webhook (CI, monitoring, ITSM)
+netherchat bridge --room ops --on decision,action,ack,seal \
+  --post https://your-system.example.com/netherchat-events
+```
+
+### Verifying provenance on the receiver
+
+The `X-Netherchat-Sig` header proves the callback came from a real room member:
+
+1. Fetch the actor's public key — `github.com/<actor>.keys`, or the `[[trust]]`
+   pinning in `netherchat.toml`.
+2. Verify the Ed25519 signature against the original signing bytes (the canonical
+   format in `protocol/signing.go`: room id, sender id, epoch, nonce, ciphertext).
+3. If valid, the callback genuinely came from a member who held the room key at the
+   time of the event — cryptographically attributable, not just "netherchat says so."
+
+The bridge is itself a decrypting member, so it verifies each event's signature
+*before* firing; the header forwards that same signature so the receiver can
+re-verify against the actor's key.
+
+### `bridge --json` output
+
+`--json` emits one ndjson line per delivered callback (the human default prints
+`[03:14:22] ack:drain-complete fired → https://… (200 OK)` and per-retry progress):
+
+```json
+{"v":1,"ts":"…","type":"bridge_fired","room":"ops","event":"ack","actor":"alice","fpr":"SHA256:…","url":"https://…","status":200,"retries":0}
+{"v":1,"ts":"…","type":"bridge_failed","room":"ops","event":"ack","actor":"alice","fpr":"SHA256:…","url":"https://…","error":"connection refused","retries":3}
+```
+
 ## Keys
 
 | Key | Action |
