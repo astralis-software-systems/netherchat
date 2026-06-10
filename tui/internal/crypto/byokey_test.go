@@ -55,6 +55,37 @@ func TestSSHKeyFileFingerprintMatchesSSH(t *testing.T) {
 	}
 }
 
+// TestExplicitIdentityGeneratesIfMissing proves --identity <path> generates and
+// saves a fresh keypair when the file does not exist, and that a second resolve
+// with the same path loads the identical keypair (same fingerprint) — what makes
+// `--identity ./bob.json` work for first-run multi-identity testing.
+func TestExplicitIdentityGeneratesIfMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bob-identity.json")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("precondition: %s should not exist", path)
+	}
+
+	id, err := ResolveIdentity(path)
+	if err != nil {
+		t.Fatalf("resolve (generate): %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("identity file was not created: %v", err)
+	}
+	if !strings.HasPrefix(id.Fingerprint(), "SHA256:") {
+		t.Fatalf("generated fingerprint malformed: %s", id.Fingerprint())
+	}
+
+	// A second resolve with the same path loads the SAME keypair, not a new one.
+	id2, err := ResolveIdentity(path)
+	if err != nil {
+		t.Fatalf("resolve (load existing): %v", err)
+	}
+	if id.Fingerprint() != id2.Fingerprint() {
+		t.Fatalf("second resolve produced a different keypair:\n first %s\nsecond %s", id.Fingerprint(), id2.Fingerprint())
+	}
+}
+
 // TestAgeIdentityRoundTrip checks the Bech32 decoder and the age load path: a
 // 32-byte secret encoded as an AGE-SECRET-KEY decodes back to the same bytes and
 // yields a working identity.

@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 )
@@ -20,6 +21,22 @@ import (
 // explicit --identity that fails is a hard error (the operator named that key).
 func ResolveIdentity(explicitPath string) (*Identity, error) {
 	if explicitPath != "" {
+		// If the named identity file does not exist yet, generate a fresh keypair and
+		// save it there (legacy JSON), exactly as the default-path cascade does for
+		// the generated identity. This makes `--identity ./bob.json` usable for
+		// first-run multi-identity testing on one machine — the file is a default
+		// location, not a precondition. A subsequent run with the same path loads the
+		// same keypair (loadFromPath → loadIdentityFile).
+		if _, err := os.Stat(explicitPath); errors.Is(err, os.ErrNotExist) {
+			id, gerr := GenerateIdentity()
+			if gerr != nil {
+				return nil, gerr
+			}
+			if serr := id.Save(explicitPath); serr != nil {
+				return nil, serr
+			}
+			return id, nil
+		}
 		return loadFromPath(explicitPath, true)
 	}
 
