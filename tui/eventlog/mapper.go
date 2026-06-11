@@ -113,6 +113,15 @@ func (m *Mapper) Map(ev client.Event) []Event {
 		// display name; the offer carried the fingerprint).
 		return []Event{FileComplete(m.room, e.From, m.fprByName(e.From), e.Filename, e.Size, e.TransferID, e.OK)}
 
+	case client.EvStreamUpdate:
+		if e.Self {
+			return nil
+		}
+		return []Event{StreamUpdate(m.room, e.From, e.Fpr, e.StreamID)}
+
+	case client.EvStreamEnd:
+		return []Event{StreamEnd(m.room, e.StreamID, e.Reason)}
+
 	case client.EvError:
 		return []Event{ErrorEvent(m.room, e.Err.Error())}
 

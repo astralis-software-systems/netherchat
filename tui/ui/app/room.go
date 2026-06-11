@@ -18,7 +18,8 @@ const (
 	lineExec                    // edge-exec request/result — E2E, signed, attributable
 	lineRecord                  // sealed-record entry (/decide /action /mark, or a /replay)
 	lineError
-	lineRaw // pre-rendered multi-line block (e.g. an invite QR), not wrapped
+	lineRaw    // pre-rendered multi-line block (e.g. an invite QR), not wrapped
+	lineStream // a live-log stream block (§2.2); text holds the stream_id, content is in room.streams
 )
 
 type line struct {
@@ -84,10 +85,36 @@ type room struct {
 	// inviteQR is set by /invite --qr and consumed when the minted token arrives,
 	// so the join link is rendered as a terminal QR code (§2.4).
 	inviteQR bool
+
+	// Live log streaming (§2.2). streams holds each live block by stream_id;
+	// streamOrder is appearance order (for the "stream-N" /expand id). activeStream
+	// is our OWN outbound /stream (file tail), nil when we are not streaming.
+	streams      map[string]*streamView
+	streamOrder  []string
+	activeStream *streamSender
+}
+
+// streamView is the receiver-side state of one live-log stream block (§2.2): the
+// current ring-buffer contents, updated in place by each StreamUpdate.
+type streamView struct {
+	id     string
+	name   string // source label (e.g. "app.log")
+	from   string // streamer display name
+	self   bool
+	lines  []string
+	seq    uint64
+	ended  bool
+	reason string
+	num    int // 1-based appearance index, for /expand stream-<num>
 }
 
 func newRoom(name string) *room {
-	return &room{name: name, members: make(map[string]memberView), collapse: render.NewCollapseState()}
+	return &room{
+		name:     name,
+		members:  make(map[string]memberView),
+		collapse: render.NewCollapseState(),
+		streams:  make(map[string]*streamView),
+	}
 }
 
 func (r *room) addMember(id, name, fpr string) {

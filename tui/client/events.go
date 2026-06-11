@@ -336,6 +336,33 @@ type EvBeaconStatus struct {
 	Err       string
 }
 
+// --- Live log streaming (§2.2) ----------------------------------------------
+
+// EvStreamUpdate is a decrypted live-log stream update: the CURRENT ring-buffer
+// contents for StreamID (not a delta — receivers replace the block wholesale).
+// Self marks the streamer's own echo. Seq is monotonic so a stale update can be
+// dropped. Name is the source label for the block header; From/Fpr identify the
+// streamer.
+type EvStreamUpdate struct {
+	StreamID string
+	Name     string
+	From     string
+	Fpr      string
+	Lines    []string
+	Seq      uint64
+	Self     bool
+	At       time.Time
+}
+
+// EvStreamEnd marks a stream finished: the block goes static. Reason is one of
+// protocol.StreamEnd* (sender_disconnected | manual_stop | scuttle).
+type EvStreamEnd struct {
+	StreamID string
+	Reason   string
+	From     string
+	Self     bool
+}
+
 // EvMessage is a decrypted chat message (Self is true for the local echo of our
 // own outgoing messages). Signed reports whether a valid Ed25519 signature was
 // present (§3.3); unsigned legacy messages still arrive (Signed=false).
@@ -430,6 +457,8 @@ func (EvActionVetoed) isEvent()      {}
 func (EvActionExpired) isEvent()     {}
 func (EvBeaconResult) isEvent()      {}
 func (EvBeaconStatus) isEvent()      {}
+func (EvStreamUpdate) isEvent()      {}
+func (EvStreamEnd) isEvent()         {}
 func (EvKeyReady) isEvent()          {}
 func (EvMessage) isEvent()           {}
 func (EvServerMessage) isEvent()     {}

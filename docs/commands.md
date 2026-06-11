@@ -402,6 +402,35 @@ re-verify against the actor's key.
 {"v":1,"ts":"…","type":"bridge_failed","room":"ops","event":"ack","actor":"alice","fpr":"SHA256:…","url":"https://…","error":"connection refused","retries":3}
 ```
 
+## Live log streaming (`netherchat stream` / `/stream`, §2.2)
+
+Mid-incident, instead of pasting log snippets that flood the room, one person pipes
+their live log in and everyone watches the same tail update **in place** — a single
+collapsible block, not a wall of new messages.
+
+```bash
+tail -f app.log | netherchat stream ops --lines 200
+```
+
+In the TUI:
+
+```
+/stream <local-file-path>   tail a local log file into the room as a live block
+/stream stop                stop your active stream
+```
+
+The block collapses to its most recent lines with `/expand stream-N` to see the
+full ring buffer (fixed size, `--lines`, default 200, max 1000). ERROR/WARN/DEBUG
+levels are colored. When the sender stops, the pipe closes, or the room scuttles,
+the block goes static — `stream ended: app.log (alice)`.
+
+**Ephemeral by design.** Stream content is end-to-end encrypted and routed blind
+like any message, but it is **never persisted** — not even to the optional SQLite
+history store (only ordinary messages are). Streams are **live-only**: a member who
+joins mid-stream receives the **next** update (the whole current ring buffer),
+never a replay of what scrolled past before they arrived. A passive `tail --json`
+observer sees metadata-only `stream_update` / `stream_end` events — never the lines.
+
 ## Statusline / prompt segment (`netherchat status`, §2.3)
 
 A compact, glanceable segment of the active war room for your shell — war-room

@@ -671,7 +671,8 @@ func (c *Client) handle(env protocol.Envelope) {
 		protocol.OpRecordEntry, protocol.OpSealRequest, protocol.OpSealAck,
 		protocol.OpRosterRequest, protocol.OpRosterAck,
 		protocol.OpScuttleReceiptRequest, protocol.OpScuttleReceiptAck,
-		protocol.OpActionRequest, protocol.OpActionApproval, protocol.OpActionVeto:
+		protocol.OpActionRequest, protocol.OpActionApproval, protocol.OpActionVeto,
+		protocol.OpStreamUpdate, protocol.OpStreamEnd:
 		var m protocol.Message
 		if err := env.Decode(&m); err == nil {
 			c.handleEncrypted(env.Type, m)
@@ -979,6 +980,19 @@ func (c *Client) handleEncrypted(op protocol.Op, m protocol.Message) {
 		var body protocol.ActionVetoBody
 		if json.Unmarshal(pt, &body) == nil {
 			c.onActionVeto(sender.name, fpr, body)
+		}
+	case protocol.OpStreamUpdate:
+		var body protocol.StreamUpdateBody
+		if json.Unmarshal(pt, &body) == nil && body.StreamID != "" {
+			c.emit(EvStreamUpdate{
+				StreamID: body.StreamID, Name: body.Name, From: sender.name, Fpr: fpr,
+				Lines: body.Lines, Seq: body.Seq, At: now,
+			})
+		}
+	case protocol.OpStreamEnd:
+		var body protocol.StreamEndBody
+		if json.Unmarshal(pt, &body) == nil && body.StreamID != "" {
+			c.emit(EvStreamEnd{StreamID: body.StreamID, Reason: body.Reason, From: sender.name})
 		}
 	}
 }

@@ -44,6 +44,13 @@ func buildCommands() *command.Set {
 		command.Command{Name: "exec", Args: "<action>", Help: "request an edge agent run a runbook action (signed, E2E)"},
 		command.Command{Name: "send", Args: "<path>", Help: "relay a file to the room as a secure artifact transfer (E2E, relay-blind)",
 			Complete: completeFilePath},
+		command.Command{Name: "stream", Args: "<file>|stop", Help: "tail a local log into the room as one live, ephemeral block (§2.2)",
+			Complete: func(p string) []string {
+				if strings.HasPrefix("stop", p) {
+					return append([]string{"stop"}, completeFilePath(p)...)
+				}
+				return completeFilePath(p)
+			}},
 		command.Command{Name: "ack", Args: "[tag]", Help: "ack a coordination tag (typed quorum, not a reaction); no arg lists active tags"},
 		command.Command{Name: "handoff", Args: "@handle", Help: "transfer the incident-commander (IC) token"},
 		command.Command{Name: "ic", Help: "show who currently holds incident command"},
@@ -148,6 +155,8 @@ func (m *Model) runCommand(input string) tea.Cmd {
 		}
 	case "send":
 		m.runSend(r, arg)
+	case "stream":
+		m.runStream(r, arg)
 	case "ack":
 		m.runAck(r, arg)
 	case "handoff":
@@ -238,6 +247,11 @@ func (m *Model) runExpand(r *room, arg string) {
 	case strings.EqualFold(arg, "all"):
 		r.collapse.ExpandAll()
 		m.addSystem("expanded all collapsed blocks")
+		for id := range r.streams {
+			m.streamExpanded[id] = true // /expand all covers live blocks too (§2.2)
+		}
+	case strings.HasPrefix(strings.ToLower(arg), "stream-"):
+		m.expandStream(r, arg)
 	default:
 		id, err := strconv.Atoi(arg)
 		if err != nil || id < 1 {
@@ -255,6 +269,23 @@ func (m *Model) runExpand(r *room, arg string) {
 		r.collapse.Expand(id)
 		m.addSystem(fmt.Sprintf("expanded block #%d", id))
 	}
+}
+
+// expandStream expands a live-log block by its "stream-<n>" id (§2.2).
+func (m *Model) expandStream(r *room, arg string) {
+	n, err := strconv.Atoi(arg[len("stream-"):])
+	if err != nil || n < 1 {
+		m.addError("usage: /expand stream-<n>   (the number shown in the collapsed block)")
+		return
+	}
+	for _, id := range r.streamOrder {
+		if sv := r.streams[id]; sv != nil && sv.num == n {
+			m.streamExpanded[id] = true
+			m.addSystem(fmt.Sprintf("expanded stream-%d", n))
+			return
+		}
+	}
+	m.addError(fmt.Sprintf("no stream-%d in this room", n))
 }
 
 // runRoster implements /roster (§1.4). With no flag it prints the current

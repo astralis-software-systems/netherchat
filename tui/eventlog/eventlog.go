@@ -40,7 +40,7 @@ type Event struct {
 	BodyLen  *int   `json:"body_len,omitempty"`
 	BodyHash string `json:"body_hash,omitempty"`
 	Body     string `json:"body,omitempty"`
-	Tag string `json:"tag,omitempty"`
+	Tag      string `json:"tag,omitempty"`
 	// Quorum is overloaded by JSON key: a string "<acked>/<members>" for ack events
 	// (§2.2) and a number for action_executed (§1.3, the endorser count that fired the
 	// action). It is `any` so both shapes share the one "quorum" key; the action
@@ -51,9 +51,9 @@ type Event struct {
 	Action            string `json:"action,omitempty"`             // scuttle | break_glass | runbook
 	RequestID         string `json:"request_id,omitempty"`         // correlates request/approval/veto/executed/expired
 	QuorumNeeded      *int   `json:"quorum_needed,omitempty"`      // distinct endorsers required
-	QuorumCurrent     *int   `json:"quorum_current,omitempty"`    // endorsers so far (action_approval)
+	QuorumCurrent     *int   `json:"quorum_current,omitempty"`     // endorsers so far (action_approval)
 	ApprovalsReceived *int   `json:"approvals_received,omitempty"` // endorsers at expiry (action_expired)
-	ExpiresUnix       int64  `json:"expires_unix,omitempty"`      // request deadline (action_request)
+	ExpiresUnix       int64  `json:"expires_unix,omitempty"`       // request deadline (action_request)
 
 	Target    string `json:"target,omitempty"`
 	TargetFpr string `json:"target_fpr,omitempty"`
@@ -86,8 +86,13 @@ type Event struct {
 	SizeBytes  int64  `json:"size_bytes,omitempty"`
 	TransferID string `json:"transfer_id,omitempty"`
 
-	Epoch   *uint64 `json:"epoch,omitempty"`
-	Message string  `json:"message,omitempty"`
+	Epoch *uint64 `json:"epoch,omitempty"`
+
+	// Live log streaming (§2.2): a stream session id (metadata only — never the
+	// streamed content).
+	StreamID string `json:"stream_id,omitempty"`
+
+	Message string `json:"message,omitempty"`
 }
 
 // Bool / Int return pointers, for setting optional pointer fields inline.
@@ -284,6 +289,22 @@ func FileComplete(room, actor, fpr, filename string, size int64, transferID stri
 func KeyReady(room string, epoch uint64) Event {
 	e := base("key_ready", room)
 	e.Epoch = &epoch
+	return e
+}
+
+// StreamUpdate builds a stream_update event (§2.2): actor pushed a live-log update
+// for streamID. Metadata only — the streamed lines are never in the event stream.
+func StreamUpdate(room, actor, fpr, streamID string) Event {
+	e := base("stream_update", room)
+	e.Actor, e.Fpr, e.StreamID = actor, fpr, streamID
+	return e
+}
+
+// StreamEnd builds a stream_end event (§2.2): the stream finished. reason is one of
+// protocol.StreamEnd* (sender_disconnected | manual_stop | scuttle).
+func StreamEnd(room, streamID, reason string) Event {
+	e := base("stream_end", room)
+	e.StreamID, e.Reason = streamID, reason
 	return e
 }
 

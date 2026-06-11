@@ -303,7 +303,8 @@ func (s *Server) relay(room, fromID string, env protocol.Envelope) {
 		protocol.OpRecordEntry, protocol.OpSealRequest, protocol.OpSealAck,
 		protocol.OpRosterRequest, protocol.OpRosterAck,
 		protocol.OpScuttleReceiptRequest, protocol.OpScuttleReceiptAck,
-		protocol.OpActionRequest, protocol.OpActionApproval, protocol.OpActionVeto:
+		protocol.OpActionRequest, protocol.OpActionApproval, protocol.OpActionVeto,
+		protocol.OpStreamUpdate, protocol.OpStreamEnd:
 		// Edge exec, coordination primitives (ack/handoff), sealed-record frames
 		// (record entries, seal requests/acks), roster-attestation frames (roster
 		// requests/acks, §1.4), and Two-Person Rule frames (action request/approval/

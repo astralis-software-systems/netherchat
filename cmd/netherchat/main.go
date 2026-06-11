@@ -35,6 +35,8 @@ func main() {
 		sendCmd(os.Args[2:])
 	case "tail":
 		tailCmd(os.Args[2:])
+	case "stream":
+		streamCmd(os.Args[2:])
 	case "beacon-link":
 		beaconLinkCmd(os.Args[2:])
 	case "agent":
@@ -205,6 +207,7 @@ usage:
   netherchat send    <room> "message"           send one message (or pipe stdin)
   netherchat send    --file <path> --room <room> relay a file as a secure artifact transfer
   netherchat tail    <room> [--json]             stream messages (or the ndjson event log)
+  netherchat stream  <room> [--lines 200]         pipe a live log into a room as one updating block (§2.2)
   netherchat beacon-link <room> [--ttl 2h]       mint a read-only status-beacon link (§1.2)
   netherchat agent   --room <room> --allow runbook.toml   run an edge-exec agent
   netherchat bridge  --room <room> --on decision,ack --post <url>  fire signed callbacks on typed events (§1.6)

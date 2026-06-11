@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/notify"
 	"github.com/salehkreiner/netherchat/tui/statusline"
@@ -41,6 +42,8 @@ type Model struct {
 	notifier                           *notify.Notifier        // native desktop notifications (§2.1)
 	macros                             *command.MacroSet       // slash-command macros from netherchat.toml (§2.5)
 	statusPath                         string                  // status.json path for the prompt segment (§2.3)
+	streamExpanded                     map[string]bool         // stream_id -> expanded, for /expand stream-N (§2.2)
+	streamLines                        int                     // /stream ring-buffer size (§2.2)
 
 	cmds     *command.Set
 	theme    theme.Theme
@@ -122,12 +125,14 @@ func (m *Model) quorumFor(action string) int {
 func newModel(url, name, identityPath, roomName, notifyCmd string) *Model {
 	m := &Model{
 		url: url, name: name, identityPath: identityPath, notifyCmd: notifyCmd,
-		cmds:     buildCommands(),
-		theme:    theme.Default(),
-		renderer: render.New(theme.Default(), 80), // width set for real on first resize
-		session:  map[string]*room{},
-		verified: map[string]*verifyEntry{},
-		input:    textinput.New(),
+		cmds:           buildCommands(),
+		theme:          theme.Default(),
+		renderer:       render.New(theme.Default(), 80), // width set for real on first resize
+		session:        map[string]*room{},
+		verified:       map[string]*verifyEntry{},
+		streamExpanded: map[string]bool{},
+		streamLines:    client.DefaultStreamLines,
+		input:          textinput.New(),
 		// Default mouse capture off on Windows (it blocks native terminal text
 		// selection); on by default on mac/Linux. Run mirrors this when starting the
 		// program; /mouse on|off toggles it on every platform.
@@ -443,6 +448,9 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 		case "vanish":
 			r.lines = nil
 			r.collapse.Reset() // block ids reset with the cleared history (§2.6)
+			r.stopActiveStream(protocol.StreamEndManual)
+			r.streams = make(map[string]*streamView) // live blocks clear with history (§2.2)
+			r.streamOrder = nil
 			who := e.ByName
 			if e.Self {
 				who = "you"
@@ -461,6 +469,10 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 			// ratchet on this event. Render the attestation and the scuttled state;
 			// the room is gone server-side.
 			r.scuttled = true
+			r.stopActiveStream(protocol.StreamEndScuttle)
+			for _, sv := range r.streams { // every live block goes static (§2.2)
+				sv.ended, sv.reason = true, protocol.StreamEndScuttle
+			}
 			r.appendSystem("⚡ room scuttled — keys destroyed, no record kept" + scuttleReasonSuffix(e.Reason))
 			r.appendSystem("⚡ This room has been scuttled. Keys destroyed.")
 			if name != m.active {
@@ -490,6 +502,28 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 				who = "someone"
 			}
 			r.appendSystem("📡 " + who + " cleared the status beacon")
+		}
+
+	case client.EvStreamUpdate:
+		// A live-log stream (§2.2): the first update places a block in the flow; every
+		// later update replaces its content IN PLACE (no new lines, no unread spam).
+		sv := r.streams[e.StreamID]
+		if sv == nil {
+			sv = &streamView{id: e.StreamID, name: e.Name, from: e.From, self: e.Self, num: len(r.streamOrder) + 1}
+			r.streams[e.StreamID] = sv
+			r.streamOrder = append(r.streamOrder, e.StreamID)
+			r.appendLine(line{at: e.At, kind: lineStream, text: e.StreamID})
+			if !e.Self && name != m.active {
+				r.unread++ // only the first appearance counts as unread
+			}
+		}
+		if e.Seq >= sv.seq { // drop stale / out-of-order updates
+			sv.lines, sv.seq, sv.from, sv.ended = e.Lines, e.Seq, e.From, false
+		}
+
+	case client.EvStreamEnd:
+		if sv := r.streams[e.StreamID]; sv != nil {
+			sv.ended, sv.reason = true, e.Reason
 		}
 
 	case client.EvExecRequest:
@@ -1186,6 +1220,11 @@ func (m *Model) renderLine(r *room, l line, baseID int) (string, int) {
 	switch l.kind {
 	case lineRaw:
 		return l.text, 0
+	case lineStream:
+		if sv := r.streams[l.text]; sv != nil {
+			return m.renderStreamBlock(sv), 0
+		}
+		return "", 0
 	case lineRecord:
 		// Re-render from the stored entry structure (identical to append-time output).
 		return m.renderRecordEntry(client.EvRecordEntry{
