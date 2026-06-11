@@ -128,6 +128,13 @@ func (b *Blob) Verify() error {
 	return nil
 }
 
+// Compact returns the blob as a single base64 line (no armor), for encoding into a
+// QR code (§2.4). ParseBlob accepts this bare form as well as the armored block.
+func (b *Blob) Compact() string {
+	j, _ := json.Marshal(b)
+	return base64.StdEncoding.EncodeToString(j)
+}
+
 // Armor renders the blob as a copy-pasteable, base64-armored block. kind is
 // "offer" or "answer" and only selects the header text.
 func (b *Blob) Armor(kind string) string {

@@ -9,9 +9,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/mdp/qrterminal/v3"
 	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/tui/client"
+	"github.com/salehkreiner/netherchat/tui/qr"
 	"github.com/salehkreiner/netherchat/tui/record"
 	"github.com/salehkreiner/netherchat/tui/ui/command"
 	"github.com/salehkreiner/netherchat/tui/ui/theme"
@@ -28,7 +28,8 @@ func buildCommands() *command.Set {
 			Complete: func(p string) []string { return command.FilterPrefix(theme.Names(), p) }},
 		command.Command{Name: "font", Help: "show the recommended terminal font"},
 		command.Command{Name: "whoami", Help: "show your fingerprint and session info"},
-		command.Command{Name: "invite", Help: "generate a one-time invite token (with QR)"},
+		command.Command{Name: "invite", Args: "[--qr]", Help: "generate a one-time invite token; --qr renders the join link as a QR code",
+			Complete: func(p string) []string { return command.FilterPrefix([]string{"--qr"}, p) }},
 		command.Command{Name: "break-glass", Args: "--invite a,b --ttl 4h", Help: "stand up an ephemeral war room with one-time join links"},
 		command.Command{Name: "vanish", Help: "rotate the room key and clear history"},
 		command.Command{Name: "scuttle", Args: "[now|arm <dur>]", Help: "burn the room's keys and close it (dead-man's switch)",
@@ -96,6 +97,7 @@ func (m *Model) runCommand(input string) tea.Cmd {
 		if !m.connected(r) {
 			break
 		}
+		r.inviteQR = strings.Contains(arg, "--qr") // render the join link as a QR (§2.4)
 		r.client.RequestInvite()
 	case "break-glass":
 		m.runBreakGlass(r, arg)
@@ -908,6 +910,23 @@ func (m *Model) helpText() string {
 	return b.String()
 }
 
+// msgWidth is the column width of the message pane (mirrors the layout math in
+// resize), used to decide whether a QR code fits (§2.4).
+func (m *Model) msgWidth() int {
+	sidePanes := 0
+	if m.sidebarW > 0 {
+		sidePanes++
+	}
+	if m.membersW > 0 {
+		sidePanes++
+	}
+	w := m.width - m.sidebarW - m.membersW - sidePanes
+	if w < 1 {
+		return m.width
+	}
+	return w
+}
+
 // transportLabel renders how the active room is connected: the relay URL, or
 // "direct (… no relay)" in a Sneakernet session (§1.1). In the TUI this is the
 // relay; the direct transport is used by `netherchat pair`.
@@ -1085,18 +1104,28 @@ func remaining(t time.Time) string {
 	return d.String()
 }
 
-// renderInvite builds the multi-line block (hint + QR) shown for an invite.
+// renderInvite builds the multi-line block shown for a minted invite: the token,
+// the browser join link, the CLI join command, and — when /invite --qr was used —
+// the join link as a scannable terminal QR (§2.4), falling back to text if the
+// pane is too narrow.
 func (m *Model) renderInvite(room string, e client.EvInvite) string {
-	var qr strings.Builder
-	qrterminal.GenerateHalfBlock(e.Token, qrterminal.L, &qr)
+	link := m.joinLink(room, e.Token)
 
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("one-time invite for #%s:\n", room))
 	b.WriteString("  token: " + e.Token + "\n")
-	b.WriteString(fmt.Sprintf("  join:  netherchat connect %s --room %s --invite %s\n", m.url, room, e.Token))
+	b.WriteString("  join:  " + link + "\n")
+	b.WriteString(fmt.Sprintf("  cli:   netherchat connect %s --room %s --invite %s\n", m.url, room, e.Token))
 	if !e.Expires.IsZero() {
 		b.WriteString("  expires: " + e.Expires.Format("2006-01-02 15:04") + "\n")
 	}
-	b.WriteString(qr.String())
+	if r := m.session[room]; r != nil && r.inviteQR {
+		r.inviteQR = false
+		if code, ok := qr.Render(link, m.msgWidth()); ok {
+			b.WriteString("\n" + code + "\n")
+		} else {
+			b.WriteString("\n  (terminal too narrow for a QR — scan or share the join link above)\n")
+		}
+	}
 	return b.String()
 }

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/salehkreiner/netherchat/tui/qr"
 )
 
 // beaconLinkCmd implements `netherchat beacon-link <room> [--ttl 2h]` (§1.2): it
@@ -25,8 +27,9 @@ func beaconLinkCmd(args []string) {
 	webURL := fs.String("web-url", "", "base URL of the beacon web page (default: derived from the server URL)")
 	ttl := fs.Duration("ttl", time.Hour, "beacon link lifetime (default 1h, max 24h)")
 	timeout := fs.Duration("timeout", 10*time.Second, "max time to wait for the room key")
+	qrFlag := fs.Bool("qr", false, "also render the link as a scannable terminal QR code (§2.4)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: netherchat beacon-link <room> [--ttl 2h] [--server ws://...] [--web-url <url>]")
+		fmt.Fprintln(os.Stderr, "usage: netherchat beacon-link <room> [--ttl 2h] [--qr] [--server ws://...] [--web-url <url>]")
 		fs.PrintDefaults()
 	}
 
@@ -61,7 +64,15 @@ func beaconLinkCmd(args []string) {
 	if !ok {
 		fatal(errors.New("room key not established; cannot derive the beacon key"))
 	}
-	fmt.Println(beaconLinkURL(webBaseFor(*server, *webURL), room, key, int(d.Seconds())))
+	link := beaconLinkURL(webBaseFor(*server, *webURL), room, key, int(d.Seconds()))
+	fmt.Println(link)
+	if *qrFlag {
+		if code, ok := qr.Render(link, qr.TerminalWidth()); ok {
+			fmt.Println(code)
+		} else {
+			fmt.Fprintln(os.Stderr, "(terminal too narrow for a QR — share the link above)")
+		}
+	}
 }
 
 // webBaseFor returns the explicit --web-url, or the server URL mapped from ws(s)://

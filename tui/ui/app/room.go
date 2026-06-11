@@ -80,6 +80,10 @@ type room struct {
 	// rosterOut is the --out path stashed by /roster --signed, applied when the
 	// co-signed attestation finishes (§1.4). Empty means the default roster.json.
 	rosterOut string
+
+	// inviteQR is set by /invite --qr and consumed when the minted token arrives,
+	// so the join link is rendered as a terminal QR code (§2.4).
+	inviteQR bool
 }
 
 func newRoom(name string) *room {

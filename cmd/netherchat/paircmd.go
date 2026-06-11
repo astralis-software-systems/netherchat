@@ -29,6 +29,7 @@ func pairCmd(args []string) {
 	name := fs.String("name", defaultName(), "display name")
 	identity := fs.String("identity", "", "identity key (default: ssh-agent → ~/.ssh/id_ed25519 → generated)")
 	port := fs.Int("port", 0, "direct listener port (0 = a free port)")
+	qrFlag := fs.Bool("qr", false, "manual mode: also render the offer blob as a scannable QR (§2.4)")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: netherchat pair (--lan | --manual [--join]) [--room <name>] [--name <you>] [--identity <path>] [--port N]")
 		fmt.Fprintln(os.Stderr, "\nForm a relay-LESS war room (§1.1) — no server at all, same E2E crypto.")
@@ -46,6 +47,7 @@ func pairCmd(args []string) {
 		IdentityPath: *identity,
 		Port:         *port,
 		LAN:          *lan,
+		QR:           *qrFlag,
 		In:           os.Stdin,
 		Out:          os.Stdout,
 	}

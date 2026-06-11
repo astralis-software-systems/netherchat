@@ -12,6 +12,7 @@ import (
 
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/internal/crypto"
+	"github.com/salehkreiner/netherchat/tui/qr"
 )
 
 // directPlaceholderURL is the server URL handed to client.NewWithIdentity in
@@ -27,6 +28,7 @@ type Options struct {
 	IdentityPath string // empty = the BYO-key cascade (ssh-agent → ~/.ssh → generated)
 	Port         int    // direct listener port; 0 = a free port
 	LAN          bool   // advertise/discover on the LAN via mDNS
+	QR           bool   // render the offer blob as a scannable terminal QR (§2.4)
 	In           io.Reader
 	Out          io.Writer
 	Log          *slog.Logger
@@ -90,6 +92,13 @@ func RunHost(opts Options) error {
 	fmt.Fprintf(opts.Out, "You are hosting room #%s as %s\n  %s\n  listening on %s\n\n",
 		opts.Room, opts.Name, id.Fingerprint(), strings.Join(addrs, ", "))
 	fmt.Fprintf(opts.Out, "Your offer (share this with your peer; valid %s):\n%s\n\n", BlobTTL, blob.Armor("offer"))
+	if opts.QR {
+		if code, ok := qr.Render(blob.Compact(), qr.TerminalWidth()); ok {
+			fmt.Fprintf(opts.Out, "Or scan to pair in person:\n%s\n\n", code)
+		} else {
+			fmt.Fprintln(opts.Out, "(terminal too narrow for a QR — share the offer text above)")
+		}
+	}
 
 	if opts.LAN {
 		if adv, aerr := Advertise(id, opts.Room, atoiSafe(portStr)); aerr == nil {

@@ -243,6 +243,23 @@ func TestBlobRoundTrip(t *testing.T) {
 	}
 }
 
+// TestBlobCompactRoundTrip proves the QR-encoded (Compact, no armor) offer form
+// parses back — so a scanned `pair --manual --qr` offer is usable (§2.4).
+func TestBlobCompactRoundTrip(t *testing.T) {
+	id := mustID(t)
+	b, err := NewBlob(id, "ops", []string{"192.168.1.42:7777"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseBlob(b.Compact())
+	if err != nil {
+		t.Fatalf("parse compact (QR) blob: %v", err)
+	}
+	if parsed.Fpr != id.Fingerprint() {
+		t.Fatalf("compact blob fingerprint = %s, want %s", parsed.Fpr, id.Fingerprint())
+	}
+}
+
 // TestBlobExpired proves an expired blob is rejected.
 func TestBlobExpired(t *testing.T) {
 	id := mustID(t)
