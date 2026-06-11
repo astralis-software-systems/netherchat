@@ -54,6 +54,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", a.health)
 	mux.HandleFunc("GET /version", a.version)
 	mux.HandleFunc("GET /rooms", a.rooms)
+	// Config-as-code validation (B1): the Terraform provider POSTs a proposed
+	// netherchat.toml here to fail a plan early. Read-only — nothing is applied.
+	mux.HandleFunc("POST /api/v1/config/validate", a.configValidate)
 	mux.HandleFunc("POST /webhook/{room}", a.webhook)
 	// Status Beacon (§1.2): PUT/DELETE write (token-gated), GET reads (no auth — the
 	// ciphertext is useless without the beacon key, which never reaches the server).
@@ -256,6 +259,28 @@ func (a *API) version(w http.ResponseWriter, _ *http.Request) {
 
 func (a *API) rooms(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"rooms": a.hub.Stats()})
+}
+
+// configValidate checks a proposed netherchat.toml without applying it (B1). The
+// request body is the candidate TOML; the response is {"valid":true} or
+// {"valid":false,"error":"..."}. The Terraform provider calls this so an invalid
+// topology fails `terraform plan` rather than a later server restart. It is
+// strictly read-only: nothing is written, applied, or persisted, and — like every
+// endpoint here — no message content is ever involved.
+//
+// A malformed body is reported as valid:false (a client error about the content),
+// not an HTTP error about the request, so callers branch on one field.
+func (a *API) configValidate(w http.ResponseWriter, r *http.Request) {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<10))
+	if err != nil {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if _, err := config.Parse(raw); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"valid": true})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

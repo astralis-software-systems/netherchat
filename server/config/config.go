@@ -273,13 +273,25 @@ func Default() Config {
 
 // Load reads and parses a config file, filling unspecified fields with defaults.
 func Load(path string) (Config, error) {
-	cfg := Default()
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return cfg, err
+		return Default(), err
 	}
-	if err := toml.Unmarshal(b, &cfg); err != nil {
+	cfg, err := Parse(b)
+	if err != nil {
 		return cfg, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+// Parse decodes a config from TOML bytes, filling unspecified fields with defaults
+// and normalizing nonsensical values. It is the in-memory counterpart to Load: the
+// server uses it to validate a proposed config without reading it from disk or
+// applying it (the Terraform provider's POST /api/v1/config/validate, B1).
+func Parse(b []byte) (Config, error) {
+	cfg := Default()
+	if err := toml.Unmarshal(b, &cfg); err != nil {
+		return cfg, err
 	}
 	cfg.normalize()
 	return cfg, nil
