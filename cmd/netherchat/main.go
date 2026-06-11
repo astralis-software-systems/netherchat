@@ -51,6 +51,8 @@ func main() {
 		whoamiCmd(os.Args[2:])
 	case "verify":
 		verifyCmd(os.Args[2:])
+	case "report":
+		reportCmd(os.Args[2:])
 	case "replay":
 		replayCmd(os.Args[2:])
 	case "rooms":
@@ -215,6 +217,7 @@ usage:
   netherchat status  [--format tmux|starship] [--json]   compact war-room segment for your prompt (§2.3)
   netherchat whoami  [--json]                     show your identity
   netherchat verify  <record.json> [--json]       verify a sealed record's hash chain + signatures
+  netherchat report  <record.json> [--format html|md] [--executive]  render a shareable incident timeline (§2.6)
   netherchat replay  <record.json> --into <room>  stream a sealed record into a room for a retro
   netherchat rooms   [--json] [--server ws://...] list active rooms
   netherchat doctor  [--paranoid] [--json]        self-test; --paranoid proves the relay is blind

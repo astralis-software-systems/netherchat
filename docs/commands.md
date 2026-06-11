@@ -466,6 +466,28 @@ The client writes the state file on every change and deletes it on a clean exit,
 a stale segment means a client crashed rather than quit — re-running it clears the
 file.
 
+## Incident report (`netherchat report`, §2.6)
+
+Turn a sealed record into a standalone, shareable incident timeline — readable by
+leadership *and* cryptographically verifiable by engineers, in one file.
+
+```bash
+netherchat report record.json                              # self-contained HTML
+netherchat report record.json --format md --out incident.md
+netherchat report record.json --executive                 # decisions/actions only
+netherchat report record.json --verify                    # exit 1 if tampered
+```
+
+The HTML is fully **self-contained** — inline CSS in the Netherchat palette, no
+fonts or scripts fetched, plus an inline SVG QR of `netherchat verify record.json`
+to scan. It shows the decision (📋) / action (⚡) / note (💬) timeline, the
+seal-signature table, and a prominent hash-chain status (✓ intact / ✗ broken at
+entry N). `--executive` renders only what leadership needs — what happened,
+decisions, actions, a name-only timeline, and resolution time — with **no
+fingerprints, hashes, or notes**. `--verify` refuses to render a tampered record.
+`--format md` produces the same report (minus the QR) as GitHub-flavored Markdown
+for a post-mortem wiki.
+
 ## Keys
 
 | Key | Action |
