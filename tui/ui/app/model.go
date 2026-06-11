@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/notify"
+	"github.com/salehkreiner/netherchat/tui/statusline"
 	"github.com/salehkreiner/netherchat/tui/ui/command"
 	"github.com/salehkreiner/netherchat/tui/ui/render"
 	"github.com/salehkreiner/netherchat/tui/ui/theme"
@@ -39,6 +40,7 @@ type Model struct {
 	beaconTokens                       map[string]string       // room -> beacon_token from netherchat.toml (Status Beacon, §1.2)
 	notifier                           *notify.Notifier        // native desktop notifications (§2.1)
 	macros                             *command.MacroSet       // slash-command macros from netherchat.toml (§2.5)
+	statusPath                         string                  // status.json path for the prompt segment (§2.3)
 
 	cmds     *command.Set
 	theme    theme.Theme
@@ -87,6 +89,13 @@ func Run(url, name, identityPath, room, notifyCmd, invite, webURL, torProxy stri
 	}
 	m.macros = ms
 	m.cmds.Add(ms.Commands()...) // surface macros in autocomplete and /help
+
+	// Status file for the prompt segment (§2.3): write it as state changes, and
+	// remove it on a clean exit so the prompt goes quiet when no client is running.
+	if p, perr := statusline.DefaultPath(); perr == nil {
+		m.statusPath = p
+		defer statusline.Remove(p)
+	}
 	// Enable Bubble Tea mouse capture only when the model defaults to it. On Windows
 	// it defaults OFF so the user keeps native terminal text selection (capture
 	// steals the mouse); mac/Linux terminals handle capture better and default ON.
@@ -213,10 +222,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case roomConnectedMsg:
-		return m, m.onRoomConnected(msg)
+		c := m.onRoomConnected(msg)
+		m.writeStatus()
+		return m, c
 
 	case roomEventMsg:
 		cmd := m.handleRoomEvent(msg.name, msg.ev)
+		m.writeStatus() // reflect new messages / unread / IC / key state in the prompt (§2.3)
 		var listen tea.Cmd
 		if r, ok := m.session[msg.name]; ok && r.client != nil {
 			listen = listenRoom(msg.name, r.client)
@@ -766,6 +778,7 @@ func (m *Model) leaveRoom(name string) tea.Cmd {
 		m.active = m.order[0]
 	}
 	m.syncViewport()
+	m.writeStatus() // a room left/closed changes the prompt segment (§2.3)
 	return nil
 }
 
@@ -786,6 +799,7 @@ func (m *Model) cycleRoom(dir int) {
 		r.unread = 0
 	}
 	m.syncViewport()
+	m.writeStatus() // switching rooms changes the active room / clears its unread (§2.3)
 }
 
 func (m *Model) closeAll() {
@@ -832,8 +846,67 @@ func (m *Model) handleClick(x, y int) {
 				r.unread = 0
 			}
 			m.syncViewport()
+			m.writeStatus() // clicking a room switches focus / clears unread (§2.3)
 		}
 	}
+}
+
+// --- status segment (§2.3) --------------------------------------------------
+
+// writeStatus persists the current room state for `netherchat status`. Best-effort:
+// a write failure never disturbs the UI.
+func (m *Model) writeStatus() {
+	if m.statusPath == "" {
+		return
+	}
+	_ = statusline.Write(m.statusPath, m.statusState())
+}
+
+// statusState snapshots the rooms for the prompt segment, the active room first so
+// a segment can show Rooms[0].
+func (m *Model) statusState() statusline.State {
+	names := make([]string, 0, len(m.order)+1)
+	seen := make(map[string]bool)
+	if _, ok := m.session[m.active]; ok {
+		names = append(names, m.active)
+		seen[m.active] = true
+	}
+	for _, n := range m.order {
+		if !seen[n] {
+			names = append(names, n)
+			seen[n] = true
+		}
+	}
+	rooms := make([]statusline.Room, 0, len(names))
+	for _, n := range names {
+		r := m.session[n]
+		if r == nil {
+			continue
+		}
+		room := statusline.Room{Name: n, Unread: r.unread, Encrypted: r.keyReady, Transport: transportKind(r)}
+		if r.client != nil {
+			if icName, _, _, ok := r.client.ICHolder(); ok {
+				room.IC = icName
+			}
+		}
+		rooms = append(rooms, room)
+	}
+	return statusline.State{Rooms: rooms}
+}
+
+// transportKind reports how a room is connected, for the status segment.
+func transportKind(r *room) string {
+	if r.client == nil {
+		return ""
+	}
+	t := r.client.Transport()
+	if t == nil {
+		return ""
+	}
+	if t.PeerID() != "" {
+		return "direct"
+	}
+	return "relay"
 }
 
 // --- notifications ----------------------------------------------------------

@@ -402,6 +402,41 @@ re-verify against the actor's key.
 {"v":1,"ts":"…","type":"bridge_failed","room":"ops","event":"ack","actor":"alice","fpr":"SHA256:…","url":"https://…","error":"connection refused","retries":3}
 ```
 
+## Statusline / prompt segment (`netherchat status`, §2.3)
+
+A compact, glanceable segment of the active war room for your shell — war-room
+awareness without keeping the TUI open. It reads **only** a local state file the
+running client writes (`~/.config/netherchat/status.json`); it never connects to a
+server, so it returns instantly. With no client running it prints nothing and exits
+0, so your prompt stays clean when there is no incident.
+
+```bash
+netherchat status                      # ⚡#ops 3↑ IC:alice   (active room, unread, IC)
+netherchat status --format tmux        # tmux status-line format with theme colors
+netherchat status --format starship    # starship custom-module JSON
+netherchat status --json               # {"rooms":[{"name":"ops","unread":3,"ic":"alice","encrypted":true,"transport":"relay"}]}
+```
+
+Add it to your prompt:
+
+```bash
+# tmux (~/.tmux.conf) — refreshes on tmux's status-interval
+set -g status-right '#(netherchat status --format tmux)'
+
+# starship (~/.config/starship.toml)
+[custom.netherchat]
+command = "netherchat status --format starship"
+format = "$output"
+when = true
+
+# bash/zsh PS1 — prepend the segment when a war room is active
+PS1='$(netherchat status) '"$PS1"
+```
+
+The client writes the state file on every change and deletes it on a clean exit, so
+a stale segment means a client crashed rather than quit — re-running it clears the
+file.
+
 ## Keys
 
 | Key | Action |
