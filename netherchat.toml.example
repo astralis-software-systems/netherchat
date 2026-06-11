@@ -125,3 +125,14 @@ port          = 7777   # listening port for direct peer connections (0 = a free 
 lan_discovery = true    # advertise + discover on the LAN via mDNS (_netherchat._tcp)
 # Sneakernet has NO NAT traversal by design: peers must share a LAN (--lan) or be
 # directly reachable by the addresses in a manual offer (--manual), e.g. over a VPN.
+
+# --- Desktop notifications (CLIENT-SIDE, §2.1) -------------------------------
+# Native OS notifications (notify-send / osascript / BurntToast), zero push
+# infrastructure — all client-side, falling back to the terminal bell. Read only
+# by the TUI. Valid events: mention, decision, ack, break_glass.
+[notify]
+on = ["mention", "decision", "break_glass"]
+# mention     = someone used your display name in a message
+# decision    = a /decide was recorded
+# ack         = a coordination /ack was counted
+# break_glass = a war room was created

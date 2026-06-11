@@ -954,6 +954,7 @@ func (m *Model) whoamiText(r *room) string {
 	b.WriteString("identity:    " + m.sourceLabel() + "\n")
 	b.WriteString("name:        " + m.name + "\n")
 	b.WriteString("transport:   " + m.transportLabel(r) + "\n")
+	b.WriteString("notifications: " + m.notifier.Summary() + "\n")
 	b.WriteString("mouse:       " + mouseState(m.mouseOn) + "\n")
 	if r != nil {
 		enc := "establishing…"

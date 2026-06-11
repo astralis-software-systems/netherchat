@@ -101,7 +101,7 @@ func connectCmd(args []string) {
 		}
 	}
 	cfg := clientConfig(*configPath)
-	if err := app.Run(url, *name, *identity, *room, *notify, *invite, *webURL, torDial, trustOf(cfg), actionQuorums(cfg), beaconTokens(cfg)); err != nil {
+	if err := app.Run(url, *name, *identity, *room, *notify, *invite, *webURL, torDial, trustOf(cfg), actionQuorums(cfg), beaconTokens(cfg), cfg.Notify.On); err != nil {
 		fatal(err)
 	}
 }

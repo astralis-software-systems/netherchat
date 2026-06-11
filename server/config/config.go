@@ -26,6 +26,14 @@ type Config struct {
 	Actions     map[string]ActionPolicy `toml:"action"`
 	Trust       []TrustEntry            `toml:"trust"`
 	Direct      DirectConfig            `toml:"direct"`
+	Notify      NotifyConfig            `toml:"notify"`
+}
+
+// NotifyConfig is the CLIENT-side desktop-notification policy (§2.1): which in-room
+// events fire a native OS notification. Read only by the TUI; the relay never sees
+// it. Valid events: mention, decision, ack, break_glass.
+type NotifyConfig struct {
+	On []string `toml:"on"`
 }
 
 // DirectConfig holds Sneakernet Mode (§1.1) defaults read CLIENT-side by

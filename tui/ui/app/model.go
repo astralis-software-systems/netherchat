@@ -20,6 +20,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/salehkreiner/netherchat/tui/client"
+	"github.com/salehkreiner/netherchat/tui/notify"
 	"github.com/salehkreiner/netherchat/tui/ui/command"
 	"github.com/salehkreiner/netherchat/tui/ui/render"
 	"github.com/salehkreiner/netherchat/tui/ui/theme"
@@ -36,6 +37,7 @@ type Model struct {
 	verified                           map[string]*verifyEntry // SAS-verification state, keyed by peer fingerprint
 	actionQuorum                       map[string]int          // [action.<name>] quorum from netherchat.toml (Two-Person Rule, §1.3)
 	beaconTokens                       map[string]string       // room -> beacon_token from netherchat.toml (Status Beacon, §1.2)
+	notifier                           *notify.Notifier        // native desktop notifications (§2.1)
 
 	cmds     *command.Set
 	theme    theme.Theme
@@ -66,7 +68,7 @@ type Model struct {
 // when non-empty, routes every room's dial through that Tor SOCKS5 proxy so a
 // ws://<addr>.onion relay is reachable (§1.5). trust holds the client-side
 // identity pins parsed from netherchat.toml.
-func Run(url, name, identityPath, room, notifyCmd, invite, webURL, torProxy string, trust []TrustEntry, actionQuorum map[string]int, beaconTokens map[string]string) error {
+func Run(url, name, identityPath, room, notifyCmd, invite, webURL, torProxy string, trust []TrustEntry, actionQuorum map[string]int, beaconTokens map[string]string, notifyOn []string) error {
 	m := newModel(url, name, identityPath, room, notifyCmd)
 	m.initialInvite = invite
 	m.webURL = webURL
@@ -74,6 +76,7 @@ func Run(url, name, identityPath, room, notifyCmd, invite, webURL, torProxy stri
 	m.trust = trust
 	m.actionQuorum = actionQuorum
 	m.beaconTokens = beaconTokens
+	m.notifier = notify.New(notifyOn, name)
 	// Enable Bubble Tea mouse capture only when the model defaults to it. On Windows
 	// it defaults OFF so the user keeps native terminal text selection (capture
 	// steals the mouse); mac/Linux terminals handle capture better and default ON.
@@ -105,7 +108,7 @@ func newModel(url, name, identityPath, roomName, notifyCmd string) *Model {
 		renderer: render.New(theme.Default(), 80), // width set for real on first resize
 		session:  map[string]*room{},
 		verified: map[string]*verifyEntry{},
-		input: textinput.New(),
+		input:    textinput.New(),
 		// Default mouse capture off on Windows (it blocks native terminal text
 		// selection); on by default on mac/Linux. Run mirrors this when starting the
 		// program; /mouse on|off toggles it on every platform.
@@ -390,6 +393,7 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 				r.unread++
 			}
 			notify = m.notify(name, e.FromName, e.Text)
+			m.notifier.Message(name, e.FromName, e.Text) // native desktop notification on @mention (§2.1)
 		}
 
 	case client.EvServerMessage:
@@ -495,11 +499,13 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 		// was run, then bring the new room up in the background so it lands in the
 		// sidebar without yanking focus away from the links the user needs to copy.
 		r.appendLine(line{at: time.Now(), kind: lineRaw, text: m.renderBreakGlass(e)})
+		m.notifier.BreakGlass(e.Room) // §2.1
 		notify = m.joinRoomOpts(e.Room, e.HostToken, false)
 
 	case client.EvRouteFired:
 		// An inbound alert in this (intake) room spawned an incident war room.
 		r.appendLine(line{at: e.At, kind: lineRaw, text: m.renderRouteFired(e)})
+		m.notifier.BreakGlass(e.Room) // §2.1
 		if name != m.active {
 			r.unread++
 		}
@@ -510,6 +516,9 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 			who = "you"
 		}
 		r.appendSystem(fmt.Sprintf("✓ %s acked %s  (%s)", who, e.Tag, e.Quorum))
+		if !e.Self {
+			m.notifier.Ack(name, e.Tag, e.Quorum) // §2.1
+		}
 
 	case client.EvHandoff:
 		from := e.FromName
@@ -528,6 +537,9 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 		})
 		if !e.Self && name != m.active {
 			r.unread++
+		}
+		if !e.Self && e.Kind == "decision" {
+			m.notifier.Decision(name, e.Body) // §2.1
 		}
 
 	case client.EvSealRequest:
