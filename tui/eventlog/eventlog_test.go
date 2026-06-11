@@ -41,6 +41,8 @@ func sampleEvents() []Event {
 		KeyReady("ops", 0),
 		StreamUpdate("ops", "alice", fpr, "3f9a2b71c4d5e6f0"),
 		StreamEnd("ops", "3f9a2b71c4d5e6f0", "sender_disconnected"),
+		ClockStart("ops", "alice", fpr),
+		ClockStop("ops", "alice", fpr, 2843),
 		ErrorEvent("ops", "something went wrong"),
 		Disconnect("ops", "connection closed (code 1000)"),
 	}

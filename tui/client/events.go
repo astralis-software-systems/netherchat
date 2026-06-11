@@ -336,6 +336,27 @@ type EvBeaconStatus struct {
 	Err       string
 }
 
+// --- Incident clock (A1) ----------------------------------------------------
+
+// EvClockStart is emitted when the incident clock starts (locally via /clock start
+// or on receipt of another member's start marker). Self marks our own echo.
+type EvClockStart struct {
+	Actor string
+	Fpr   string
+	Self  bool
+	At    time.Time
+}
+
+// EvClockStop is emitted when the incident clock stops (the resolution moment).
+// ElapsedSeconds is the total incident duration.
+type EvClockStop struct {
+	Actor          string
+	Fpr            string
+	ElapsedSeconds int
+	Self           bool
+	At             time.Time
+}
+
 // --- Live log streaming (§2.2) ----------------------------------------------
 
 // EvStreamUpdate is a decrypted live-log stream update: the CURRENT ring-buffer
@@ -459,6 +480,8 @@ func (EvBeaconResult) isEvent()      {}
 func (EvBeaconStatus) isEvent()      {}
 func (EvStreamUpdate) isEvent()      {}
 func (EvStreamEnd) isEvent()         {}
+func (EvClockStart) isEvent()        {}
+func (EvClockStop) isEvent()         {}
 func (EvKeyReady) isEvent()          {}
 func (EvMessage) isEvent()           {}
 func (EvServerMessage) isEvent()     {}

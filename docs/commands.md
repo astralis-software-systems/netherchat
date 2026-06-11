@@ -466,6 +466,27 @@ The client writes the state file on every change and deletes it on a clean exit,
 a stale segment means a client crashed rather than quit — re-running it clears the
 file.
 
+## Incident clock (`/clock`, A1)
+
+A visible elapsed-time clock for a war room, so everyone can see how long the
+incident has been active — and so mean-time-to-resolve falls out of the record
+automatically.
+
+```
+/clock start    # start the incident clock (auto-started in break-glass rooms)
+/clock stop     # stop it — marks the resolution time
+/clock          # show the current elapsed time
+```
+
+The clock shows in the room header (`#ops · … · ⏱ 00:47:23`) and syncs across
+members (it rides an ordinary E2E message — no new wire opcode, the relay stays
+blind). When you `/seal`, two signed note entries are appended to the record
+automatically: the start timestamp and the total duration (`(resolved)` or
+`(ongoing)`). So the timing is **record metadata, hash-chained and
+offline-verifiable** — never free-form content. A `tail --json` observer sees
+metadata-only `clock_start` / `clock_stop` events (`elapsed_seconds`). Clock state
+is in-memory and clears on `/vanish`.
+
 ## Incident report (`netherchat report`, §2.6)
 
 Turn a sealed record into a standalone, shareable incident timeline — readable by

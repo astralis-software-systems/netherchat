@@ -122,6 +122,12 @@ func (m *Mapper) Map(ev client.Event) []Event {
 	case client.EvStreamEnd:
 		return []Event{StreamEnd(m.room, e.StreamID, e.Reason)}
 
+	case client.EvClockStart:
+		return []Event{ClockStart(m.room, e.Actor, e.Fpr)}
+
+	case client.EvClockStop:
+		return []Event{ClockStop(m.room, e.Actor, e.Fpr, e.ElapsedSeconds)}
+
 	case client.EvError:
 		return []Event{ErrorEvent(m.room, e.Err.Error())}
 

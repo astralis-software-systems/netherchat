@@ -92,6 +92,9 @@ type Event struct {
 	// streamed content).
 	StreamID string `json:"stream_id,omitempty"`
 
+	// Incident clock (A1): total incident duration in seconds (clock_stop events).
+	ElapsedSeconds *int `json:"elapsed_seconds,omitempty"`
+
 	Message string `json:"message,omitempty"`
 }
 
@@ -305,6 +308,21 @@ func StreamUpdate(room, actor, fpr, streamID string) Event {
 func StreamEnd(room, streamID, reason string) Event {
 	e := base("stream_end", room)
 	e.StreamID, e.Reason = streamID, reason
+	return e
+}
+
+// ClockStart builds a clock_start event (A1): the incident clock started.
+func ClockStart(room, actor, fpr string) Event {
+	e := base("clock_start", room)
+	e.Actor, e.Fpr = actor, fpr
+	return e
+}
+
+// ClockStop builds a clock_stop event (A1): the incident clock stopped, carrying
+// the total incident duration in seconds (the auditable MTTR signal).
+func ClockStop(room, actor, fpr string, elapsedSeconds int) Event {
+	e := base("clock_stop", room)
+	e.Actor, e.Fpr, e.ElapsedSeconds = actor, fpr, Int(elapsedSeconds)
 	return e
 }
 

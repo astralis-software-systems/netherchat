@@ -44,6 +44,7 @@ type Model struct {
 	statusPath                         string                  // status.json path for the prompt segment (§2.3)
 	streamExpanded                     map[string]bool         // stream_id -> expanded, for /expand stream-N (§2.2)
 	streamLines                        int                     // /stream ring-buffer size (§2.2)
+	clockTicking                       bool                    // the 1s incident-clock refresh is active (A1)
 
 	cmds     *command.Set
 	theme    theme.Theme
@@ -264,6 +265,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tickEvery()
 
+	case clockTickMsg:
+		// Refresh the header clock once a second while any incident clock runs (A1).
+		if m.anyClockRunning() {
+			m.syncViewport()
+			return m, clockTick()
+		}
+		m.clockTicking = false
+		return m, nil
+
 	case whoisFetchMsg:
 		switch {
 		case msg.err != nil:
@@ -408,6 +418,10 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 	case client.EvKeyReady:
 		r.keyReady = true
 		r.appendSystem(fmt.Sprintf("🔒 end-to-end encryption ready (epoch %d)", e.Epoch))
+		if r.autoClock { // break-glass rooms auto-start the incident clock (A1)
+			r.autoClock = false
+			r.client.ClockStart()
+		}
 
 	case client.EvMessage:
 		k := lineMessage
@@ -504,6 +518,24 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 			r.appendSystem("📡 " + who + " cleared the status beacon")
 		}
 
+	case client.EvClockStart:
+		who := e.Actor
+		if e.Self {
+			who = "you"
+		}
+		r.appendSystem("⏱ " + who + " started the incident clock")
+		if !m.clockTicking { // begin the 1s header refresh (A1)
+			m.clockTicking = true
+			notify = clockTick()
+		}
+
+	case client.EvClockStop:
+		who := e.Actor
+		if e.Self {
+			who = "you"
+		}
+		r.appendSystem(fmt.Sprintf("⏱ %s stopped the incident clock — elapsed %s", who, formatClock(time.Duration(e.ElapsedSeconds)*time.Second)))
+
 	case client.EvStreamUpdate:
 		// A live-log stream (§2.2): the first update places a block in the flow; every
 		// later update replaces its content IN PLACE (no new lines, no unread spam).
@@ -557,6 +589,9 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 		r.appendLine(line{at: time.Now(), kind: lineRaw, text: m.renderBreakGlass(e)})
 		m.notifier.BreakGlass(e.Room) // §2.1
 		notify = m.joinRoomOpts(e.Room, e.HostToken, false)
+		if nr := m.session[e.Room]; nr != nil {
+			nr.autoClock = true // the incident clock auto-starts when the war room keys up (A1)
+		}
 
 	case client.EvRouteFired:
 		// An inbound alert in this (intake) room spawned an incident war room.
@@ -1106,7 +1141,11 @@ func (m *Model) headerView() string {
 	}
 	title := m.st(m.theme.Accent).Bold(true).Render(" netherchat ")
 	meta := m.st(m.theme.Muted).Render(fmt.Sprintf("#%s · %s · theme:%s ", m.active, m.name, m.theme.Name))
-	return title + meta + status + "\n" + m.divider()
+	clock := ""
+	if seg := m.clockSegment(r); seg != "" {
+		clock = m.st(m.theme.Accent2).Bold(true).Render(seg + " ")
+	}
+	return title + meta + status + clock + "\n" + m.divider()
 }
 
 func (m *Model) footerView() string {

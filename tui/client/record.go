@@ -123,6 +123,16 @@ func (c *Client) onRecordEntry(e record.Entry, sig, signBytes, raw []byte) {
 //     signature, and collect co-signatures for up to 30s (or until every present
 //     member has signed), then finalize and emit EvSealComplete.
 func (c *Client) Seal() error {
+	// When INITIATING a seal (not co-signing a peer's), capture the incident clock's
+	// timing into the record as two signed note entries, so MTTR falls out of the
+	// timeline automatically (A1). Appended before we read the head below.
+	c.mu.Lock()
+	initiating := c.pendingSealHead == nil && !c.sealing
+	c.mu.Unlock()
+	if initiating {
+		c.appendClockNotes()
+	}
+
 	c.mu.Lock()
 	if c.rk == nil {
 		c.mu.Unlock()

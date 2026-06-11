@@ -42,6 +42,8 @@
         "key_ready",
         "stream_update",
         "stream_end",
+        "clock_start",
+        "clock_stop",
         "error",
         "disconnect"
       ]
@@ -82,6 +84,7 @@
     "transfer_id": { "type": "string", "pattern": "^[0-9a-f]{16}$", "description": "Content-free transfer id correlating an offer with its completion (file events)." },
     "epoch": { "type": "integer", "minimum": 0, "description": "Room key epoch (key_ready events)." },
     "stream_id": { "type": "string", "pattern": "^[0-9a-f]{16}$", "description": "Live-log stream session id (stream_update / stream_end events, §2.2)." },
+    "elapsed_seconds": { "type": "integer", "minimum": 0, "description": "Total incident duration in seconds (clock_stop events, A1) — the auditable MTTR signal." },
     "message": { "type": "string", "description": "Human-readable detail (error / disconnect events)." }
   }
 }

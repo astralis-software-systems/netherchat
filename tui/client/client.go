@@ -120,6 +120,14 @@ type Client struct {
 	// Status Beacon (§1.2): the per-room token authorizing beacon writes over REST
 	// (PUT/DELETE /beacon/<room>). Read-only beacon GETs need no token. See beacon.go.
 	beaconToken string
+
+	// Incident clock (A1), in memory only, reset on /vanish. clockStart is the start
+	// time (zero = not started); clockStop the resolution time (zero = running);
+	// clockNotesAdded latches that the timing notes were injected into a seal. See
+	// clock.go.
+	clockStart      time.Time
+	clockStop       time.Time
+	clockNotesAdded bool
 }
 
 // sealTimeout bounds how long a sealer waits for co-signatures before finalizing
@@ -471,6 +479,7 @@ func (c *Client) resetCoordinationLocked() {
 	c.clearRosterLocked()
 	c.clearReceiptLocked()
 	c.clearActionsLocked()
+	c.clearClockLocked()
 }
 
 // oldestHolderLocked returns the IC holder implied by join order: the oldest
@@ -891,6 +900,11 @@ func (c *Client) handleEncrypted(op protocol.Op, m protocol.Message) {
 	fpr := crypto.Fingerprint(sender.signPub)
 	switch op {
 	case protocol.OpMessage:
+		// Incident-clock markers (A1) ride as ordinary E2E messages; recognize them
+		// to sync the clock and surface a typed event instead of a chat line.
+		if c.recognizeClock(sender.name, fpr, string(pt), now) {
+			return
+		}
 		c.rememberMessage(sender.name, string(pt))
 		c.emit(EvMessage{FromID: m.FromID, FromName: sender.name, Text: string(pt), Signed: signed, At: now})
 	case protocol.OpExecRequest:

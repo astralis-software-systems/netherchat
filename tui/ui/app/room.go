@@ -86,6 +86,10 @@ type room struct {
 	// so the join link is rendered as a terminal QR code (§2.4).
 	inviteQR bool
 
+	// autoClock requests that the incident clock auto-start when this room's key is
+	// ready (A1) — set for break-glass war rooms.
+	autoClock bool
+
 	// Live log streaming (§2.2). streams holds each live block by stream_id;
 	// streamOrder is appearance order (for the "stream-N" /expand id). activeStream
 	// is our OWN outbound /stream (file tail), nil when we are not streaming.

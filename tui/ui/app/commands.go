@@ -54,6 +54,8 @@ func buildCommands() *command.Set {
 		command.Command{Name: "ack", Args: "[tag]", Help: "ack a coordination tag (typed quorum, not a reaction); no arg lists active tags"},
 		command.Command{Name: "handoff", Args: "@handle", Help: "transfer the incident-commander (IC) token"},
 		command.Command{Name: "ic", Help: "show who currently holds incident command"},
+		command.Command{Name: "clock", Args: "[start|stop]", Help: "incident clock; captures duration into the sealed record on /seal (A1)",
+			Complete: func(p string) []string { return command.FilterPrefix([]string{"start", "stop"}, p) }},
 		command.Command{Name: "decide", Args: "<text>", Help: "promote a decision into the signed record chain"},
 		command.Command{Name: "action", Args: "@handle <text>", Help: "record an action item assigned to someone"},
 		command.Command{Name: "mark", Help: "promote the most recent message into the record as a note"},
@@ -163,6 +165,8 @@ func (m *Model) runCommand(input string) tea.Cmd {
 		m.runHandoff(r, arg)
 	case "ic":
 		m.runIC(r)
+	case "clock":
+		m.runClock(r, arg)
 	case "decide":
 		m.runDecide(r, arg)
 	case "action":
