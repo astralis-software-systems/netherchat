@@ -27,6 +27,7 @@ type Config struct {
 	Trust       []TrustEntry            `toml:"trust"`
 	Direct      DirectConfig            `toml:"direct"`
 	Notify      NotifyConfig            `toml:"notify"`
+	Macros      map[string]string       `toml:"macros"`
 }
 
 // NotifyConfig is the CLIENT-side desktop-notification policy (§2.1): which in-room

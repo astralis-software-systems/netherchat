@@ -74,6 +74,23 @@ func buildCommands() *command.Set {
 // returning a tea.Cmd (for joins and quitting).
 func (m *Model) runCommand(input string) tea.Cmd {
 	name, arg, _ := m.cmds.Parse(input)
+
+	// Macro expansion happens BEFORE dispatch (§2.5): a macro expands to one or more
+	// concrete commands run in sequence. Expansion is transparent to the rest of the
+	// system — each expanded command re-enters runCommand as if typed.
+	if expanded, ok := m.macros.Expand(name); ok {
+		var batch []tea.Cmd
+		for _, sub := range expanded {
+			if c := m.runCommand(sub); c != nil {
+				batch = append(batch, c)
+			}
+		}
+		if len(batch) == 0 {
+			return nil
+		}
+		return tea.Batch(batch...)
+	}
+
 	r := m.activeRoom()
 
 	switch name {

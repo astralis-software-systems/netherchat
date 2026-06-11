@@ -41,6 +41,15 @@ func New(cmds ...Command) *Set {
 // Commands returns the commands in registration order.
 func (s *Set) Commands() []Command { return s.commands }
 
+// Add appends commands to the set (used to register validated macros alongside the
+// built-ins for autocomplete and /help, §2.5).
+func (s *Set) Add(cmds ...Command) {
+	for _, c := range cmds {
+		s.commands = append(s.commands, c)
+		s.index[c.Name] = c
+	}
+}
+
 // Get looks up a command by name.
 func (s *Set) Get(name string) (Command, bool) {
 	c, ok := s.index[name]

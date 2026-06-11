@@ -136,3 +136,14 @@ on = ["mention", "decision", "break_glass"]
 # decision    = a /decide was recorded
 # ack         = a coordination /ack was counted
 # break_glass = a war room was created
+
+# --- Slash-command macros (CLIENT-SIDE, §2.5) --------------------------------
+# Team-specific shortcuts, expanded by the TUI's slash engine before dispatch.
+# Chain multiple commands with · (middle dot). A macro name must not collide with
+# a built-in command, and circular expansion is rejected at startup. Macros show
+# up in Tab autocomplete alongside built-ins. Read only by the TUI.
+[macros]
+sev1     = "/break-glass --invite oncall,ic --ttl 4h"
+sev2     = "/break-glass --invite oncall --ttl 2h"
+drain    = "/ack drain-complete"
+resolved = "/decide incident resolved · /vanish"
