@@ -45,6 +45,8 @@ func main() {
 		bridgeCmd(os.Args[2:])
 	case "pair":
 		pairCmd(os.Args[2:])
+	case "engagement":
+		engagementCmd(os.Args[2:])
 	case "status":
 		statusCmd(os.Args[2:])
 	case "whoami":
@@ -214,6 +216,8 @@ usage:
   netherchat agent   --room <room> --allow runbook.toml   run an edge-exec agent
   netherchat bridge  --room <room> --on decision,ack --post <url>  fire signed callbacks on typed events (§1.6)
   netherchat pair    --lan | --manual [--join]    form a relay-LESS P2P war room (§1.1 Sneakernet)
+  netherchat engagement init --name <n> --consultant <h>   generate a turnkey engagement package (C1)
+  netherchat engagement close <dir>               consolidate sealed records into a close report (C1)
   netherchat status  [--format tmux|starship] [--json]   compact war-room segment for your prompt (§2.3)
   netherchat whoami  [--json]                     show your identity
   netherchat verify  <record.json> [--json]       verify a sealed record's hash chain + signatures
