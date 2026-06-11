@@ -47,6 +47,8 @@ func main() {
 		pairCmd(os.Args[2:])
 	case "engagement":
 		engagementCmd(os.Args[2:])
+	case "duress":
+		duressCmd(os.Args[2:])
 	case "status":
 		statusCmd(os.Args[2:])
 	case "whoami":
@@ -218,6 +220,7 @@ usage:
   netherchat pair    --lan | --manual [--join]    form a relay-LESS P2P war room (§1.1 Sneakernet)
   netherchat engagement init --name <n> --consultant <h>   generate a turnkey engagement package (C1)
   netherchat engagement close <dir>               consolidate sealed records into a close report (C1)
+  netherchat duress  selftest|beacon|verify|check  coercion-resistant safe response (C2)
   netherchat status  [--format tmux|starship] [--json]   compact war-room segment for your prompt (§2.3)
   netherchat whoami  [--json]                     show your identity
   netherchat verify  <record.json> [--json]       verify a sealed record's hash chain + signatures
