@@ -1,0 +1,11 @@
+# netherchat-teams-bot config (NC-3 inbound initiate). Copy to netherchat-teams-bot.toml.
+# Flags override these values. A Teams outgoing webhook / bot POSTs commands here;
+# the bot opens a war room via the NC-1 ingress socket and replies with a join link.
+listen       = ":9090"
+server       = "https://relay.example.com"
+source       = "teams-bot"          # must match a [[source]] in the relay's netherchat.toml
+token        = "REPLACE_ME"         # NC-1 per-source bearer token
+teams_secret = "REPLACE_ME"         # Teams outgoing-webhook HMAC secret (base64); unsigned requests are rejected
+default_ttl  = "2h"                 # shown on the reply card as the room's lifetime
+# Informational only — the relay [[route]] is authoritative for who is actually invited:
+default_invitees = ["alice", "bob"]

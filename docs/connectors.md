@@ -197,6 +197,43 @@ min_severity = "medium"
 
 ---
 
+## Microsoft Teams (notify + initiate, NC-3)
+
+Teams is the **outbound notify** and **inbound initiate** surface, not an inbound
+adapter. It is documented in full in [`docs/teams.md`](teams.md); the boundary
+summary:
+
+> **Teams sees:** who opened the room, severity, a one-time join link, and (on
+> seal) a record hash; (on scuttle) the reason and a receipt hash.
+> **Teams never sees:** message content, decisions, or the room transcript.
+
+- `netherchat-teams-notify` joins a room as a decrypting member and posts an
+  Adaptive Card on **open / seal / scuttle** — pointer + metadata only (the seal
+  card carries the chain head hash and signer count, never the decisions).
+- `netherchat-teams-bot` receives a Teams command (`@netherchat sev1 <summary>`),
+  verifies Teams' HMAC signature, opens a war room via `POST /api/v1/alert`, and
+  replies with a one-time join link. The Teams thread never crosses into Netherchat.
+
+Relay config for the Teams bot — a source plus a route:
+
+```toml
+[[source]]
+name  = "teams-bot"
+token = "REPLACE_ME"
+
+[[route]]
+match = { source = "teams-bot" }
+action = "break-glass"
+invite = ["@alice", "@bob"]
+room_prefix = "inc"
+ttl = "2h"
+```
+
+The bot maps `sev1→critical, sev2→high, sev3→medium, incident→high, drill→low`,
+forwarding only the parsed severity + a ≤200-char summary as `kind=teams-initiate`.
+
+---
+
 ## Authentication
 
 Each `[[source]]` declares a `token`, an `hmac_secret`, or both (the relay requires
