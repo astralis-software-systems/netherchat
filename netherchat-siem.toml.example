@@ -1,0 +1,9 @@
+# netherchat-siem-adapter config (NC-2). Copy to netherchat-siem.toml.
+# Flags override these values.
+listen       = ":8080"               # address to receive SIEM webhooks on
+server       = "https://relay.example.com"
+source       = "siem"                # must match a [[source]] name in the relay config
+token        = "REPLACE_ME"          # per-source bearer token (or use hmac_secret)
+# hmac_secret = "REPLACE_ME"
+siem         = "splunk"              # "splunk" or "sentinel"
+min_severity = "medium"             # drop alerts below this (info|low|medium|high|critical)
