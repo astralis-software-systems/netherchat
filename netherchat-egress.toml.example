@@ -1,0 +1,7 @@
+# netherchat-egress-adapter config (NC-2). Copy to netherchat-egress.toml.
+# Flags override these values.
+server       = "https://relay.example.com"
+source       = "ai-egress-monitor"   # must match a [[source]] name in the relay config
+token        = "REPLACE_ME"          # per-source bearer token (or use hmac_secret)
+# hmac_secret = "REPLACE_ME"
+min_severity = "high"                # drop signals below this (info|low|medium|high|critical)
