@@ -1,0 +1,24 @@
+# netherchat-agent-adapter config (NC-W2). Copy to netherchat-agent.toml.
+# Flags override these values. Forwards generic agent lifecycle events to the relay
+# as NC-1 metadata alerts. Only metadata crosses — the artifact CONTENT is never in
+# an event; artifact_hash (hex SHA-256) is its only representation.
+server       = "https://relay.example.com"
+source       = "my-agent"            # must match a [[source]] name in the relay config
+token        = "REPLACE_ME"          # per-source bearer token (or use hmac_secret)
+# hmac_secret = "REPLACE_ME"
+min_severity = "medium"              # drop events below this (info|low|medium|high|critical)
+
+# Event kinds (the NC-1 `kind` field): artifact_produced | sensitive_ingest |
+#   decision_proposed | anomaly_detected
+#
+# Route artifact_produced events to a war room for human approval:
+#   [[source]]
+#   name  = "my-agent"
+#   token = "REPLACE_ME"
+#
+#   [[route]]
+#   match.source = "my-agent"
+#   match.kind   = "artifact_produced"
+#   action       = "break-glass"
+#   invite       = ["alice", "bob"]
+#   ttl          = "2h"
