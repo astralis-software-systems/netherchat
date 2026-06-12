@@ -91,6 +91,9 @@ func decisions(rec *record.SealedRecord) []record.Entry {
 	return entriesOfKind(rec, record.KindDecision)
 }
 func actions(rec *record.SealedRecord) []record.Entry { return entriesOfKind(rec, record.KindAction) }
+func artifacts(rec *record.SealedRecord) []record.Entry {
+	return entriesOfKind(rec, record.KindArtifact)
+}
 
 func entriesOfKind(rec *record.SealedRecord, kind string) []record.Entry {
 	var out []record.Entry
@@ -109,9 +112,20 @@ func kindIcon(kind string) string {
 		return "📋"
 	case record.KindAction:
 		return "⚡"
+	case record.KindArtifact:
+		return "📋"
 	default:
 		return "💬"
 	}
+}
+
+// shortHash returns the first n characters of a hex hash/fingerprint with an
+// ellipsis, for the report's reference display.
+func shortHash(h string, n int) string {
+	if len(h) <= n {
+		return h
+	}
+	return h[:n] + "..."
 }
 
 func entryTime(e record.Entry) string { return time.Unix(e.TS, 0).Format("2006-01-02 15:04:05") }

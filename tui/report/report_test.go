@@ -122,6 +122,83 @@ func TestChainStatusEntryExtraction(t *testing.T) {
 	}
 }
 
+// buildWithArtifact assembles a sealed record whose chain includes an "artifact"
+// entry (an agent-produced artifact a human approved), for the NC-W1 report tests.
+func buildWithArtifact(t *testing.T) *record.SealedRecord {
+	t.Helper()
+	id, err := crypto.GenerateIdentity()
+	if err != nil {
+		t.Fatalf("identity: %v", err)
+	}
+	chain := record.NewChain()
+	author := record.Author{ID: id.Fingerprint(), Name: "alice", Key: id.SignPub, Sign: id.Sign}
+	body, err := record.MarshalArtifactBody(record.ArtifactMeta{
+		Source:       "requirements-agent",
+		ArtifactRef:  "Q3-requirements",
+		ArtifactHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		ApproverFpr:  id.Fingerprint(),
+		ProposedAt:   "2026-06-12T10:00:00Z",
+		ApprovedAt:   "2026-06-12T10:03:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chain.AppendNew(author, record.KindArtifact, "", body); err != nil {
+		t.Fatalf("append artifact: %v", err)
+	}
+	head := chain.Head()
+	sig, err := id.Sign(protocol.SealSigningBytes("ops", head))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sigs := map[string][]byte{id.Fingerprint(): sig}
+	keys := map[string][]byte{id.Fingerprint(): id.SignPub}
+	return record.NewSealedRecord("ops", id.Fingerprint(), chain.Entries(), head, sigs, keys)
+}
+
+func TestArtifactRendersInFullReport(t *testing.T) {
+	rec := buildWithArtifact(t)
+	res, err := record.Verify(rec)
+	if err != nil || !res.Valid {
+		t.Fatalf("artifact record should verify: err=%v reason=%q", err, res.Reason)
+	}
+	out := RenderHTML(rec, res, Options{})
+	for _, want := range []string{
+		"AI-drafted artifact approved",
+		"requirements-agent",
+		"Q3-requirements",
+		"0123456789abcdef...", // hash shortened to 16 chars
+		"Approved by: alice",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("full report missing %q", want)
+		}
+	}
+	// The full hash must never appear — only the 16-char prefix.
+	if strings.Contains(out, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") {
+		t.Fatal("full report leaked the entire artifact hash")
+	}
+}
+
+func TestArtifactExecutiveHidesHashAndFpr(t *testing.T) {
+	rec := buildWithArtifact(t)
+	res, _ := record.Verify(rec)
+	out := RenderHTML(rec, res, Options{Executive: true})
+	// The human-readable facts are present...
+	for _, want := range []string{"Q3-requirements", "requirements-agent", "alice"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("executive report missing %q", want)
+		}
+	}
+	// ...but no hash and no fingerprint.
+	if strings.Contains(out, "0123456789abcdef") {
+		t.Fatal("executive report must not show the artifact hash")
+	}
+	if strings.Contains(out, "SHA256:") {
+		t.Fatal("executive report must not show a fingerprint")
+	}
+}
+
 func TestQRSVGInline(t *testing.T) {
 	svg := QRSVG("netherchat verify record.json")
 	if !strings.Contains(svg, "<svg") || !strings.Contains(svg, "<rect") {

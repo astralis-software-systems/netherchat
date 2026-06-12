@@ -31,8 +31,14 @@ func RenderMarkdown(rec *record.SealedRecord, res *record.VerifyResult, opts Opt
 	b.WriteString("## Timeline\n\n")
 	for _, e := range rec.Entries {
 		body := e.Body
-		if e.Kind == record.KindAction && e.Actionee != "" {
+		switch {
+		case e.Kind == record.KindAction && e.Actionee != "":
 			body = "@" + e.Actionee + ": " + body
+		case e.Kind == record.KindArtifact:
+			if m, ok := record.ArtifactOf(e); ok {
+				body = fmt.Sprintf("📋 AI-drafted artifact approved — source: %s, artifact: %s, hash: %s, approved by %s (%s)",
+					m.Source, m.ArtifactRef, shortHash(m.ArtifactHash, 16), e.AuthorName, shortHash(m.ApproverFpr, 16))
+			}
 		}
 		status := "✗ unverified"
 		if res.Valid {
@@ -78,6 +84,17 @@ func executiveMarkdown(rec *record.SealedRecord) string {
 				owner = "@" + e.Actionee + ": "
 			}
 			fmt.Fprintf(&b, "- %s%s\n", owner, e.Body)
+		}
+		b.WriteString("\n")
+	}
+	if arts := artifacts(rec); len(arts) > 0 {
+		b.WriteString("**AI-drafted artifacts (human-approved)**\n\n")
+		for _, e := range arts {
+			m, ok := record.ArtifactOf(e)
+			if !ok {
+				continue
+			}
+			fmt.Fprintf(&b, "- 📋 %s — drafted by %s, approved by %s at %s\n", m.ArtifactRef, m.Source, e.AuthorName, approvedAt(m))
 		}
 		b.WriteString("\n")
 	}

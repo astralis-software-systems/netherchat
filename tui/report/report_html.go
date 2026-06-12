@@ -87,8 +87,11 @@ func RenderHTML(rec *record.SealedRecord, res *record.VerifyResult, opts Options
 	b.WriteString(`<section><h2>Timeline</h2><ol class="timeline">` + "\n")
 	for _, e := range rec.Entries {
 		body := esc(e.Body)
-		if e.Kind == record.KindAction && e.Actionee != "" {
+		switch {
+		case e.Kind == record.KindAction && e.Actionee != "":
 			body = `<b>@` + esc(e.Actionee) + `</b>: ` + body
+		case e.Kind == record.KindArtifact:
+			body = artifactBodyHTML(e, false)
 		}
 		badge := `<span class="bad">✗ unverified</span>`
 		if res.Valid {
@@ -142,12 +145,31 @@ func executiveSection(rec *record.SealedRecord) string {
 		}
 		b.WriteString(`</ul>`)
 	}
+	// AI-drafted artifacts (NC-W1): executive view shows only source, ref, approver
+	// name, and timestamp — never the hash or a fingerprint.
+	if arts := artifacts(rec); len(arts) > 0 {
+		b.WriteString(`<h3>AI-drafted artifacts (human-approved)</h3><ul>`)
+		for _, e := range arts {
+			m, ok := record.ArtifactOf(e)
+			if !ok {
+				continue
+			}
+			b.WriteString(`<li>📋 <b>` + esc(m.ArtifactRef) + `</b> — drafted by ` + esc(m.Source) +
+				`, approved by ` + esc(e.AuthorName) + ` at ` + esc(approvedAt(m)) + `</li>`)
+		}
+		b.WriteString(`</ul>`)
+	}
 	b.WriteString(`<h3>Timeline</h3><ul class="exectimeline">`)
 	for _, e := range rec.Entries {
 		if e.Kind == record.KindNote {
 			continue
 		}
-		b.WriteString(`<li><span class="ts">` + entryTime(e) + `</span> ` + esc(e.AuthorName) + ` — ` + esc(e.Body) + `</li>`)
+		body := e.Body
+		if m, ok := record.ArtifactOf(e); ok {
+			// Executive: no hash, no fingerprint — just the human-readable summary.
+			body = "AI-drafted artifact approved: " + m.ArtifactRef + " (source " + m.Source + ")"
+		}
+		b.WriteString(`<li><span class="ts">` + entryTime(e) + `</span> ` + esc(e.AuthorName) + ` — ` + esc(body) + `</li>`)
 	}
 	b.WriteString(`</ul>`)
 	if r := resolution(rec); r != "" {
@@ -155,6 +177,33 @@ func executiveSection(rec *record.SealedRecord) string {
 	}
 	b.WriteString(`</div>`)
 	return b.String()
+}
+
+// artifactBodyHTML renders an artifact entry's body in the full timeline: the
+// "AI-drafted artifact approved" block with source, ref, hash (shortened), the
+// approver and their fingerprint, and the approval time (NC-W1). It never shows the
+// artifact content — only its hash.
+func artifactBodyHTML(e record.Entry, _ bool) string {
+	m, ok := record.ArtifactOf(e)
+	if !ok {
+		return esc(e.Body)
+	}
+	var b strings.Builder
+	b.WriteString(`<b>📋 AI-drafted artifact approved</b><br>`)
+	b.WriteString(`Source: ` + esc(m.Source) + `<br>`)
+	b.WriteString(`Artifact: ` + esc(m.ArtifactRef) + `<br>`)
+	b.WriteString(`Hash: <span class="fpr">` + esc(shortHash(m.ArtifactHash, 16)) + `</span><br>`)
+	b.WriteString(`Approved by: ` + esc(e.AuthorName) + ` (<span class="fpr">` + esc(shortHash(m.ApproverFpr, 16)) + `</span>)<br>`)
+	b.WriteString(`At: ` + esc(approvedAt(m)))
+	return b.String()
+}
+
+// approvedAt returns the approval timestamp, falling back to the proposal time.
+func approvedAt(m record.ArtifactMeta) string {
+	if m.ApprovedAt != "" {
+		return m.ApprovedAt
+	}
+	return m.ProposedAt
 }
 
 // footerHTML renders the verify command and inline QR; the head hash is included

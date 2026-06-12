@@ -1,0 +1,6 @@
+Netherchat agent-drafted artifact — Q3 requirements draft (sample).
+
+This file stands in for an artifact an agentic tool produced for human review.
+Its CONTENT never enters Netherchat: only its SHA-256 hash crosses the boundary,
+and a named human approves it under the Two-Person Rule. The sealed record stores
+the hash and the approver's identity — verifiable offline, forever.
