@@ -1,0 +1,29 @@
+# netherchat-cicd config (NC-5, B3 generalized). Copy to netherchat-cicd.toml.
+# Flags override these values. A failed pipeline opens a short-TTL war room; a later
+# pass POSTs a ci-resolved alert a route can use to auto-scuttle it. Only build
+# metadata crosses (job, repo, short commit, run id) — never log output.
+listen        = ":8083"               # address to receive CI webhooks on (github/gitlab modes)
+server        = "https://relay.example.com"
+source        = "ci"                  # must match a [[source]] name in the relay config
+token         = "REPLACE_ME"          # per-source bearer token (or use hmac_secret)
+# hmac_secret = "REPLACE_ME"
+ci            = "github"              # "github" | "gitlab" | "cli"
+github_secret = "REPLACE_ME"          # GitHub webhook secret (validates X-Hub-Signature-256)
+# gitlab_token = "REPLACE_ME"         # GitLab webhook token (validates X-Gitlab-Token)
+default_ttl   = "1h"                  # informational; the relay [[route]] sets the room's actual TTL
+
+# Relay side: route ci-failure → open a short-TTL room; route ci-resolved → scuttle it.
+#   [[route]]
+#   match = { source = "ci", kind = "ci-failure" }
+#   action = "break-glass"
+#   room_prefix = "ci"
+#   ttl = "1h"
+#
+#   [[route]]
+#   match = { source = "ci", kind = "ci-resolved" }
+#   action = "scuttle"        # auto-close the room when the re-run passes
+#
+# CLI mode (run inside a pipeline step, no webhook server):
+#   netherchat-cicd --ci cli --server $NC --source ci --token $TOK \
+#     --status failed --job "build" --run-id "$GITHUB_RUN_ID" \
+#     --repo "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA"
