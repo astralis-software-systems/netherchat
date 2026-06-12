@@ -59,6 +59,9 @@ func buildCommands() *command.Set {
 		command.Command{Name: "decide", Args: "<text>", Help: "promote a decision into the signed record chain"},
 		command.Command{Name: "action", Args: "@handle <text>", Help: "record an action item assigned to someone"},
 		command.Command{Name: "mark", Help: "promote the most recent message into the record as a note"},
+		command.Command{Name: "propose", Args: "--source <agent> --ref <ref> --hash <sha256> [--summary <line>]", Help: "propose an agent-produced artifact for human approval (NC-W1)"},
+		command.Command{Name: "approve-artifact", Args: "<proposal-id>", Help: "approve a pending artifact proposal (an agent can never self-approve)"},
+		command.Command{Name: "reject-artifact", Args: "<proposal-id> [reason]", Help: "reject a pending artifact proposal; no record entry is written"},
 		command.Command{Name: "seal", Help: "seal the record: collect signatures, write record.json + minutes.md"},
 		command.Command{Name: "roster", Args: "[--signed] [--out <path>]", Help: "show who holds the keys; --signed writes a co-signed attestation",
 			Complete: func(p string) []string { return command.FilterPrefix([]string{"--signed", "--out"}, p) }},
@@ -173,6 +176,12 @@ func (m *Model) runCommand(input string) tea.Cmd {
 		m.runAction(r, arg)
 	case "mark":
 		m.runMark(r)
+	case "propose":
+		m.runPropose(r, arg)
+	case "approve-artifact":
+		m.runApproveArtifact(r, arg)
+	case "reject-artifact":
+		m.runRejectArtifact(r, arg)
 	case "seal":
 		m.runSeal(r)
 	case "roster":
@@ -882,6 +891,92 @@ func (m *Model) runMark(r *room) {
 	if err := r.client.Mark(); err != nil {
 		m.addError(err.Error())
 	}
+}
+
+// runPropose implements /propose (NC-W1): propose an agent-produced artifact for
+// human approval. It carries only the artifact's hash — never its content.
+func (m *Model) runPropose(r *room, arg string) {
+	if !m.connected(r) {
+		return
+	}
+	source, ref, hash, summary, err := parseProposeArgs(arg)
+	if err != nil {
+		m.addError(err.Error())
+		return
+	}
+	q := m.quorumFor(protocol.ActionArtifact)
+	if q == 0 {
+		m.addError("artifact approval is disabled by policy ([action.artifact] quorum = 0)")
+		return
+	}
+	if _, err := r.client.Propose(source, ref, hash, summary, q); err != nil {
+		m.addError(err.Error())
+	}
+}
+
+// runApproveArtifact implements /approve-artifact <id> (NC-W1).
+func (m *Model) runApproveArtifact(r *room, arg string) {
+	if !m.connected(r) {
+		return
+	}
+	id := strings.TrimSpace(arg)
+	if id == "" {
+		m.addError("usage: /approve-artifact <proposal-id>   (see the proposal notice)")
+		return
+	}
+	if err := r.client.ApproveArtifact(id); err != nil {
+		m.addError(err.Error())
+	}
+}
+
+// runRejectArtifact implements /reject-artifact <id> [reason] (NC-W1).
+func (m *Model) runRejectArtifact(r *room, arg string) {
+	if !m.connected(r) {
+		return
+	}
+	fields := strings.Fields(arg)
+	if len(fields) == 0 {
+		m.addError("usage: /reject-artifact <proposal-id> [reason]")
+		return
+	}
+	id := fields[0]
+	reason := strings.TrimSpace(strings.TrimPrefix(arg, id))
+	if err := r.client.RejectArtifact(id, reason); err != nil {
+		m.addError(err.Error())
+	}
+}
+
+// parseProposeArgs parses the /propose flags. --source/--ref/--hash each take one
+// token; --summary takes the rest of the line. Quote-free values (the TUI form);
+// the headless `netherchat propose` CLI uses a real flag parser for quoted values.
+func parseProposeArgs(arg string) (source, ref, hash, summary string, err error) {
+	toks := strings.Fields(arg)
+	for i := 0; i < len(toks); i++ {
+		switch toks[i] {
+		case "--source":
+			if i+1 < len(toks) {
+				i++
+				source = toks[i]
+			}
+		case "--ref":
+			if i+1 < len(toks) {
+				i++
+				ref = toks[i]
+			}
+		case "--hash":
+			if i+1 < len(toks) {
+				i++
+				hash = toks[i]
+			}
+		case "--summary":
+			summary = strings.Join(toks[i+1:], " ")
+			i = len(toks)
+		}
+	}
+	if source == "" || ref == "" || hash == "" {
+		return "", "", "", "", fmt.Errorf("usage: /propose --source <agent> --ref <ref> --hash <sha256> [--summary <line>]")
+	}
+	return source, ref, hash, summary, nil
 }
 
 // runSeal implements /seal (§1.4): initiate a seal, or co-sign a pending one.

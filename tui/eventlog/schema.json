@@ -39,6 +39,9 @@
         "action_executed",
         "action_vetoed",
         "action_expired",
+        "artifact_proposed",
+        "artifact_approved",
+        "artifact_sealed",
         "key_ready",
         "stream_update",
         "stream_end",
@@ -85,6 +88,12 @@
     "epoch": { "type": "integer", "minimum": 0, "description": "Room key epoch (key_ready events)." },
     "stream_id": { "type": "string", "pattern": "^[0-9a-f]{16}$", "description": "Live-log stream session id (stream_update / stream_end events, §2.2)." },
     "elapsed_seconds": { "type": "integer", "minimum": 0, "description": "Total incident duration in seconds (clock_stop events, A1) — the auditable MTTR signal." },
+    "proposal_id": { "type": "string", "description": "Correlates an artifact proposal with its approvals and seal (artifact_* events, NC-W1)." },
+    "artifact_ref": { "type": "string", "description": "Title or reference id of the agent-produced artifact (artifact_* events, NC-W1)." },
+    "artifact_hash": { "type": "string", "description": "Hex SHA-256 of the artifact CONTENT (artifact_* events, NC-W1) — the only representation; content never appears." },
+    "approver_count": { "type": "integer", "minimum": 1, "description": "Distinct human approvers so far (artifact_approved events, NC-W1)." },
+    "approvers": { "type": "array", "items": { "type": "string" }, "description": "Approving fingerprints (artifact_sealed events, NC-W1)." },
+    "source": { "type": "string", "description": "Agent/tool label that produced the artifact (artifact_* events, NC-W1)." },
     "message": { "type": "string", "description": "Human-readable detail (error / disconnect events)." }
   }
 }

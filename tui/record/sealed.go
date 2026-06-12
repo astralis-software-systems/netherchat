@@ -222,7 +222,7 @@ func RenderMinutes(r *SealedRecord) string {
 	}
 	fmt.Fprintf(&b, "Participants: %s\n", strings.Join(parts, ", "))
 
-	var decisions, actions, notes []Entry
+	var decisions, actions, notes, artifacts []Entry
 	for _, e := range r.Entries {
 		switch e.Kind {
 		case KindDecision:
@@ -231,6 +231,8 @@ func RenderMinutes(r *SealedRecord) string {
 			actions = append(actions, e)
 		case KindNote:
 			notes = append(notes, e)
+		case KindArtifact:
+			artifacts = append(artifacts, e)
 		}
 	}
 
@@ -244,6 +246,21 @@ func RenderMinutes(r *SealedRecord) string {
 		b.WriteString("\n## Actions\n")
 		for _, e := range actions {
 			fmt.Fprintf(&b, "- [ ] **%s**: %s (assigned by %s)\n", e.Actionee, e.Body, e.AuthorName)
+		}
+	}
+	if len(artifacts) > 0 {
+		b.WriteString("\n## AI-Drafted Artifacts (human-approved)\n")
+		for _, e := range artifacts {
+			m, ok := ArtifactOf(e)
+			if !ok {
+				continue
+			}
+			who := names[m.ApproverFpr]
+			if who == "" {
+				who = e.AuthorName
+			}
+			fmt.Fprintf(&b, "- **%s** — source: %s · hash: %s… · approved by %s\n",
+				m.ArtifactRef, m.Source, shortHash(m.ArtifactHash, 16), who)
 		}
 	}
 	if len(notes) > 0 {

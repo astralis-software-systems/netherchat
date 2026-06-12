@@ -60,6 +60,9 @@ quorum = 2                 # require a second authorized co-signer before any ru
 quorum = 2                 # /scuttle now and /scuttle arm require a second approver
 # [action.break_glass]
 # quorum = 3               # opening a war room requires three endorsers (requester + 2)
+[action.artifact]
+quorum = 1                 # /approve-artifact: human approvers required to seal an agent-produced artifact (NC-W1)
+                           # 1 = one human approves; 2 = two independent humans; the proposing agent can never count
 
 # NOTE: there is deliberately no server-side [exec]. A blind relay must never run
 # commands. /exec is an EDGE feature: it sends a signed, E2E-encrypted request the

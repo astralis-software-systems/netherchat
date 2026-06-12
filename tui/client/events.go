@@ -316,6 +316,70 @@ type EvActionExpired struct {
 	At                time.Time
 }
 
+// --- Agent-Decision Attestation (NC-W1) -------------------------------------
+
+// EvArtifactProposed is emitted when an artifact proposal is seen: by us (Self) or
+// by another member. It carries only metadata — the artifact hash, never content.
+type EvArtifactProposed struct {
+	ProposalID   string
+	Source       string
+	ArtifactRef  string
+	ArtifactHash string
+	Summary      string
+	ProposerName string
+	ProposerFpr  string
+	Quorum       int
+	Self         bool
+	At           time.Time
+}
+
+// EvArtifactApproved is emitted as each distinct human approval is counted:
+// ApproverName endorsed the proposal, bringing approvals to Count of Quorum.
+type EvArtifactApproved struct {
+	ProposalID   string
+	ArtifactRef  string
+	ArtifactHash string
+	ApproverName string
+	ApproverFpr  string
+	Count        int // distinct human approvers so far
+	Quorum       int
+	Self         bool
+	At           time.Time
+}
+
+// EvArtifactSealed is emitted when a proposal reaches quorum and the signed
+// "artifact" record entry is written into the chain. Approvers lists the approving
+// fingerprints. Every client emits it (for the audit stream); the approver that
+// completed quorum is the one that wrote the entry.
+type EvArtifactSealed struct {
+	ProposalID   string
+	Source       string
+	ArtifactRef  string
+	ArtifactHash string
+	Approvers    []string
+	At           time.Time
+}
+
+// EvArtifactRejected is emitted when a pending proposal is rejected: by us (Self) or
+// by another member. No record entry is written.
+type EvArtifactRejected struct {
+	ProposalID   string
+	ArtifactRef  string
+	RejecterName string
+	RejecterFpr  string
+	Reason       string
+	Self         bool
+	At           time.Time
+}
+
+// EvArtifactExpired is emitted when a proposal's window (300s) elapses without
+// reaching quorum.
+type EvArtifactExpired struct {
+	ProposalID  string
+	ArtifactRef string
+	At          time.Time
+}
+
 // --- Status Beacon (§1.2) ---------------------------------------------------
 
 // EvBeaconResult is the outcome of a /beacon set or /beacon clear: OK on success,
@@ -476,6 +540,11 @@ func (EvActionApproval) isEvent()    {}
 func (EvActionExecuted) isEvent()    {}
 func (EvActionVetoed) isEvent()      {}
 func (EvActionExpired) isEvent()     {}
+func (EvArtifactProposed) isEvent()  {}
+func (EvArtifactApproved) isEvent()  {}
+func (EvArtifactSealed) isEvent()    {}
+func (EvArtifactRejected) isEvent()  {}
+func (EvArtifactExpired) isEvent()   {}
 func (EvBeaconResult) isEvent()      {}
 func (EvBeaconStatus) isEvent()      {}
 func (EvStreamUpdate) isEvent()      {}

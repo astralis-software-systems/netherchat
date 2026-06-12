@@ -117,6 +117,12 @@ type Client struct {
 	// enforced identically on every client from the frames it sees. See action.go.
 	actions map[string]*trackedAction
 
+	// Agent-Decision Attestation (NC-W1): every artifact proposal this client
+	// observes, keyed by proposal_id. Approvals are counted identically on every
+	// client (the proposer is never an approver); on quorum the approver that
+	// completes it writes the signed "artifact" record entry. See artifact.go.
+	proposals map[string]*trackedProposal
+
 	// Status Beacon (§1.2): the per-room token authorizing beacon writes over REST
 	// (PUT/DELETE /beacon/<room>). Read-only beacon GETs need no token. See beacon.go.
 	beaconToken string
@@ -220,6 +226,7 @@ func NewWithIdentity(serverURL, room, name string, id *crypto.Identity) (*Client
 		recvs:        make(map[string]*recvState),
 		maxFileBytes: protocol.DefaultMaxFileBytes,
 		actions:      make(map[string]*trackedAction),
+		proposals:    make(map[string]*trackedProposal),
 	}, nil
 }
 
@@ -479,6 +486,7 @@ func (c *Client) resetCoordinationLocked() {
 	c.clearRosterLocked()
 	c.clearReceiptLocked()
 	c.clearActionsLocked()
+	c.clearProposalsLocked()
 	c.clearClockLocked()
 }
 
@@ -681,6 +689,7 @@ func (c *Client) handle(env protocol.Envelope) {
 		protocol.OpRosterRequest, protocol.OpRosterAck,
 		protocol.OpScuttleReceiptRequest, protocol.OpScuttleReceiptAck,
 		protocol.OpActionRequest, protocol.OpActionApproval, protocol.OpActionVeto,
+		protocol.OpArtifactProposal, protocol.OpArtifactApproval, protocol.OpArtifactRejection,
 		protocol.OpStreamUpdate, protocol.OpStreamEnd:
 		var m protocol.Message
 		if err := env.Decode(&m); err == nil {
@@ -994,6 +1003,21 @@ func (c *Client) handleEncrypted(op protocol.Op, m protocol.Message) {
 		var body protocol.ActionVetoBody
 		if json.Unmarshal(pt, &body) == nil {
 			c.onActionVeto(sender.name, fpr, body)
+		}
+	case protocol.OpArtifactProposal:
+		var body protocol.ArtifactProposalBody
+		if json.Unmarshal(pt, &body) == nil {
+			c.onArtifactProposal(sender.name, fpr, body)
+		}
+	case protocol.OpArtifactApproval:
+		var body protocol.ArtifactApprovalBody
+		if json.Unmarshal(pt, &body) == nil {
+			c.onArtifactApproval(sender.name, sender.signPub, body)
+		}
+	case protocol.OpArtifactRejection:
+		var body protocol.ArtifactRejectionBody
+		if json.Unmarshal(pt, &body) == nil {
+			c.onArtifactRejection(sender.name, fpr, body)
 		}
 	case protocol.OpStreamUpdate:
 		var body protocol.StreamUpdateBody

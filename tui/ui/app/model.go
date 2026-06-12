@@ -123,6 +123,14 @@ func (m *Model) quorumFor(action string) int {
 	return 1
 }
 
+// shortHashUI abbreviates an artifact/content hash for display (first 16 chars).
+func shortHashUI(h string) string {
+	if len(h) <= 16 {
+		return h
+	}
+	return h[:16] + "..."
+}
+
 func newModel(url, name, identityPath, roomName, notifyCmd string) *Model {
 	m := &Model{
 		url: url, name: name, identityPath: identityPath, notifyCmd: notifyCmd,
@@ -735,6 +743,44 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 	case client.EvActionExpired:
 		r.appendSystem(fmt.Sprintf("✗ Request expired without quorum (%d/%d approvals): %s",
 			e.ApprovalsReceived, e.QuorumNeeded, shortAction(e.Action)))
+
+	case client.EvArtifactProposed: // Agent-Decision Attestation (NC-W1)
+		var b strings.Builder
+		fmt.Fprintf(&b, "📋 Artifact proposed by %s: %s\n", e.Source, e.ArtifactRef)
+		fmt.Fprintf(&b, "   Hash: %s\n", shortHashUI(e.ArtifactHash))
+		if e.Self {
+			fmt.Fprintf(&b, "   Awaiting %d human approval(s). Proposal id: %s", e.Quorum, e.ProposalID)
+		} else {
+			fmt.Fprintf(&b, "   Approve with: /approve-artifact %s", e.ProposalID)
+		}
+		r.appendSystem(b.String())
+		if !e.Self && name != m.active {
+			r.unread++
+		}
+
+	case client.EvArtifactApproved:
+		who := e.ApproverName
+		if e.Self {
+			who = "you"
+		}
+		r.appendSystem(fmt.Sprintf("✓ %s approved artifact %s  (approvals: %d/%d)", who, e.ArtifactRef, e.Count, e.Quorum))
+
+	case client.EvArtifactSealed:
+		r.appendSystem(fmt.Sprintf("🔒 Artifact sealed into the record: %s  (source %s, hash %s)", e.ArtifactRef, e.Source, shortHashUI(e.ArtifactHash)))
+
+	case client.EvArtifactRejected:
+		who := e.RejecterName
+		if e.Self {
+			who = "you"
+		}
+		msg := fmt.Sprintf("✗ %s rejected artifact: %s", who, e.ArtifactRef)
+		if strings.TrimSpace(e.Reason) != "" {
+			msg += fmt.Sprintf("  (reason: %s)", strings.TrimSpace(e.Reason))
+		}
+		r.appendSystem(msg)
+
+	case client.EvArtifactExpired:
+		r.appendSystem(fmt.Sprintf("✗ Artifact proposal expired without quorum: %s", e.ArtifactRef))
 
 	case client.EvBeaconResult:
 		switch {

@@ -312,11 +312,13 @@ func (s *Server) relay(room, fromID string, env protocol.Envelope) {
 		protocol.OpRosterRequest, protocol.OpRosterAck,
 		protocol.OpScuttleReceiptRequest, protocol.OpScuttleReceiptAck,
 		protocol.OpActionRequest, protocol.OpActionApproval, protocol.OpActionVeto,
+		protocol.OpArtifactProposal, protocol.OpArtifactApproval, protocol.OpArtifactRejection,
 		protocol.OpStreamUpdate, protocol.OpStreamEnd:
 		// Edge exec, coordination primitives (ack/handoff), sealed-record frames
 		// (record entries, seal requests/acks), roster-attestation frames (roster
-		// requests/acks, §1.4), and Two-Person Rule frames (action request/approval/
-		// veto, §1.3): the relay treats all of these exactly like chat messages —
+		// requests/acks, §1.4), Two-Person Rule frames (action request/approval/veto,
+		// §1.3), and Agent-Decision Attestation frames (artifact proposal/approval/
+		// rejection, NC-W1): the relay treats all of these exactly like chat messages —
 		// opaque E2E envelopes (sealed under the room key, Ed25519-signed) it fans out
 		// to the room verbatim. It never sees the command, the ack tag, the handoff
 		// target, the recorded decision, the head being sealed, the membership set, or

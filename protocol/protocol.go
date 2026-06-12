@@ -106,6 +106,18 @@ const (
 	OpActionRequest  Op = "action_request"  // initiator -> room: a privileged action awaiting quorum
 	OpActionApproval Op = "action_approval" // approver -> room: a signed approval of a request hash
 	OpActionVeto     Op = "action_veto"     // member -> room: cancel a pending request immediately
+
+	// Agent-decision attestation (NC-W1, additive). All three carry a Message
+	// envelope sealed under the room key, exactly like the Two-Person Rule frames —
+	// the relay only ever sees ciphertext. An agent (or a human acting for one)
+	// PROPOSES an artifact it produced; one or more named humans APPROVE it under the
+	// existing Two-Person Rule; on quorum the artifact becomes a signed, hash-chained
+	// "artifact" record entry. The proposer can never count toward its own quorum
+	// (the second law: an agent proposes, it can never self-approve). See
+	// tui/client/artifact.go and docs/agent-attestation.md.
+	OpArtifactProposal  Op = "artifact_proposal"  // proposer -> room: an agent-produced artifact awaiting human approval
+	OpArtifactApproval  Op = "artifact_approval"  // approver -> room: a signed human approval of a proposal
+	OpArtifactRejection Op = "artifact_rejection" // member -> room: reject a pending proposal (no record entry)
 )
 
 // Envelope is the outer frame for every message on the wire. Data holds the

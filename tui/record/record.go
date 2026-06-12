@@ -51,6 +51,7 @@ const (
 	KindDecision = "decision" // /decide — a decision that was made
 	KindAction   = "action"   // /action @owner — an action item assigned to someone
 	KindNote     = "note"     // /mark — a message promoted into the record
+	KindArtifact = "artifact" // /propose + /approve-artifact — an agent-produced, human-approved artifact (NC-W1)
 )
 
 // Entry is one link in the record chain (§1.4). It is both the wire payload of an
@@ -104,7 +105,7 @@ func VerifyEntry(e Entry) error {
 		return fmt.Errorf("entry %d: author_key fingerprint %s does not match author_id %s", e.Seq, fpr, e.AuthorID)
 	}
 	switch e.Kind {
-	case KindDecision, KindAction, KindNote:
+	case KindDecision, KindAction, KindNote, KindArtifact:
 	default:
 		return fmt.Errorf("entry %d: unknown kind %q", e.Seq, e.Kind)
 	}

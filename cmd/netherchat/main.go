@@ -41,6 +41,10 @@ func main() {
 		beaconLinkCmd(os.Args[2:])
 	case "agent":
 		agentCmd(os.Args[2:])
+	case "propose":
+		proposeCmd(os.Args[2:])
+	case "approve-artifact":
+		approveArtifactCmd(os.Args[2:])
 	case "bridge":
 		bridgeCmd(os.Args[2:])
 	case "pair":
@@ -165,6 +169,7 @@ func actionQuorums(cfg config.Config) map[string]int {
 		protocol.ActionScuttleAction: cfg.ActionQuorum(protocol.ActionScuttleAction),
 		protocol.ActionBreakGlass:    cfg.ActionQuorum(protocol.ActionBreakGlass),
 		protocol.ActionRunbook:       cfg.ActionQuorum(protocol.ActionRunbook),
+		protocol.ActionArtifact:      cfg.ActionQuorum(protocol.ActionArtifact),
 	}
 }
 

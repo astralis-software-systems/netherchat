@@ -83,6 +83,15 @@ func (m *Mapper) Map(ev client.Event) []Event {
 	case client.EvActionExpired:
 		return []Event{ActionExpired(m.room, e.RequestID, e.Action, e.ApprovalsReceived, e.QuorumNeeded)}
 
+	case client.EvArtifactProposed: // Agent-Decision Attestation (NC-W1)
+		return []Event{ArtifactProposed(m.room, e.Source, e.ProposerFpr, e.ProposalID, e.ArtifactRef, e.ArtifactHash)}
+
+	case client.EvArtifactApproved:
+		return []Event{ArtifactApproved(m.room, e.ApproverName, e.ApproverFpr, e.ProposalID, e.ArtifactRef, e.ArtifactHash, e.Count, e.Quorum)}
+
+	case client.EvArtifactSealed:
+		return []Event{ArtifactSealed(m.room, e.ProposalID, e.ArtifactRef, e.ArtifactHash, e.Approvers, e.Source)}
+
 	case client.EvControl:
 		switch e.Action {
 		case "vanish": // protocol.ActionVanish

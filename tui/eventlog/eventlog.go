@@ -95,6 +95,16 @@ type Event struct {
 	// Incident clock (A1): total incident duration in seconds (clock_stop events).
 	ElapsedSeconds *int `json:"elapsed_seconds,omitempty"`
 
+	// Agent-Decision Attestation (NC-W1): an agent-produced artifact proposed,
+	// approved, or sealed into the record. The artifact_hash (hex SHA-256) is the
+	// ONLY representation of the artifact — its content is never in the stream.
+	ProposalID    string   `json:"proposal_id,omitempty"`
+	ArtifactRef   string   `json:"artifact_ref,omitempty"`
+	ArtifactHash  string   `json:"artifact_hash,omitempty"`
+	ApproverCount *int     `json:"approver_count,omitempty"`
+	Approvers     []string `json:"approvers,omitempty"`
+	Source        string   `json:"source,omitempty"`
+
 	Message string `json:"message,omitempty"`
 }
 
@@ -215,6 +225,37 @@ func ActionExpired(room, requestID, action string, approvalsReceived, quorumNeed
 	e := base("action_expired", room)
 	e.RequestID, e.Action = requestID, action
 	e.ApprovalsReceived, e.QuorumNeeded = Int(approvalsReceived), Int(quorumNeeded)
+	return e
+}
+
+// --- Agent-Decision Attestation (NC-W1) -------------------------------------
+
+// ArtifactProposed builds an artifact_proposed event: an agent (actor=source)
+// proposed an artifact for human approval. artifactHash is the hex SHA-256 of the
+// content — the content itself is never in the stream.
+func ArtifactProposed(room, source, fpr, proposalID, artifactRef, artifactHash string) Event {
+	e := base("artifact_proposed", room)
+	e.Actor, e.Fpr, e.Source = source, fpr, source
+	e.ProposalID, e.ArtifactRef, e.ArtifactHash = proposalID, artifactRef, artifactHash
+	return e
+}
+
+// ArtifactApproved builds an artifact_approved event: a named human (actor) approved
+// a proposal, bringing approvals to approverCount of quorumNeeded.
+func ArtifactApproved(room, actor, fpr, proposalID, artifactRef, artifactHash string, approverCount, quorumNeeded int) Event {
+	e := base("artifact_approved", room)
+	e.Actor, e.Fpr = actor, fpr
+	e.ProposalID, e.ArtifactRef, e.ArtifactHash = proposalID, artifactRef, artifactHash
+	e.ApproverCount, e.QuorumNeeded = Int(approverCount), Int(quorumNeeded)
+	return e
+}
+
+// ArtifactSealed builds an artifact_sealed event: a proposal reached quorum and the
+// signed artifact record entry was written. approvers are the approving fingerprints.
+func ArtifactSealed(room, proposalID, artifactRef, artifactHash string, approvers []string, source string) Event {
+	e := base("artifact_sealed", room)
+	e.ProposalID, e.ArtifactRef, e.ArtifactHash = proposalID, artifactRef, artifactHash
+	e.Approvers, e.Source = approvers, source
 	return e
 }
 
