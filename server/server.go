@@ -18,6 +18,7 @@ import (
 
 	"github.com/salehkreiner/netherchat/buildinfo"
 	"github.com/salehkreiner/netherchat/server/config"
+	"github.com/salehkreiner/netherchat/server/internal/alert"
 	"github.com/salehkreiner/netherchat/server/internal/api"
 	"github.com/salehkreiner/netherchat/server/internal/beacon"
 	"github.com/salehkreiner/netherchat/server/internal/ephemeral"
@@ -65,7 +66,10 @@ func handlerWithStore(cfg config.Config, st store.Store, tap func([]byte), log *
 	// Purged when a room is torn down (scuttle / ephemeral deadline / idle TTL).
 	beacons := beacon.New()
 	h.SetOnClose(beacons.Delete)
-	rest := api.New(h, cfg, invites, eph, beacons, log)
+	// Per-source ingress hardening for the generic alert socket (NC-1): rate +
+	// spawn caps keyed by [[source]]. Built once; lives for the handler's lifetime.
+	guards := alert.NewGuards()
+	rest := api.New(h, cfg, invites, eph, beacons, guards, log)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", transport.HandleWS)

@@ -23,6 +23,7 @@ type Config struct {
 	Persistence PersistenceConfig       `toml:"persistence"`
 	Rooms       map[string]RoomConfig   `toml:"rooms"`
 	Routes      []RouteConfig           `toml:"route"`
+	Sources     []SourceConfig          `toml:"source"`
 	Actions     map[string]ActionPolicy `toml:"action"`
 	Trust       []TrustEntry            `toml:"trust"`
 	Direct      DirectConfig            `toml:"direct"`
@@ -78,6 +79,30 @@ type TrustEntry struct {
 	Handle  string `toml:"handle"`
 	Fpr     string `toml:"fpr"`      // optional: a pinned "SHA256:…" fingerprint
 	KeysURL string `toml:"keys_url"` // optional: e.g. https://github.com/<handle>.keys
+}
+
+// SourceConfig registers an inbound alert source for the generic ingress socket
+// (NC-1, POST /api/v1/alert). Each source authenticates with a bearer Token, an
+// HMACSecret (HMAC-SHA256 over the canonical alert), or both. A source with
+// neither credential is rejected — there is no default-open ingress. Like
+// [[route]], this is server-side ingress policy and never involves message
+// content; the relay stays blind.
+type SourceConfig struct {
+	Name          string `toml:"name"`
+	Token         string `toml:"token"`           // bearer-token auth (X-Netherchat-Token / ?token)
+	HMACSecret    string `toml:"hmac_secret"`     // HMAC-SHA256 signature auth (the alert's `signature` field)
+	RatePerMinute int    `toml:"rate_per_minute"` // inbound alert rate cap per source (0 = default)
+	SpawnPerHour  int    `toml:"spawn_per_hour"`  // war-room spawn cap per source (0 = default)
+}
+
+// Source returns the registered alert source with this name (NC-1), if any.
+func (c Config) Source(name string) (SourceConfig, bool) {
+	for _, s := range c.Sources {
+		if s.Name == name {
+			return s, true
+		}
+	}
+	return SourceConfig{}, false
 }
 
 type ServerConfig struct {

@@ -181,6 +181,14 @@ func (s *Server) serve(ctx context.Context, c *websocket.Conn) {
 			}
 		}
 	}
+	// NC-1 ingress: if this is an alert-spawned war room, deliver its marked-
+	// plaintext, metadata-only notice ("why this room opened") to the newcomer. It
+	// is ephemeral, dies with the room, and carries no message content.
+	if er, ok := s.ephemeral.Get(hello.Room); ok && er.Notice != "" {
+		cn.send(mustEncode(protocol.OpServerMessage, protocol.ServerMessage{
+			Kind: "alert", From: "ingress", Text: er.Notice, At: time.Now().Unix(),
+		}))
+	}
 	s.hub.Broadcast(hello.Room, id, mustEncode(protocol.OpMemberJoined, protocol.MemberJoined{Member: member.Info}))
 	if res.Distributor != nil {
 		// Ask the oldest existing member to wrap the current room key for the newcomer.

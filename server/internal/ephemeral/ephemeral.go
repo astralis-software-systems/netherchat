@@ -33,6 +33,11 @@ type Room struct {
 	CreatedBy string
 	Created   time.Time
 	Deadline  time.Time
+
+	// Notice is an optional marked-plaintext, metadata-only line delivered to each
+	// member as they join (NC-1 alert ingress: "why this war room opened"). It lives
+	// only in memory and dies with the room. It is never message content.
+	Notice string
 }
 
 // Registry is a concurrency-safe set of live ephemeral rooms. The zero value is
@@ -102,6 +107,23 @@ func (r *Registry) CreateNamed(ttl time.Duration, by, prefix string) Room {
 		}
 	}
 	r.rooms[room.Name] = room
+	return room
+}
+
+// CreateNamedNotice is CreateNamed plus a marked-plaintext, metadata-only notice
+// delivered to each member as they join (NC-1). An empty notice behaves exactly
+// like CreateNamed.
+func (r *Registry) CreateNamedNotice(ttl time.Duration, by, prefix, notice string) Room {
+	room := r.CreateNamed(ttl, by, prefix)
+	if notice != "" {
+		r.mu.Lock()
+		if cur, ok := r.rooms[room.Name]; ok {
+			cur.Notice = notice
+			r.rooms[room.Name] = cur
+			room = cur
+		}
+		r.mu.Unlock()
+	}
 	return room
 }
 

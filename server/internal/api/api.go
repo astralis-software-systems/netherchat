@@ -18,6 +18,7 @@ import (
 	"github.com/salehkreiner/netherchat/buildinfo"
 	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/server/config"
+	"github.com/salehkreiner/netherchat/server/internal/alert"
 	"github.com/salehkreiner/netherchat/server/internal/beacon"
 	"github.com/salehkreiner/netherchat/server/internal/ephemeral"
 	"github.com/salehkreiner/netherchat/server/internal/hub"
@@ -37,16 +38,17 @@ type API struct {
 	invites   *invite.Store
 	ephemeral *ephemeral.Registry
 	beacons   *beacon.Store
+	guards    *alert.Guards
 	log       *slog.Logger
 }
 
 // New constructs an API bound to the hub, config, invite store, ephemeral
-// registry, and beacon store.
-func New(h *hub.Hub, cfg config.Config, invites *invite.Store, eph *ephemeral.Registry, beacons *beacon.Store, log *slog.Logger) *API {
+// registry, beacon store, and per-source ingress guards (NC-1).
+func New(h *hub.Hub, cfg config.Config, invites *invite.Store, eph *ephemeral.Registry, beacons *beacon.Store, guards *alert.Guards, log *slog.Logger) *API {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{hub: h, cfg: cfg, invites: invites, ephemeral: eph, beacons: beacons, log: log}
+	return &API{hub: h, cfg: cfg, invites: invites, ephemeral: eph, beacons: beacons, guards: guards, log: log}
 }
 
 // Register wires the REST routes onto the mux. Go 1.22+ method+path patterns.
@@ -57,6 +59,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	// Config-as-code validation (B1): the Terraform provider POSTs a proposed
 	// netherchat.toml here to fail a plan early. Read-only — nothing is applied.
 	mux.HandleFunc("POST /api/v1/config/validate", a.configValidate)
+	// Generic signed ingress socket (NC-1): a registered [[source]] POSTs a
+	// schema-valid metadata alert; a matching [[route]] spawns a break-glass war
+	// room. Detection only — it can open a room and post a notice, never act.
+	mux.HandleFunc("POST /api/v1/alert", a.alert)
 	mux.HandleFunc("POST /webhook/{room}", a.webhook)
 	// Status Beacon (§1.2): PUT/DELETE write (token-gated), GET reads (no auth — the
 	// ciphertext is useless without the beacon key, which never reaches the server).
@@ -144,24 +150,37 @@ type routeResponse struct {
 	Links map[string]string `json:"links"`
 }
 
-// fireRoute spawns the incident war room for a matched rule, mints the links,
-// notifies the intake room's observers (route_fired), and replies. Room creation
-// failure is the only path that returns 500; reply_url failures are ignored
-// because the links are already delivered in the HTTP response.
-func (a *API) fireRoute(w http.ResponseWriter, r *http.Request, intakeRoom string, idx int, rule config.RouteConfig) {
-	if a.ephemeral == nil || a.invites == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "auto-war-room is unavailable"})
-		return
-	}
+// spawnResult bundles what a spawned war room yields its caller.
+type spawnResult struct {
+	resp     routeResponse
+	room     ephemeral.Room
+	invitees []string
+	ttl      time.Duration
+}
 
+// spawnWarRoom is the shared core of the auto-war-room, used by BOTH the per-room
+// webhook (fireRoute) and the generic alert socket (alert). It creates an
+// ephemeral break-glass room — carrying an optional marked-plaintext join notice —
+// mints a one-time invite link per invitee, fires the rule's reply_url
+// best-effort, and returns the response. `by` is a short provenance label
+// ("webhook:<room>" / "alert:<source>"); `base` is the join-link origin. ok is
+// false only when the auto-war-room machinery is unavailable.
+//
+// This is the ONLY thing an inbound trigger can do: open an invite-only room and
+// post a plaintext notice. It constructs no end-to-end op and cannot approve,
+// seal, or execute — those are client-signed, room-keyed messages a blind relay
+// can never forge (the second law).
+func (a *API) spawnWarRoom(rule config.RouteConfig, by, notice, base string) (spawnResult, bool) {
+	if a.ephemeral == nil || a.invites == nil {
+		return spawnResult{}, false
+	}
 	ttl := ephemeral.ClampTTL(rule.TTL.Std())
 	prefix := rule.RoomPrefix
 	if prefix == "" {
 		prefix = "inc"
 	}
-	er := a.ephemeral.CreateNamed(ttl, "webhook:"+intakeRoom, prefix)
+	room := a.ephemeral.CreateNamedNotice(ttl, by, prefix, notice)
 
-	base := a.webBase(r)
 	links := make(map[string]string, len(rule.Invite))
 	invitees := make([]string, 0, len(rule.Invite))
 	for _, name := range rule.Invite {
@@ -173,35 +192,122 @@ func (a *API) fireRoute(w http.ResponseWriter, r *http.Request, intakeRoom strin
 		// Each invitee gets a one-time token scoped to (and expiring with) the room.
 		// A name with no matching [[trust]] handle still gets a link; the handle is
 		// just used as the display name.
-		tok, _ := a.invites.Generate(er.Name, ttl)
-		links[name] = joinLink(base, er.Name, tok)
+		tok, _ := a.invites.Generate(room.Name, ttl)
+		links[name] = joinLink(base, room.Name, tok)
 	}
 
-	a.log.Info("auto-war-room fired", "intake", intakeRoom, "room", er.Name,
-		"trigger_rule", idx, "invitees", len(invitees), "ttl", ttl.String())
-
-	// Tell the intake room's members (e.g. `tail #alerts --json`) that a room was
-	// spawned, so the auto-war-room shows up in the structured event stream.
-	fired, _ := protocol.Encode(protocol.OpRouteFired, protocol.RouteFired{
-		Room:        er.Name,
-		TriggerRule: idx,
-		Invitees:    invitees,
-		TTLSeconds:  int(ttl.Seconds()),
-		At:          time.Now().Unix(),
-	})
-	a.hub.Broadcast(intakeRoom, "", fired)
-
-	resp := routeResponse{Room: er.Name, Links: links}
+	resp := routeResponse{Room: room.Name, Links: links}
 
 	// reply_url is the operator's OWN system (e.g. a PagerDuty note endpoint).
 	// Astralis makes no outbound calls of its own; this is admin-initiated and
 	// fire-and-forget — a failure is logged and ignored because the links are
-	// already in the HTTP response below.
+	// already in the HTTP response.
 	if rule.ReplyURL != "" {
 		go a.postReply(rule.ReplyURL, resp)
 	}
+	return spawnResult{resp: resp, room: room, invitees: invitees, ttl: ttl}, true
+}
 
-	writeJSON(w, http.StatusOK, resp)
+// fireRoute spawns the incident war room for a matched WEBHOOK rule and, unlike the
+// alert socket, also notifies the intake room's observers (route_fired) so the
+// auto-war-room shows up in their structured event stream. Room-creation
+// unavailability is the only 500 path.
+func (a *API) fireRoute(w http.ResponseWriter, r *http.Request, intakeRoom string, idx int, rule config.RouteConfig) {
+	res, ok := a.spawnWarRoom(rule, "webhook:"+intakeRoom, "", a.webBase(r))
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "auto-war-room is unavailable"})
+		return
+	}
+
+	a.log.Info("auto-war-room fired", "intake", intakeRoom, "room", res.room.Name,
+		"trigger_rule", idx, "invitees", len(res.invitees), "ttl", res.ttl.String())
+
+	// Tell the intake room's members (e.g. `tail #alerts --json`) that a room was
+	// spawned, so the auto-war-room shows up in the structured event stream.
+	fired, _ := protocol.Encode(protocol.OpRouteFired, protocol.RouteFired{
+		Room:        res.room.Name,
+		TriggerRule: idx,
+		Invitees:    res.invitees,
+		TTLSeconds:  int(res.ttl.Seconds()),
+		At:          time.Now().Unix(),
+	})
+	a.hub.Broadcast(intakeRoom, "", fired)
+
+	writeJSON(w, http.StatusOK, res.resp)
+}
+
+// alertResponse is the JSON returned by the generic ingress socket.
+type alertResponse struct {
+	Accepted bool              `json:"accepted"`
+	Spawned  bool              `json:"spawned"`
+	Room     string            `json:"room,omitempty"`
+	Links    map[string]string `json:"links,omitempty"`
+}
+
+// alert is the generic signed ingress socket (NC-1). A registered [[source]] POSTs
+// a schema-valid metadata alert; if a [[route]] matches, a break-glass war room is
+// spawned with one-time invites and a marked-plaintext join notice. Detection
+// only — it opens a room and posts a notice; it can never approve, seal, or
+// execute (the second law; see spawnWarRoom).
+//
+// Every rejection (malformed body, unknown source, bad auth, over rate/spawn cap)
+// is logged as METADATA ONLY and spawns nothing.
+func (a *API) alert(w http.ResponseWriter, r *http.Request) {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+	if err != nil {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	al, err := alert.Parse(raw)
+	if err != nil {
+		a.log.Warn("alert rejected: malformed", "err", err.Error(), "remote", r.RemoteAddr)
+		http.Error(w, "invalid alert: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	src, ok := a.cfg.Source(al.Source)
+	if !ok {
+		a.log.Warn("alert rejected: unknown source", "source", al.Source, "remote", r.RemoteAddr)
+		http.Error(w, "unknown or unauthenticated source", http.StatusUnauthorized)
+		return
+	}
+	if !a.guards.AllowRequest(src) {
+		a.log.Warn("alert rejected: rate limited", "source", al.Source)
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
+	headerToken := r.Header.Get("X-Netherchat-Token")
+	if headerToken == "" {
+		headerToken = r.URL.Query().Get("token")
+	}
+	if err := alert.Authenticate(src, al, headerToken); err != nil {
+		a.log.Warn("alert rejected: auth failed", "source", al.Source, "err", err.Error())
+		http.Error(w, "unknown or unauthenticated source", http.StatusUnauthorized)
+		return
+	}
+
+	// Route on metadata only. No match is a success (the alert was authenticated and
+	// accepted) that simply spawns nothing.
+	idx, rule, matched := route.Match(a.cfg.Routes, al.ToMatchMap())
+	if !matched {
+		a.log.Info("alert accepted, no route matched", "source", al.Source, "severity", al.Severity, "kind", al.Kind)
+		writeJSON(w, http.StatusOK, alertResponse{Accepted: true, Spawned: false})
+		return
+	}
+	if !a.guards.AllowSpawn(src) {
+		a.log.Warn("alert matched but spawn cap exceeded", "source", al.Source)
+		http.Error(w, "spawn cap exceeded", http.StatusTooManyRequests)
+		return
+	}
+
+	res, ok := a.spawnWarRoom(rule, "alert:"+al.Source, al.NoticeLine(), a.webBase(r))
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "auto-war-room is unavailable"})
+		return
+	}
+	a.log.Info("alert spawned war room", "source", al.Source, "severity", al.Severity, "kind", al.Kind,
+		"room", res.room.Name, "trigger_rule", idx, "invitees", len(res.invitees), "ttl", res.ttl.String())
+	writeJSON(w, http.StatusOK, alertResponse{Accepted: true, Spawned: true, Room: res.room.Name, Links: res.resp.Links})
 }
 
 // postReply POSTs the route response to the operator-configured reply_url. Best
