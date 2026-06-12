@@ -21,3 +21,20 @@ Makefile     text eol=lf
 
 # PowerShell installer stays CRLF (native to Windows hosts).
 *.ps1     text eol=crlf
+
+# Binary assets: never apply line-ending conversion. Relying on `* text=auto`
+# content detection let autocrlf corrupt committed PNGs (CR/LF bytes stripped);
+# declare these explicitly so it can never happen again.
+*.png     binary
+*.ico     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.webp    binary
+*.woff    binary
+*.woff2   binary
+*.ttf     binary
+*.otf     binary
+*.pdf     binary
+*.gz      binary
+*.zip     binary
