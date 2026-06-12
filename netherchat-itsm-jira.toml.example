@@ -1,0 +1,13 @@
+# netherchat-itsm config for Jira (NC-4). Copy to netherchat-itsm.toml.
+# Flags override these values. On /seal, the signed record is attached to the issue
+# and a metadata comment is added — pointer + attestation only.
+room       = "ops"
+server     = "ws://localhost:3000"
+name       = "itsm-bridge"
+itsm       = "jira"
+itsm_url   = "https://company.atlassian.net"
+itsm_user  = "user@company.com"
+itsm_token = "REPLACE_ME"          # Jira API token
+ticket     = "INC-1234"            # issue key
+# identity = "./itsm-identity.json"
+# invite   = "REPLACE_ME"          # one-time token, if the room is invite-only

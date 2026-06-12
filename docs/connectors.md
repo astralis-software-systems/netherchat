@@ -234,6 +234,38 @@ forwarding only the parsed severity + a ≤200-char summary as `kind=teams-initi
 
 ---
 
+## ITSM — ServiceNow & Jira (outbound system of record, NC-4)
+
+`netherchat-itsm` is the **outbound** system-of-record integration, documented in
+full in [`docs/itsm.md`](itsm.md). It joins a room as a decrypting member and, on
+`/seal`, attaches the signed record to a ServiceNow incident or a Jira issue.
+
+> **The ticket receives:** the sealed record JSON (the artifact `netherchat verify`
+> validates), signer fingerprints + count, the head hash, and elapsed time.
+> **The ticket never receives:** message content, decisions text outside the sealed
+> record, or the room transcript.
+
+- The attachment is the marshaled sealed record, byte-for-byte — it **verifies
+  offline** with `netherchat verify record.json`.
+- The work note / comment is metadata only (head hash, signers, verify command).
+- Every request carries Ed25519 provenance headers (`X-Netherchat-Room/-Fpr/-Sig/
+  -Ts`); `X-Netherchat-Sig` is the sealer's own head signature, checkable against
+  the record's `signer_keys`.
+- Delivery is in-memory with bounded retry and **no on-disk queue**; on failure the
+  record is printed to stdout for manual attach.
+
+```sh
+# ServiceNow
+netherchat-itsm --room ops --itsm servicenow --ticket INC0010001 \
+  --itsm-url https://instance.service-now.com --itsm-user admin --itsm-token "$T" --server ws://...
+
+# Jira
+netherchat-itsm --room ops --itsm jira --ticket INC-1234 \
+  --itsm-url https://company.atlassian.net --itsm-user you@co.com --itsm-token "$T" --server ws://...
+```
+
+---
+
 ## Authentication
 
 Each `[[source]]` declares a `token`, an `hmac_secret`, or both (the relay requires
