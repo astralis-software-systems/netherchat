@@ -1,0 +1,12 @@
+# netherchat-slack-notify config (NC-5 outbound notify). Copy to netherchat-slack.toml.
+# Flags override these values. This joins the room as a decrypting member and posts
+# Slack Block Kit messages to an incoming webhook on the selected events — pointers
+# + metadata only. Slack never sees message content, decisions, or the transcript.
+room        = "ops"
+webhook_url = "https://hooks.slack.com/services/REPLACE/ME/NOW"
+on          = ["open", "seal", "scuttle"]
+server      = "ws://localhost:3000"
+name        = "slack-bridge"
+# identity  = "./slack-identity.json"
+# web_url   = "https://chat.example.com"   # base for join links (default: derived from server)
+# invite    = "REPLACE_ME"                 # one-time token, if the watched room is invite-only

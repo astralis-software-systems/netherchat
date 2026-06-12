@@ -1,0 +1,12 @@
+# netherchat-slack-bot config (NC-5 inbound initiate). Copy to netherchat-slack-bot.toml.
+# Flags override these values. This receives Slack slash commands, verifies Slack's
+# v0 request signature, and opens a war room via the relay's NC-1 ingress socket.
+# Only a parsed severity + a ≤200-char summary cross into Netherchat — never the
+# invoking user or channel. Point your Slack app's slash command at this server's URL.
+listen                = ":9091"               # address to receive Slack slash commands on
+server                = "https://relay.example.com"
+source                = "slack-bot"           # must match a [[source]] name in the relay config
+token                 = "REPLACE_ME"          # NC-1 per-source bearer token
+slack_signing_secret  = "REPLACE_ME"          # from your Slack app's Basic Information page
+default_ttl           = "2h"                  # shown on the join reply (the relay [[route]] is authoritative)
+# default_invitees    = ["@alice", "@bob"]    # informational; the relay [[route]] decides who is invited
