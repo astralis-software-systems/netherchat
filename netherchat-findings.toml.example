@@ -1,0 +1,7 @@
+# netherchat-findings-adapter config (NC-2). Copy to netherchat-findings.toml.
+# Flags override these values.
+server       = "https://relay.example.com"
+source       = "my-scanner"     # must match a [[source]] name in the relay's netherchat.toml
+token        = "REPLACE_ME"     # per-source bearer token (or use hmac_secret)
+# hmac_secret = "REPLACE_ME"    # signs each alert instead of (or with) a token
+min_severity = "high"           # drop findings below this (info|low|medium|high|critical)
