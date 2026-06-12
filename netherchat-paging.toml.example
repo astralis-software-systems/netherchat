@@ -1,0 +1,12 @@
+# netherchat-paging config (NC-5 inbound). Copy to netherchat-paging.toml.
+# Flags override these values. Runs as an HTTP server you point a PagerDuty webhook
+# (v3) or Opsgenie webhook at. Only a NEW page crosses (PagerDuty incident.triggered
+# / Opsgenie Create), and only as metadata (title/message, severity, incident id).
+# Acknowledge/resolve/close never cross.
+listen       = ":8082"               # address to receive paging webhooks on
+server       = "https://relay.example.com"
+source       = "paging"              # must match a [[source]] name in the relay config
+token        = "REPLACE_ME"          # per-source bearer token (or use hmac_secret)
+# hmac_secret = "REPLACE_ME"
+pager        = "pd"                  # "pd" (PagerDuty) or "opsgenie"
+min_severity = "high"                # drop pages below this (info|low|medium|high|critical)
