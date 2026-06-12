@@ -266,6 +266,25 @@ netherchat-itsm --room ops --itsm jira --ticket INC-1234 \
 
 ---
 
+## Tier 2 expansions (NC-5)
+
+Five more adapters broaden coverage across the ops toolchain, all riding the same NC-1
+socket and two-way bridge — documented in full in [`docs/nc5-connectors.md`](nc5-connectors.md):
+
+| Adapter | Binary | Direction | `kind` |
+|---|---|---|---|
+| Slack notify + initiate | `netherchat-slack-notify`, `netherchat-slack-bot` | outbound + inbound | `slack-initiate` |
+| Prometheus Alertmanager | `netherchat-alertmanager` | inbound | `infra-alert` |
+| PagerDuty / Opsgenie | `netherchat-paging` | inbound | `page` |
+| CI/CD GitHub/GitLab (B3) | `netherchat-cicd` | inbound (webhook or CLI) | `ci-failure`, `ci-resolved` |
+| SIEM outbound | `netherchat-siem-out` | outbound | metadata events |
+
+Same guarantees as above: inbound adapters emit only the seven generic alert fields;
+the Slack notify and SIEM-out bridges map only event metadata (a Block Kit pointer, or
+a six-field metadata event). Each ships a boundary-law test.
+
+---
+
 ## Authentication
 
 Each `[[source]]` declares a `token`, an `hmac_secret`, or both (the relay requires

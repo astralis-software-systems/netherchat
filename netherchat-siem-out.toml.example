@@ -1,0 +1,20 @@
+# netherchat-siem-out config (NC-5 outbound). Copy to netherchat-siem-out.toml.
+# Flags override these values. This joins the room as a decrypting member and streams
+# metadata-only lifecycle events (join/leave/ack/vanish/seal/scuttle/clock/action) to
+# a SIEM. The SIEM sees who did what and when — never message content. Batching is
+# in-memory with NO on-disk queue.
+room           = "ops"
+server         = "ws://localhost:3000"
+name           = "siem-out-bridge"
+# identity     = "./siem-out-identity.json"
+# invite       = "REPLACE_ME"          # one-time token, if the room is invite-only
+
+siem           = "splunk"              # "splunk" | "sentinel" | "generic"
+siem_url       = "https://splunk.example.com:8088"   # Splunk: HEC base; Sentinel: workspace URL; generic: full URL
+siem_token     = "REPLACE_ME"          # Splunk HEC token / Sentinel shared key (base64) / generic bearer token
+batch_size     = 100                   # flush after this many events
+flush_interval = "5s"                  # ...or at least this often, whichever comes first
+
+# Splunk HEC:      POST <siem_url>/services/collector/event   (Authorization: Splunk <token>)
+# Sentinel:        POST <siem_url>/api/logs?api-version=2016-04-01  (Authorization: SharedKey <workspace>:<sig>)
+# Generic:         POST <siem_url>                            (Authorization: Bearer <token>, JSON array)
