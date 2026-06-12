@@ -363,13 +363,20 @@ func (c *Client) countApproval(requestID, approverName, approverFpr string, self
 	if !reached {
 		return
 	}
+	// Perform the action BEFORE announcing it. onApprove runs on this goroutine
+	// while a consumer (TUI, test) may be blocked waiting for EvActionExecuted on
+	// the event channel; emitting first lets that consumer observe "executed" and
+	// read state onApprove is still writing — a data race (caught by `go test
+	// -race`). Doing onApprove first means the channel send below happens-after the
+	// callback's writes, so a consumer that sees EvActionExecuted is guaranteed the
+	// action's side effects are already complete.
+	if onApprove != nil { // only the initiator performs the action
+		onApprove()
+	}
 	c.emit(EvActionExecuted{
 		RequestID: requestID, Action: action, RequesterName: requesterName, RequesterFpr: requesterFpr,
 		Quorum: needed, Self: initiator, At: time.Now(),
 	})
-	if onApprove != nil { // only the initiator performs the action
-		onApprove()
-	}
 }
 
 // onActionVeto cancels a pending request seen on the wire.
