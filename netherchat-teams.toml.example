@@ -1,0 +1,11 @@
+# netherchat-teams-notify config (NC-3 outbound notify). Copy to netherchat-teams.toml.
+# Flags override these values. This joins the room as a decrypting member and posts
+# Adaptive Cards to Teams on the selected events — pointers + metadata only.
+room        = "ops"
+webhook_url = "https://outlook.office.com/webhook/REPLACE_ME"
+on          = ["open", "seal", "scuttle"]
+server      = "ws://localhost:3000"
+name        = "teams-bridge"
+# identity  = "./teams-identity.json"
+# web_url   = "https://chat.example.com"   # base for join links (default: derived from server)
+# invite    = "REPLACE_ME"                 # one-time token, if the watched room is invite-only
