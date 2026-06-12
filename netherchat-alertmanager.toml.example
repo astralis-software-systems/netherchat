@@ -1,0 +1,17 @@
+# netherchat-alertmanager config (NC-5 inbound). Copy to netherchat-alertmanager.toml.
+# Flags override these values. Runs as an HTTP server you point an Alertmanager
+# webhook receiver at; only FIRING alerts cross, and only as metadata (alertname,
+# instance, severity, the short summary annotation). `description` never crosses.
+listen       = ":8081"               # address to receive Alertmanager webhooks on
+server       = "https://relay.example.com"
+source       = "alertmanager"        # must match a [[source]] name in the relay config
+token        = "REPLACE_ME"          # per-source bearer token (or use hmac_secret)
+# hmac_secret = "REPLACE_ME"
+min_severity = "high"                # drop alerts below this (info|low|medium|high|critical)
+
+# Alertmanager side (alertmanager.yml):
+#   receivers:
+#     - name: netherchat
+#       webhook_configs:
+#         - url: http://<adapter-host>:8081/
+#           send_resolved: false      # resolved alerts are ignored anyway
