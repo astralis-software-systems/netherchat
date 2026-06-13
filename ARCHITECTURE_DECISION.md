@@ -1,6 +1,6 @@
 # ARCHITECTURE_DECISION.md — Netherchat
 
-**Astralis Software Systems, LLC**
+**Astralis Software Systems**
 **Status:** Proposed — awaiting operator approval before M1
 **Author:** Claude Code (claude-opus-4-8), extended thinking
 **Date:** 2026-06-04
@@ -65,7 +65,7 @@ model **×2**, binary size **×2**, startup time **×1**. (Max weighted score = 
   `CGO_ENABLED=0`, which our pure-Go crypto choice (Decision 3) guarantees.**
 - **`FROM scratch` Docker images.** A static Go binary yields a ~10–20 MB image
   with nothing else in it — no shell, no libc, minimal attack surface. For a
-  security product whose M2 milestone is `docker run … astralis/netherchat`,
+  security product whose M2 milestone is `docker run … salkreiner/netherchat`,
   small + minimal is both a first impression *and* a hardening win. Rust ties
   here; everyone else is 4–8× larger.
 - **Goroutine-per-connection is the textbook fit** for a WebSocket fan-out hub.
@@ -353,7 +353,7 @@ YAML footguns).
   rebuilds on change; wired into `just dev`.
 - **Release (R7):** **GoReleaser** produces the GitHub-release binary matrix
   (darwin amd64/arm64, linux amd64/arm64, windows amd64), the Homebrew formula,
-  and the `astralis/netherchat` Docker image in one config — a direct match for
+  and the `salkreiner/netherchat` Docker image in one config — a direct match for
   R7 and the Scrubadubber installer benchmark.
 
 ---
@@ -553,4 +553,4 @@ constraint model before building `/exec` in M3.**
 **M1** — two TUI clients exchanging E2E-encrypted messages through the server,
 encryption included, no UI polish — built strictly in the M1→M5 order.
 
-*ARCHITECTURE_DECISION.md — v1 — Astralis Software Systems, LLC — 2026-06-04*
+*ARCHITECTURE_DECISION.md — v1 — Astralis Software Systems — 2026-06-04*
