@@ -41,6 +41,10 @@
         <div class="lp-hero-copy">
           <div class="lp-muted" style="font-size: 15px; padding-left: 2px; margin-bottom: 22px;">The war room that vanishes.</div>
           <h1>Messaging that lives<br /><span class="lp-grad">below the surface</span></h1>
+          <p style="font-size: 20px; line-height: 1.45; color: var(--muted); max-width: 44ch; margin: 0 0 20px;">
+            Self-hostable, end-to-end encrypted coordination for incidents and sensitive operations — with signed,
+            verifiable records of what was decided.
+          </p>
           <p class="lp-lede">
             Self-hostable, end-to-end encrypted, real-time messaging. A blind-relay server that
             <em>cannot read your messages</em> — proven by the build graph, not a promise. Your server. Your keys. Your rules.
@@ -119,8 +123,8 @@
 
       <!-- ============================================== features ======== -->
       <section class="lp-features" id="features">
-        <h2 class="lp-section-title">Built for developers first</h2>
-        <p class="lp-section-sub">Designed to scale to everyone else without compromising the developer experience.</p>
+        <h2 class="lp-section-title">Built for engineering teams</h2>
+        <p class="lp-section-sub">Designed to scale to everyone else without compromising the developer experience. Built for engineering teams; trusted for incident response and high-stakes coordination.</p>
         <div class="lp-feature-grid">
           <article class="lp-feature">
             <h3>End-to-end encrypted</h3>
@@ -140,11 +144,46 @@
           </article>
           <article class="lp-feature">
             <h3>Pipes &amp; webhooks</h3>
-            <p><code>echo "deploy done" | netherchat send #ops</code>. Every room gets an inbound webhook for CI and alerts.</p>
+            <p><code>echo "deploy done" | netherchat send #ops</code>. Every room gets an inbound webhook for CI and alerts. Any alert source can open a locked-down war room — a monitoring page, a CI failure, or a security tool posting a finding.</p>
           </article>
           <article class="lp-feature">
             <h3>Ephemeral by default</h3>
             <p><code>/vanish</code> rotates the room key and clears history. Room TTLs, one-time invite tokens, invite-only rooms.</p>
+          </article>
+          <article class="lp-feature">
+            <h3>Proven by a capture you run</h3>
+            <p><code>netherchat doctor --paranoid</code> runs a live packet capture against the relay and proves it routes only ciphertext — no plaintext, ever. Not a claim. A test you run yourself.</p>
+          </article>
+          <article class="lp-feature">
+            <h3>Incident timeline, two audiences</h3>
+            <p><code>netherchat report</code> renders the sealed record as a standalone HTML timeline — human-readable for leadership, cryptographically verifiable by engineers. One file, no server, works forever.</p>
+          </article>
+        </div>
+      </section>
+
+      <!-- ============================================== prove =========== -->
+      <section class="lp-features">
+        <h2 class="lp-section-title">Decisions you can prove</h2>
+        <div class="lp-feature-grid">
+          <article class="lp-card">
+            <div class="lp-card-ico">🔗</div>
+            <h3>Signed, attributed decisions</h3>
+            <p>Every <code>/decide</code>, <code>/action</code>, and approval is Ed25519-signed by the person who said it, hash-chained to everything before it, and sealed into a record you can verify offline — forever, with no server and no account.</p>
+          </article>
+          <article class="lp-card">
+            <div class="lp-card-ico">✓✓</div>
+            <h3>Cryptographic two-person rule</h3>
+            <p>High-stakes actions — scuttle a room, run a runbook, approve an artifact — require N-of-M independent Ed25519 signatures before they fire. Not a policy. A protocol primitive.</p>
+          </article>
+          <article class="lp-card">
+            <div class="lp-card-ico">📋</div>
+            <h3>AI drafted, human approved</h3>
+            <p>An agent proposes an artifact (hash only — content never crosses). A named human approves under the two-person rule. The sealed record proves who drafted it, who approved it, and when — verifiable offline after the room is gone.</p>
+          </article>
+          <article class="lp-card">
+            <div class="lp-card-ico">🔍</div>
+            <h3>Verify with no server</h3>
+            <p><code>netherchat verify record.json</code> checks the full hash chain and every signature offline, after the room is gone, on any machine. VALID or TAMPERED — no account, no relay, no trust required.</p>
           </article>
         </div>
       </section>
@@ -203,7 +242,7 @@
         </svg>
         <span>netherchat</span>
       </div>
-      <p class="lp-muted">Messaging that lives below the surface. © <span data-year></span> Astralis Software Systems, LLC.</p>
+      <p class="lp-muted">Messaging that lives below the surface. © <span data-year></span> Astralis Software Systems.</p>
       <nav class="lp-footer-links">
         <a href="https://github.com/salehkreiner/netherchat" rel="noreferrer">GitHub</a>
         <a href="https://github.com/salehkreiner/netherchat/blob/main/PROTOCOL.md" rel="noreferrer">Protocol</a>
