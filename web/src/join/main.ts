@@ -9,7 +9,7 @@ import "../styles/tokens.css";
 import "../styles/fonts.css";
 import "./join.css";
 import { NetherClient, type ClientEvent } from "../net/client";
-import { defaultWsUrl } from "../net/protocol";
+import { defaultWsUrl, normalizeWsUrl } from "../net/protocol";
 import { newEphemeralIdentity } from "../crypto/identity";
 
 const app = document.getElementById("app")!;
@@ -17,6 +17,11 @@ const app = document.getElementById("app")!;
 const params = new URLSearchParams(location.search);
 const room = (params.get("room") ?? "").trim();
 const token = (params.get("token") ?? "").trim();
+
+// An invite link may pin the relay with `?server=…` (e.g. a self-hosted box at
+// an arbitrary IP); without it we default to the origin that served this page.
+const serverParam = (params.get("server") ?? "").trim();
+const wsUrl = serverParam ? normalizeWsUrl(serverParam) : defaultWsUrl();
 
 if (!room) {
   renderError("This link is missing its room.", "Ask whoever sent it for a fresh invite link.");
@@ -83,7 +88,7 @@ function startChat(roomName: string, name: string): void {
   const ui = renderChat(roomName);
 
   const client = new NetherClient(
-    defaultWsUrl(),
+    wsUrl,
     roomName,
     name,
     newEphemeralIdentity(),
