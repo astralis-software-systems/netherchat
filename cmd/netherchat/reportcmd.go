@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/record"
 	"github.com/salehkreiner/netherchat/tui/report"
 )
@@ -24,8 +25,9 @@ func reportCmd(args []string) {
 	title := fs.String("title", "", "custom report title")
 	executive := fs.Bool("executive", false, "executive summary only — decisions/actions/timeline, no fingerprints/hashes/notes")
 	verifyFlag := fs.Bool("verify", false, "verify the record before rendering; exit 1 if invalid (never render a tampered record)")
+	rosterPath := fs.String("roster", "", "optional roster.json to render alongside the record (who held the room key)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: netherchat report <record.json> [--out file] [--format html|md] [--title \"...\"] [--executive] [--verify]")
+		fmt.Fprintln(os.Stderr, "usage: netherchat report <record.json> [--out file] [--format html|md] [--title \"...\"] [--executive] [--verify] [--roster roster.json]")
 		fs.PrintDefaults()
 	}
 
@@ -55,6 +57,19 @@ func reportCmd(args []string) {
 	}
 
 	opts := report.Options{Title: *title, Executive: *executive}
+	// Optionally render a signed roster attestation alongside the record. It is
+	// loaded and parsed but NOT required to verify here; --verify gates the record.
+	if *rosterPath != "" {
+		rb, err := os.ReadFile(*rosterPath)
+		if err != nil {
+			fatal(err)
+		}
+		roster, err := attest.ParseRoster(rb)
+		if err != nil {
+			fatal(err)
+		}
+		opts.Roster = roster
+	}
 	var content, ext string
 	switch strings.ToLower(*format) {
 	case "md", "markdown":

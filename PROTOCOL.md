@@ -344,3 +344,58 @@ arrive after execution or a veto are discarded; quorum state is in memory only.
 The policy lives in `netherchat.toml` (`[action.<name>] quorum = N`) and is read by
 the connecting client and the edge agent — never by the relay. `quorum = 1` is
 single-actor (the default); `quorum = 0` disables the action.
+
+## 16. Sealed-record v2 (signature meanings, typed kinds, traceability links)
+
+Additive over the v1 sealed record (no relay change; the relay never sees record
+content). Every artifact produced before v2 keeps verifying byte-for-byte: a
+record, entry, or seal signature uses its v1 layout **unless** it carries a v2
+field, in which case it uses a distinct, domain-separated v2 layout. The chosen
+layout is a pure function of the content, so any tampering that adds or removes a
+v2 field flips the layout and breaks the signature. `record.json` carries
+`"netherchat_record": "v2"` when any v2 feature is used, else `"v1"`; verifiers
+accept both.
+
+**Typed kinds & traceability links (record entry v2).** An entry may carry a
+consumer-defined typed kind (`kind: "typed"` + an opaque `schema` tag and optional
+`schema_version`) and/or one or more `links` (`{ "hash": "<hex>", "rel": "<label>" }`)
+referencing prior records to form a verifiable lineage. Both the tag and the links
+are part of the signed bytes; the library assigns them **no** meaning — domain
+semantics are the consumer's. A built-in kind must not carry a schema tag, and a
+typed entry must carry a non-empty tag.
+
+```
+RecordSigningBytesV2 =
+  field("netherchat/record/v2")
+    || seq_be64 || ts_be64
+    || field(author_id) || field(kind) || field(actionee) || field(body)
+    || field(schema) || field(schema_version)
+    || nlinks_be64 || { field(link_hash[i]) || field(link_rel[i]) }…
+    || prev_hash[32]
+```
+
+**Electronic-signature meaning (seal v2 & action-approval v2).** A seal
+co-signature or a two-person-rule approval may declare a machine-readable
+**meaning** (`authored` | `reviewed` | `approved` | `rejected` — extensible),
+the signer's printed **name**, and a UTC **timestamp**, all bound into the signed
+preimage so none can be altered after the fact. The wire bodies gain optional
+fields (`SealAckBody.{meaning,signer_name,signed_at}`,
+`ActionApprovalBody.{meaning,name,signed_at}`); when present the v2 preimage is
+signed, when absent the bare v1 preimage is. A sealed record stores each
+meaning-bearing signer's declaration under `endorsements` (fingerprint →
+`{meaning, name, signed_at}`); a signer without an entry there co-signed the bare
+v1 head.
+
+```
+SealSigningBytesV2 =
+  field("netherchat/seal/v2") || field(room)
+    || field(meaning) || field(signer_name) || field(signed_at) || head_hash[32]
+
+ActionApprovalSigningBytesV2 =
+  field("netherchat/action-approval/v2")
+    || field(request_id) || field(params_hash) || field(approver_fpr) || field(nonce)
+    || field(meaning) || field(name) || field(signed_at)
+```
+
+The initiator-cannot-approve-their-own-request rule is unchanged (the approver
+fingerprint is still bound into the approval preimage).

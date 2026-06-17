@@ -26,8 +26,10 @@ doesn't look like it's from 1998.
 > [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md) for the founding design,
 > [`PROTOCOL.md`](PROTOCOL.md) for the wire format,
 > [`docs/commands.md`](docs/commands.md) for commands/keys,
-> [`docs/encryption.md`](docs/encryption.md) for the honest crypto story, and
-> [`docs/self-hosting.md`](docs/self-hosting.md) to run a server.
+> [`docs/encryption.md`](docs/encryption.md) for the honest crypto story,
+> [`docs/self-hosting.md`](docs/self-hosting.md) to run a server, and
+> [`docs/sealed-record-library.md`](docs/sealed-record-library.md) to create and
+> verify sealed records from your own program (no relay, no network).
 
 ## What's here
 

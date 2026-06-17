@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/record"
 )
 
@@ -74,6 +75,8 @@ func RenderHTML(rec *record.SealedRecord, res *record.VerifyResult, opts Options
 
 	if opts.Executive {
 		b.WriteString(executiveSection(rec))
+		b.WriteString(signOffsHTML(rec))
+		b.WriteString(rosterHTML(opts.Roster, true))
 		b.WriteString(footerHTML(rec, true))
 		b.WriteString("</main></body></html>\n")
 		return b.String()
@@ -115,8 +118,89 @@ func RenderHTML(rec *record.SealedRecord, res *record.VerifyResult, opts Options
 	}
 	b.WriteString(`</tbody></table></section>` + "\n")
 
+	b.WriteString(signOffsHTML(rec))
+	b.WriteString(rosterHTML(opts.Roster, false))
+
 	b.WriteString(footerHTML(rec, false))
 	b.WriteString("</main></body></html>\n")
+	return b.String()
+}
+
+// signOffsHTML renders the per-signer sign-offs (item 2): who co-signed the seal,
+// with what declared meaning, and when. It carries NO fingerprint, so it is shown
+// identically in both the full and executive reports (the full report's seal
+// table still carries the fingerprints separately).
+func signOffsHTML(rec *record.SealedRecord) string {
+	sos := signOffs(rec)
+	if len(sos) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<section><h2>Sign-offs</h2><table><thead><tr><th>signer</th><th>meaning</th><th>signed (UTC)</th></tr></thead><tbody>` + "\n")
+	for _, so := range sos {
+		name := so.Name
+		if name == "" {
+			name = "participant"
+		}
+		when := so.SignedAt
+		if when == "" {
+			when = "—"
+		}
+		b.WriteString(`<tr><td>` + esc(name) + `</td><td>` + esc(so.Meaning) + `</td><td>` + esc(when) + `</td></tr>` + "\n")
+	}
+	b.WriteString(`</tbody></table></section>` + "\n")
+	return b.String()
+}
+
+// rosterHTML renders the signed roster attestation (item 6): who held the room
+// key at the attested epoch, whether each was SAS-verified, and whether they
+// co-signed the roster. Executive mode shows member names but never fingerprints.
+// A nil roster renders nothing.
+func rosterHTML(r *attest.RosterAttestation, executive bool) string {
+	if r == nil {
+		return ""
+	}
+	cosigned := make(map[string]bool, len(r.Signatures))
+	for fpr := range r.Signatures {
+		cosigned[fpr] = true
+	}
+	var b strings.Builder
+	b.WriteString(`<section><h2>Roster attestation</h2>`)
+	b.WriteString(`<div class="meta"><span>epoch <b>` + esc(fmt.Sprintf("%d", r.Epoch)) + `</b></span>`)
+	if r.AttestedAt != "" {
+		b.WriteString(`<span>attested <b>` + esc(r.AttestedAt) + `</b></span>`)
+	}
+	b.WriteString(fmt.Sprintf(`<span>members <b>%d</b></span></div>`, len(r.Members)))
+
+	if executive {
+		b.WriteString(`<ul>`)
+		for _, m := range r.Members {
+			line := esc(m.Name)
+			if m.Verified {
+				line += ` <span class="ok">✓ verified</span>`
+			}
+			if cosigned[m.Fpr] {
+				line += ` <span class="ok">✓ co-signed</span>`
+			}
+			b.WriteString(`<li>` + line + `</li>`)
+		}
+		b.WriteString(`</ul></section>` + "\n")
+		return b.String()
+	}
+
+	b.WriteString(`<table><thead><tr><th>member</th><th>fingerprint</th><th>SAS-verified</th><th>co-signed</th></tr></thead><tbody>` + "\n")
+	for _, m := range r.Members {
+		ver := "—"
+		if m.Verified {
+			ver = `<span class="ok">✓</span>`
+		}
+		cs := "—"
+		if cosigned[m.Fpr] {
+			cs = `<span class="ok">✓</span>`
+		}
+		b.WriteString(`<tr><td>` + esc(m.Name) + `</td><td class="fpr">` + esc(m.Fpr) + `</td><td>` + ver + `</td><td>` + cs + `</td></tr>` + "\n")
+	}
+	b.WriteString(`</tbody></table></section>` + "\n")
 	return b.String()
 }
 

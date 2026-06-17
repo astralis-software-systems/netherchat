@@ -12,9 +12,11 @@ package report
 import (
 	"html"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/record"
 )
 
@@ -22,6 +24,59 @@ import (
 type Options struct {
 	Title     string // report title; defaults to "Incident timeline — #<room>"
 	Executive bool   // executive-only output: decisions/actions/timeline, no fingerprints/hashes/notes
+
+	// Roster, when set, renders the signed roster attestation (§1.4) alongside the
+	// record: who held the room key at the attested epoch. Optional; nil omits the
+	// section. Executive mode shows member names and sign-off status but no
+	// fingerprints.
+	Roster *attest.RosterAttestation
+}
+
+// signOff is one seal co-signer's declared sign-off (item 2): who signed, with
+// what meaning, and when. Meaning/Name/SignedAt come from the signed Endorsement
+// when present; a bare (v1) co-signature falls back to a generic "signed" and the
+// author display name.
+type signOff struct {
+	Fpr      string
+	Name     string // may be "" when unknown (renderers substitute a non-identifying label)
+	Meaning  string
+	SignedAt string
+}
+
+// signOffs returns the seal co-signers in stable fingerprint order, each with the
+// declared meaning/name/time when present.
+func signOffs(rec *record.SealedRecord) []signOff {
+	names := signerNames(rec)
+	fprs := make([]string, 0, len(rec.Signatures))
+	for fpr := range rec.Signatures {
+		fprs = append(fprs, fpr)
+	}
+	sort.Strings(fprs)
+	out := make([]signOff, 0, len(fprs))
+	for _, fpr := range fprs {
+		so := signOff{Fpr: fpr, Meaning: "signed", Name: names[fpr]}
+		if end, ok := rec.Endorsements[fpr]; ok {
+			so.Meaning = end.Meaning
+			so.SignedAt = end.SignedAt
+			if end.Name != "" {
+				so.Name = end.Name
+			}
+		}
+		out = append(out, so)
+	}
+	return out
+}
+
+// signerNames maps a fingerprint to a display name drawn from the entry authors
+// (names are cosmetic; the fingerprint is the authenticated identity).
+func signerNames(rec *record.SealedRecord) map[string]string {
+	m := map[string]string{}
+	for _, e := range rec.Entries {
+		if _, ok := m[e.AuthorID]; !ok && e.AuthorName != "" {
+			m[e.AuthorID] = e.AuthorName
+		}
+	}
+	return m
 }
 
 // Netherchat brand palette (CLAUDE.md → Brand & Design Constraints).

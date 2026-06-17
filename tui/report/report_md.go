@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/record"
 )
 
@@ -24,6 +25,8 @@ func RenderMarkdown(rec *record.SealedRecord, res *record.VerifyResult, opts Opt
 	b.WriteString(executiveMarkdown(rec))
 
 	if opts.Executive {
+		b.WriteString(signOffsMarkdown(rec))
+		b.WriteString(rosterMarkdown(opts.Roster, true))
 		b.WriteString(footerMarkdown(rec, true))
 		return b.String()
 	}
@@ -58,7 +61,83 @@ func RenderMarkdown(rec *record.SealedRecord, res *record.VerifyResult, opts Opt
 		}
 	}
 	b.WriteString("\n")
+	b.WriteString(signOffsMarkdown(rec))
+	b.WriteString(rosterMarkdown(opts.Roster, false))
 	b.WriteString(footerMarkdown(rec, false))
+	return b.String()
+}
+
+// signOffsMarkdown renders the per-signer sign-offs (item 2): who co-signed, with
+// what declared meaning, and when. No fingerprint, so it is identical in both
+// modes.
+func signOffsMarkdown(rec *record.SealedRecord) string {
+	sos := signOffs(rec)
+	if len(sos) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Sign-offs\n\n| signer | meaning | signed (UTC) |\n|---|---|---|\n")
+	for _, so := range sos {
+		name := so.Name
+		if name == "" {
+			name = "participant"
+		}
+		when := so.SignedAt
+		if when == "" {
+			when = "—"
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s |\n", name, so.Meaning, when)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// rosterMarkdown renders the signed roster attestation (item 6). Executive mode
+// omits fingerprints. A nil roster renders nothing.
+func rosterMarkdown(r *attest.RosterAttestation, executive bool) string {
+	if r == nil {
+		return ""
+	}
+	cosigned := make(map[string]bool, len(r.Signatures))
+	for fpr := range r.Signatures {
+		cosigned[fpr] = true
+	}
+	var b strings.Builder
+	b.WriteString("## Roster attestation\n\n")
+	fmt.Fprintf(&b, "- **Epoch:** %d\n", r.Epoch)
+	if r.AttestedAt != "" {
+		fmt.Fprintf(&b, "- **Attested:** %s\n", r.AttestedAt)
+	}
+	fmt.Fprintf(&b, "- **Members:** %d\n\n", len(r.Members))
+
+	if executive {
+		for _, m := range r.Members {
+			line := m.Name
+			if m.Verified {
+				line += " ✓ verified"
+			}
+			if cosigned[m.Fpr] {
+				line += " ✓ co-signed"
+			}
+			fmt.Fprintf(&b, "- %s\n", line)
+		}
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	b.WriteString("| member | fingerprint | SAS-verified | co-signed |\n|---|---|---|---|\n")
+	for _, m := range r.Members {
+		ver := "—"
+		if m.Verified {
+			ver = "✓"
+		}
+		cs := "—"
+		if cosigned[m.Fpr] {
+			cs = "✓"
+		}
+		fmt.Fprintf(&b, "| %s | `%s` | %s | %s |\n", m.Name, m.Fpr, ver, cs)
+	}
+	b.WriteString("\n")
 	return b.String()
 }
 
