@@ -51,12 +51,7 @@ func verifyFile(path string, jsonMode bool) int {
 // verifyRecordBytes parses and verifies a sealed record from bytes, printing the
 // verdict and returning the exit code (0 = VALID, 1 = TAMPERED/error).
 func verifyRecordBytes(b []byte, jsonMode bool) int {
-	rec, err := record.Parse(b)
-	if err != nil {
-		output.WriteError(jsonMode, err)
-		return 1
-	}
-	res, err := record.Verify(rec)
+	res, err := record.VerifyBytes(b)
 	if err != nil {
 		output.WriteError(jsonMode, err)
 		return 1
