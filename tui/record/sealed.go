@@ -15,9 +15,38 @@ import (
 	"github.com/salehkreiner/netherchat/tui/internal/crypto"
 )
 
-// FormatVersion is the value of SealedRecord.Version. It is a stability contract
-// for the on-disk record.json shape, bumped only on a breaking change.
-const FormatVersion = "v1"
+// FormatVersion is the baseline on-disk record.json schema version, written for a
+// record that uses no v2 feature. FormatVersionV2 is written when a record uses a
+// v2 feature (signature meanings, typed entry kinds, or traceability links).
+// Verify accepts both; a record produced before v2 existed is FormatVersion and
+// continues to verify byte-for-byte as before.
+const (
+	FormatVersion   = "v1"
+	FormatVersionV2 = "v2"
+)
+
+// Built-in electronic-signature meanings (item 2): the declared reason a
+// participant attached to a seal co-signature. The set is EXTENSIBLE — a consumer
+// may declare additional meanings, and the library treats Endorsement.Meaning as
+// an opaque, signed string — but these four ship as the documented defaults.
+const (
+	MeaningAuthored = "authored"
+	MeaningReviewed = "reviewed"
+	MeaningApproved = "approved"
+	MeaningRejected = "rejected"
+)
+
+// Endorsement is the declared meaning a seal co-signer attached to their
+// signature (item 2): WHY they signed (Meaning), their printed Name, and the UTC
+// time they signed (SignedAt, RFC3339). All three are bound into the v2 seal
+// preimage (protocol.SealSigningBytesV2), so none can be altered without
+// invalidating that signer's signature — the meaning is a signed fact, not
+// editable metadata.
+type Endorsement struct {
+	Meaning  string `json:"meaning"`
+	Name     string `json:"name"`
+	SignedAt string `json:"signed_at"`
+}
 
 // SealedRecord is the machine-readable artifact written by /seal: the entire
 // entry chain plus, for each participant who co-signed, an Ed25519 signature over
@@ -31,14 +60,28 @@ type SealedRecord struct {
 	SealedBy   string            `json:"sealed_by"` // fingerprint of the participant who ran /seal
 	Entries    []Entry           `json:"entries"`
 	HeadHash   string            `json:"head_hash"`   // hex SHA-256 of the last entry's canonical bytes
-	Signatures map[string]string `json:"signatures"`  // fingerprint -> base64 Ed25519 sig over SealSigningBytes(room, head)
+	Signatures map[string]string `json:"signatures"`  // fingerprint -> base64 Ed25519 sig over the seal preimage
 	SignerKeys map[string]string `json:"signer_keys"` // fingerprint -> base64 Ed25519 public key (to verify Signatures)
+
+	// Endorsements carries, per signer fingerprint, the declared meaning/name/UTC
+	// time bound into that signer's v2 seal preimage (item 2). It is present only
+	// for records that use signature meanings; a signer WITHOUT an entry here
+	// co-signed the bare v1 head preimage. Absent entirely on v1 records.
+	Endorsements map[string]Endorsement `json:"endorsements,omitempty"`
 }
 
 // NewSealedRecord assembles a record from a finished chain and the collected seal
-// signatures. sealerSigs and sealerKeys are keyed by fingerprint and hold raw
-// bytes; they are base64-encoded here.
+// signatures (the v1 path: bare head co-signatures, no declared meanings).
+// sealerSigs and sealerKeys are keyed by fingerprint and hold raw bytes; they are
+// base64-encoded here. The record's Version is v2 if any entry is extended
+// (typed kind / links), else v1.
 func NewSealedRecord(room, sealedBy string, entries []Entry, head []byte, sealerSigs, sealerKeys map[string][]byte) *SealedRecord {
+	return newSealedRecord(room, sealedBy, entries, head, sealerSigs, sealerKeys, nil)
+}
+
+// newSealedRecord is the shared assembler. endorsements (item 2) is optional: when
+// non-empty, those signers' meanings are recorded and the record is v2.
+func newSealedRecord(room, sealedBy string, entries []Entry, head []byte, sealerSigs, sealerKeys map[string][]byte, endorsements map[string]Endorsement) *SealedRecord {
 	sigs := make(map[string]string, len(sealerSigs))
 	for fpr, sig := range sealerSigs {
 		sigs[fpr] = base64.StdEncoding.EncodeToString(sig)
@@ -47,8 +90,8 @@ func NewSealedRecord(room, sealedBy string, entries []Entry, head []byte, sealer
 	for fpr, k := range sealerKeys {
 		keys[fpr] = base64.StdEncoding.EncodeToString(k)
 	}
-	return &SealedRecord{
-		Version:    FormatVersion,
+	rec := &SealedRecord{
+		Version:    recordVersion(entries, endorsements),
 		Room:       room,
 		SealedAt:   time.Now().UTC().Format(time.RFC3339),
 		SealedBy:   sealedBy,
@@ -57,6 +100,25 @@ func NewSealedRecord(room, sealedBy string, entries []Entry, head []byte, sealer
 		Signatures: sigs,
 		SignerKeys: keys,
 	}
+	if len(endorsements) > 0 {
+		rec.Endorsements = endorsements
+	}
+	return rec
+}
+
+// recordVersion picks the on-disk schema version: v2 if any v2 feature is used
+// (declared signature meanings, or an entry with a typed kind / traceability
+// links), else v1 — so a plain record stays v1 and maximally compatible.
+func recordVersion(entries []Entry, endorsements map[string]Endorsement) string {
+	if len(endorsements) > 0 {
+		return FormatVersionV2
+	}
+	for _, e := range entries {
+		if e.extended() {
+			return FormatVersionV2
+		}
+	}
+	return FormatVersion
 }
 
 // Marshal renders the record as indented JSON suitable for writing to disk.
@@ -105,8 +167,8 @@ type VerifyResult struct {
 func Verify(r *SealedRecord) (*VerifyResult, error) {
 	res := &VerifyResult{Room: r.Room, Entries: len(r.Entries)}
 
-	if r.Version != FormatVersion {
-		res.Reason = fmt.Sprintf("unsupported record version %q (want %q)", r.Version, FormatVersion)
+	if r.Version != FormatVersion && r.Version != FormatVersionV2 {
+		res.Reason = fmt.Sprintf("unsupported record version %q (want %q or %q)", r.Version, FormatVersion, FormatVersionV2)
 		return res, nil
 	}
 
@@ -145,7 +207,7 @@ func Verify(r *SealedRecord) (*VerifyResult, error) {
 		res.Reason = "record has no seal signatures"
 		return res, nil
 	}
-	preimage := protocol.SealSigningBytes(r.Room, prev)
+	v1preimage := protocol.SealSigningBytes(r.Room, prev)
 	signers := make([]string, 0, len(r.Signatures))
 	for fpr, sigB64 := range r.Signatures {
 		keyB64, ok := r.SignerKeys[fpr]
@@ -166,6 +228,14 @@ func Verify(r *SealedRecord) (*VerifyResult, error) {
 		if err != nil {
 			res.Reason = fmt.Sprintf("seal signature for %s is not valid base64", fpr)
 			return res, nil
+		}
+		// A signer with a recorded endorsement co-signed the meaning-bearing v2
+		// preimage; one without co-signed the bare v1 head. The choice is driven by
+		// the (signed) endorsement data, so deleting, adding, or editing an
+		// endorsement changes the preimage and breaks this signature.
+		preimage := v1preimage
+		if end, ok := r.Endorsements[fpr]; ok {
+			preimage = protocol.SealSigningBytesV2(r.Room, end.Meaning, end.Name, end.SignedAt, prev)
 		}
 		if !ed25519.Verify(ed25519.PublicKey(key), preimage, sig) {
 			res.Reason = fmt.Sprintf("seal signature for %s does not verify against the head", fpr)

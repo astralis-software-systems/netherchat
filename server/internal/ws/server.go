@@ -174,7 +174,7 @@ func (s *Server) serve(ctx context.Context, c *websocket.Conn) {
 	// Replay recent history (ciphertext) to the newcomer. The client buffers
 	// these until its room key arrives, then decrypts what the current key
 	// covers. See store package docs for the (honest) limits.
-	if s.store != nil {
+	if s.store != nil && s.cfg.PersistRoom(hello.Room) {
 		if hist, err := s.store.History(hello.Room, s.cfg.Persistence.History); err == nil {
 			for _, env := range hist {
 				cn.send(env)
@@ -256,7 +256,7 @@ func (s *Server) relay(room, fromID string, env protocol.Envelope) {
 		m.FromID = fromID
 		out := mustEncode(protocol.OpMessage, m)
 		s.hub.Broadcast(room, fromID, out)
-		if s.store != nil {
+		if s.store != nil && s.cfg.PersistRoom(room) {
 			_ = s.store.Append(room, out)
 		}
 

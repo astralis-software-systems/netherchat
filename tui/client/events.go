@@ -275,8 +275,9 @@ type EvActionApproval struct {
 	Action       string
 	ApproverName string
 	ApproverFpr  string
-	Count        int // current endorsements = 1 (requester) + distinct approvers
-	Needed       int // = quorum
+	Meaning      string // declared electronic-signature meaning (item 2); "" for a bare approval
+	Count        int    // current endorsements = 1 (requester) + distinct approvers
+	Needed       int    // = quorum
 	Self         bool
 	At           time.Time
 }

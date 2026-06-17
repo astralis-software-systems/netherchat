@@ -76,14 +76,15 @@ type Client struct {
 	chain   *record.Chain
 	lastMsg lastMessage
 
-	sealing         bool              // we initiated a seal and are collecting co-signatures
-	sealHead        []byte            // the chain head being sealed
-	sealEntries     []record.Entry    // snapshot of the chain at seal time (so later appends don't drift)
-	sealSigs        map[string][]byte // fingerprint -> raw Ed25519 seal signature
-	sealKeys        map[string][]byte // fingerprint -> raw Ed25519 public key
-	sealTimer       *time.Timer       // 30s collection window
-	pendingSealHead []byte            // head of the most recent incoming SEAL_REQUEST
-	pendingSealName string            // display name of who proposed it
+	sealing         bool                          // we initiated a seal and are collecting co-signatures
+	sealHead        []byte                        // the chain head being sealed
+	sealEntries     []record.Entry                // snapshot of the chain at seal time (so later appends don't drift)
+	sealSigs        map[string][]byte             // fingerprint -> raw Ed25519 seal signature
+	sealKeys        map[string][]byte             // fingerprint -> raw Ed25519 public key
+	sealEndorse     map[string]record.Endorsement // fingerprint -> declared meaning (item 2); absent = bare co-signature
+	sealTimer       *time.Timer                   // 30s collection window
+	pendingSealHead []byte                        // head of the most recent incoming SEAL_REQUEST
+	pendingSealName string                        // display name of who proposed it
 
 	// Roster attestation (§1.4): the in-progress co-sign round when we are the
 	// attester, plus the membership snapshot it finalizes from.
@@ -967,7 +968,7 @@ func (c *Client) handleEncrypted(op protocol.Op, m protocol.Message) {
 	case protocol.OpSealAck:
 		var body protocol.SealAckBody
 		if json.Unmarshal(pt, &body) == nil {
-			c.onSealAck(m.FromID, sender.name, sender.signPub, body.HeadHash, body.Sig)
+			c.onSealAck(m.FromID, sender.name, sender.signPub, body.HeadHash, body.Sig, body.Meaning, body.SignerName, body.SignedAt)
 		}
 	case protocol.OpRosterRequest:
 		var body protocol.RosterRequestBody

@@ -122,7 +122,16 @@ func (c *Client) onRecordEntry(e record.Entry, sig, signBytes, raw []byte) {
 //   - Otherwise we initiate: broadcast a SEAL_REQUEST for our head, record our own
 //     signature, and collect co-signatures for up to 30s (or until every present
 //     member has signed), then finalize and emit EvSealComplete.
-func (c *Client) Seal() error {
+func (c *Client) Seal() error { return c.sealWith("") }
+
+// SealAs is /seal with a declared electronic-signature meaning (item 2): our
+// co-signature records WHY we sealed (e.g. record.MeaningApproved), under our
+// printed name and a UTC timestamp, all bound into the signed seal preimage.
+// Meaning is opaque and extensible; the four record.Meaning* values ship as the
+// defaults. A plain Seal() is the bare (no-meaning) co-signature.
+func (c *Client) SealAs(meaning string) error { return c.sealWith(meaning) }
+
+func (c *Client) sealWith(meaning string) error {
 	// When INITIATING a seal (not co-signing a peer's), capture the incident clock's
 	// timing into the record as two signed note entries, so MTTR falls out of the
 	// timeline automatically (A1). Appended before we read the head below.
@@ -151,15 +160,27 @@ func (c *Client) Seal() error {
 		if !match {
 			return errors.New("your record differs from the pending seal request (chains diverged); cannot co-sign")
 		}
-		return c.sendSealAck(head)
+		return c.sendSealAck(head, meaning)
 	}
 	if c.sealing {
 		c.mu.Unlock()
 		return errors.New("a seal is already in progress")
 	}
 
-	// Initiate: become the sealer.
-	sig, err := c.id.Sign(protocol.SealSigningBytes(c.room, head))
+	// Initiate: become the sealer. With a declared meaning we sign the v2 preimage
+	// (meaning/name/time bound in) and record our own endorsement; without one it is
+	// the bare v1 head signature, byte-for-byte as before.
+	fpr := c.id.Fingerprint()
+	endorse := map[string]record.Endorsement{}
+	var sig []byte
+	var err error
+	if meaning != "" {
+		signedAt := time.Now().UTC().Format(time.RFC3339)
+		sig, err = c.id.Sign(protocol.SealSigningBytesV2(c.room, meaning, c.name, signedAt, head))
+		endorse[fpr] = record.Endorsement{Meaning: meaning, Name: c.name, SignedAt: signedAt}
+	} else {
+		sig, err = c.id.Sign(protocol.SealSigningBytes(c.room, head))
+	}
 	if err != nil {
 		c.mu.Unlock()
 		return fmt.Errorf("sign seal: %w", err)
@@ -167,8 +188,9 @@ func (c *Client) Seal() error {
 	c.sealing = true
 	c.sealHead = head
 	c.sealEntries = c.chain.Entries()
-	c.sealSigs = map[string][]byte{c.id.Fingerprint(): sig}
-	c.sealKeys = map[string][]byte{c.id.Fingerprint(): append([]byte(nil), c.id.SignPub...)}
+	c.sealSigs = map[string][]byte{fpr: sig}
+	c.sealKeys = map[string][]byte{fpr: append([]byte(nil), c.id.SignPub...)}
+	c.sealEndorse = endorse
 	c.sealTimer = time.AfterFunc(sealTimeout, c.finalizeSeal)
 	c.mu.Unlock()
 
@@ -181,9 +203,19 @@ func (c *Client) Seal() error {
 	return nil
 }
 
-// sendSealAck co-signs head and broadcasts a SEAL_ACK to the sealer.
-func (c *Client) sendSealAck(head []byte) error {
-	sig, err := c.id.Sign(protocol.SealSigningBytes(c.room, head))
+// sendSealAck co-signs head and broadcasts a SEAL_ACK to the sealer. A non-empty
+// meaning attaches a declared electronic-signature meaning (item 2), signed into
+// the v2 preimage; empty meaning is a bare v1 co-signature.
+func (c *Client) sendSealAck(head []byte, meaning string) error {
+	ack := protocol.SealAckBody{HeadHash: head}
+	var err error
+	if meaning != "" {
+		signedAt := time.Now().UTC().Format(time.RFC3339)
+		ack.Sig, err = c.id.Sign(protocol.SealSigningBytesV2(c.room, meaning, c.name, signedAt, head))
+		ack.Meaning, ack.SignerName, ack.SignedAt = meaning, c.name, signedAt
+	} else {
+		ack.Sig, err = c.id.Sign(protocol.SealSigningBytes(c.room, head))
+	}
 	if err != nil {
 		return fmt.Errorf("sign seal: %w", err)
 	}
@@ -192,7 +224,7 @@ func (c *Client) sendSealAck(head []byte) error {
 	c.pendingSealName = ""
 	c.mu.Unlock()
 
-	body, _ := json.Marshal(protocol.SealAckBody{HeadHash: head, Sig: sig})
+	body, _ := json.Marshal(ack)
 	if err := c.sealAndSend(protocol.OpSealAck, body); err != nil {
 		return err
 	}
@@ -213,7 +245,7 @@ func (c *Client) onSealRequest(fromName string, head []byte) {
 	c.mu.Unlock()
 
 	if autoAck {
-		_ = c.sendSealAck(head)
+		_ = c.sendSealAck(head, "")
 	}
 	c.emit(EvSealRequest{ByName: fromName, Matches: matches, NumEntries: n, Self: false})
 }
@@ -221,14 +253,19 @@ func (c *Client) onSealRequest(fromName string, head []byte) {
 // onSealAck handles a decrypted SEAL_ACK. If we are the sealer and the head
 // matches ours, the co-signature is verified against the sender's identity key
 // and counted; reaching every present member finalizes early.
-func (c *Client) onSealAck(fromID, fromName string, fromPub ed25519.PublicKey, head, sig []byte) {
+func (c *Client) onSealAck(fromID, fromName string, fromPub ed25519.PublicKey, head, sig []byte, meaning, signerName, signedAt string) {
 	c.mu.Lock()
 	if !c.sealing || !bytes.Equal(head, c.sealHead) {
 		c.mu.Unlock()
 		return
 	}
-	if len(fromPub) != ed25519.PublicKeySize ||
-		!ed25519.Verify(fromPub, protocol.SealSigningBytes(c.room, c.sealHead), sig) {
+	// A meaning-bearing ack co-signed the v2 preimage (its meaning/name/time are
+	// reproduced here and bound into what we verify); a bare ack co-signed v1.
+	preimage := protocol.SealSigningBytes(c.room, c.sealHead)
+	if meaning != "" {
+		preimage = protocol.SealSigningBytesV2(c.room, meaning, signerName, signedAt, c.sealHead)
+	}
+	if len(fromPub) != ed25519.PublicKeySize || !ed25519.Verify(fromPub, preimage, sig) {
 		c.mu.Unlock()
 		c.emit(EvError{Err: fmt.Errorf("ignoring an invalid seal co-signature from %s", fromName)})
 		return
@@ -236,6 +273,12 @@ func (c *Client) onSealAck(fromID, fromName string, fromPub ed25519.PublicKey, h
 	fpr := crypto.Fingerprint(fromPub)
 	c.sealSigs[fpr] = append([]byte(nil), sig...)
 	c.sealKeys[fpr] = append([]byte(nil), fromPub...)
+	if meaning != "" {
+		if c.sealEndorse == nil {
+			c.sealEndorse = map[string]record.Endorsement{}
+		}
+		c.sealEndorse[fpr] = record.Endorsement{Meaning: meaning, Name: signerName, SignedAt: signedAt}
+	}
 	count, total := len(c.sealSigs), len(c.order)
 	c.mu.Unlock()
 
@@ -266,13 +309,29 @@ func (c *Client) finalizeSeal() {
 		c.sealTimer.Stop()
 		c.sealTimer = nil
 	}
-	rec := record.NewSealedRecord(c.room, c.id.Fingerprint(), c.sealEntries, c.sealHead, c.sealSigs, c.sealKeys)
+	// Assemble through the public Sealer so the collected signatures — bare and
+	// meaning-bearing alike — and their endorsements are recorded uniformly (item
+	// 2). The co-signatures were already verified on receipt; Sealer re-checks them.
+	sealer := record.NewSealer(c.room, c.id.Fingerprint(), c.sealEntries)
+	for fpr, sig := range c.sealSigs {
+		key := c.sealKeys[fpr]
+		if end, ok := c.sealEndorse[fpr]; ok {
+			_, _ = sealer.AddEndorsement(key, sig, end.Meaning, end.Name, end.SignedAt)
+		} else {
+			_, _ = sealer.AddCosignature(key, sig)
+		}
+	}
+	rec, err := sealer.Finalize()
+	if err != nil || rec == nil {
+		rec = record.NewSealedRecord(c.room, c.id.Fingerprint(), c.sealEntries, c.sealHead, c.sealSigs, c.sealKeys)
+	}
 	entries, signers := len(c.sealEntries), len(c.sealSigs)
 	c.sealing = false
 	c.sealHead = nil
 	c.sealEntries = nil
 	c.sealSigs = nil
 	c.sealKeys = nil
+	c.sealEndorse = nil
 	c.mu.Unlock()
 
 	c.emit(EvSealComplete{Record: rec, Entries: entries, Signers: signers})
@@ -320,6 +379,7 @@ func (c *Client) clearSealLocked() {
 	c.sealEntries = nil
 	c.sealSigs = nil
 	c.sealKeys = nil
+	c.sealEndorse = nil
 	c.pendingSealHead = nil
 	c.pendingSealName = ""
 }

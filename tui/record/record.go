@@ -52,7 +52,25 @@ const (
 	KindAction   = "action"   // /action @owner — an action item assigned to someone
 	KindNote     = "note"     // /mark — a message promoted into the record
 	KindArtifact = "artifact" // /propose + /approve-artifact — an agent-produced, human-approved artifact (NC-W1)
+
+	// KindTyped marks a consumer-defined record type (the typed schema tag, item
+	// 3). The actual type is the opaque Entry.Schema string (plus optional
+	// SchemaVer); the library never interprets it. A typed entry MUST carry a
+	// non-empty Schema, and a built-in kind MUST NOT carry one.
+	KindTyped = "typed"
 )
+
+// Link is a generic, signed cross-record traceability reference (item 4): the
+// Hash of a prior record (or any prior artifact) and a free-form Relation label
+// describing how this entry relates to it (e.g. "derived-from", "supersedes").
+// The library attaches NO domain meaning to either field — Hash is an opaque hex
+// string and Relation an opaque label; the consuming application supplies the
+// semantics. Both are part of the entry's signed canonical bytes (record v2), so
+// a lineage built from links is cryptographically verifiable.
+type Link struct {
+	Hash     string `json:"hash"`
+	Relation string `json:"rel"`
+}
 
 // Entry is one link in the record chain (§1.4). It is both the wire payload of an
 // OpRecordEntry Message (JSON, sealed under the room key) and an element of the
@@ -66,11 +84,24 @@ type Entry struct {
 	AuthorID   string `json:"author_id"`   // SHA256:... fingerprint of the author's identity key
 	AuthorName string `json:"author_name"` // cosmetic display name (not authenticated)
 	AuthorKey  []byte `json:"author_key"`  // Ed25519 public key (base64); must hash to AuthorID
-	Kind       string `json:"kind"`        // decision | action | note
+	Kind       string `json:"kind"`        // decision | action | note | artifact | typed
 	Actionee   string `json:"actionee,omitempty"`
 	Body       string `json:"body"`
 	PrevHash   []byte `json:"prev_hash"` // SHA-256 of the previous entry's canonical bytes (32 bytes, base64)
 	Sig        []byte `json:"sig"`       // Ed25519 over canonical(); 64 bytes, base64
+
+	// Schema, SchemaVer and Links are the v2 extensions (items 3 and 4). They are
+	// part of the SIGNED canonical bytes (see canonical/extended): an entry that
+	// sets any of them is signed with the record-v2 layout, while an entry with all
+	// of them empty is signed byte-for-byte as a v1 entry — so records produced
+	// before these fields existed keep verifying unchanged.
+	//
+	//   - Schema is the opaque typed-kind tag, used with Kind == KindTyped.
+	//   - SchemaVer is the optional version of that typed kind.
+	//   - Links are cross-record traceability references (derived-from / parent).
+	Schema    string `json:"schema,omitempty"`
+	SchemaVer string `json:"schema_version,omitempty"`
+	Links     []Link `json:"links,omitempty"`
 
 	// Replayed marks an entry that was streamed in from a prior sealed record
 	// during a retro (§2.7). It is provenance only — NOT part of the signed bytes
@@ -78,9 +109,40 @@ type Entry struct {
 	Replayed bool `json:"replayed,omitempty"`
 }
 
-// canonical returns the exact bytes Sig covers and Hash digests.
+// extended reports whether the entry uses any v2-only field (a typed kind or
+// traceability links). The choice of canonical layout is a pure function of the
+// entry's content, so it is identical for the signer and every verifier, and any
+// tampering that adds or removes a v2 field flips the layout and breaks the
+// signature.
+func (e Entry) extended() bool {
+	return e.Kind == KindTyped || e.Schema != "" || e.SchemaVer != "" || len(e.Links) > 0
+}
+
+// canonical returns the exact bytes Sig covers and Hash digests. A plain entry
+// uses the v1 layout (unchanged, so old records keep verifying); an entry that
+// carries a typed schema tag or traceability links uses the v2 layout.
 func (e Entry) canonical() []byte {
-	return protocol.RecordSigningBytes(e.Seq, e.TS, e.AuthorID, e.Kind, e.Actionee, e.Body, e.PrevHash)
+	if !e.extended() {
+		return protocol.RecordSigningBytes(e.Seq, e.TS, e.AuthorID, e.Kind, e.Actionee, e.Body, e.PrevHash)
+	}
+	hashes, rels := splitLinks(e.Links)
+	return protocol.RecordSigningBytesV2(e.Seq, e.TS, e.AuthorID, e.Kind, e.Actionee, e.Body,
+		e.Schema, e.SchemaVer, hashes, rels, e.PrevHash)
+}
+
+// splitLinks flattens links into the parallel hash/relation slices the protocol
+// canonical-bytes function takes (it stays crypto- and type-free).
+func splitLinks(links []Link) (hashes, rels []string) {
+	if len(links) == 0 {
+		return nil, nil
+	}
+	hashes = make([]string, len(links))
+	rels = make([]string, len(links))
+	for i, l := range links {
+		hashes[i] = l.Hash
+		rels[i] = l.Relation
+	}
+	return hashes, rels
 }
 
 // Hash is the SHA-256 of the entry's canonical bytes — the value the NEXT entry
@@ -106,8 +168,25 @@ func VerifyEntry(e Entry) error {
 	}
 	switch e.Kind {
 	case KindDecision, KindAction, KindNote, KindArtifact:
+		// A built-in kind carries fixed semantics; it must not also claim a typed
+		// schema tag (that combination would be ambiguous and is rejected so it
+		// cannot be smuggled past the kind switch).
+		if e.Schema != "" || e.SchemaVer != "" {
+			return fmt.Errorf("entry %d: built-in kind %q must not carry a schema tag", e.Seq, e.Kind)
+		}
+	case KindTyped:
+		// A typed entry's meaning lives entirely in its opaque Schema tag, so the
+		// tag is required; the library does not (and must not) interpret its value.
+		if e.Schema == "" {
+			return fmt.Errorf("entry %d: typed entry must carry a non-empty schema tag", e.Seq)
+		}
 	default:
 		return fmt.Errorf("entry %d: unknown kind %q", e.Seq, e.Kind)
+	}
+	for i, l := range e.Links {
+		if l.Hash == "" {
+			return fmt.Errorf("entry %d: link %d has an empty hash", e.Seq, i)
+		}
 	}
 	if len(e.PrevHash) != sha256.Size {
 		return fmt.Errorf("entry %d: prev_hash is %d bytes, want %d", e.Seq, len(e.PrevHash), sha256.Size)
@@ -163,19 +242,45 @@ func (c *Chain) Head() []byte {
 // else in the room, deliberately not kept).
 func (c *Chain) Reset() { c.entries = nil }
 
+// EntrySpec describes a new entry to append, including the v2 extensions (a typed
+// schema tag and/or cross-record traceability links). The zero value with a Kind
+// and Body matches what AppendNew builds; setting Schema (with Kind KindTyped)
+// or Links produces an extended, v2-signed entry.
+type EntrySpec struct {
+	Kind      string
+	Actionee  string
+	Body      string
+	Schema    string // typed-kind tag (opaque); use with Kind == KindTyped
+	SchemaVer string // optional version of the typed kind
+	Links     []Link // cross-record traceability references (derived-from / parent)
+}
+
 // AppendNew constructs, signs, and appends a brand-new entry authored locally,
 // returning the entry to broadcast. Seq and PrevHash are taken from the current
-// chain state so the signature commits to the entry's position.
+// chain state so the signature commits to the entry's position. It is the v1
+// convenience over Append for the built-in kinds.
 func (c *Chain) AppendNew(a Author, kind, actionee, body string) (Entry, error) {
+	return c.Append(a, EntrySpec{Kind: kind, Actionee: actionee, Body: body})
+}
+
+// Append constructs, signs, and appends a new entry from a full EntrySpec — the
+// general form that supports typed kinds (item 3) and traceability links (item
+// 4). The entry is signed with the v1 layout when it carries no v2 fields and the
+// v2 layout otherwise (see Entry.canonical), so the choice is automatic and never
+// changes the bytes of a plain entry.
+func (c *Chain) Append(a Author, spec EntrySpec) (Entry, error) {
 	e := Entry{
 		Seq:        uint64(len(c.entries)),
 		TS:         time.Now().Unix(),
 		AuthorID:   a.ID,
 		AuthorName: a.Name,
 		AuthorKey:  append([]byte(nil), a.Key...),
-		Kind:       kind,
-		Actionee:   actionee,
-		Body:       body,
+		Kind:       spec.Kind,
+		Actionee:   spec.Actionee,
+		Body:       spec.Body,
+		Schema:     spec.Schema,
+		SchemaVer:  spec.SchemaVer,
+		Links:      append([]Link(nil), spec.Links...),
 		PrevHash:   c.Head(),
 	}
 	sig, err := a.Sign(e.canonical())

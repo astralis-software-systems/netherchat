@@ -96,11 +96,20 @@ func openStore(cfg config.Config, log *slog.Logger) store.Store {
 	if log == nil {
 		log = slog.Default()
 	}
-	if !cfg.Persistence.Enabled {
+	durable := cfg.AnyDurableRoom()
+	// A store is opened when global persistence is enabled (legacy all-rooms) or at
+	// least one room opts into the durable case-room profile. With neither, the
+	// relay keeps nothing — the zero-persistence default.
+	if !cfg.Persistence.Enabled && !durable {
 		return nil
 	}
 	if cfg.Persistence.Path == "" {
-		log.Info("persistence: in-memory history", "limit", cfg.Persistence.History)
+		if durable && !cfg.Persistence.Enabled {
+			log.Warn("persistence: durable case rooms are configured but [persistence].path is unset; using in-memory history, which is NOT encrypted at rest and is lost on restart. Set [persistence].path for a durable encrypted SQLite store.",
+				"limit", cfg.Persistence.History)
+		} else {
+			log.Info("persistence: in-memory history", "limit", cfg.Persistence.History)
+		}
 		return store.NewMemory(cfg.Persistence.History)
 	}
 	secret, err := persistSecret(cfg, log)
@@ -113,7 +122,8 @@ func openStore(cfg config.Config, log *slog.Logger) store.Store {
 		log.Error("persistence: failed to open sqlite; continuing without persistence", "err", err)
 		return nil
 	}
-	log.Info("persistence: sqlite (encrypted at rest)", "path", cfg.Persistence.Path, "limit", cfg.Persistence.History)
+	log.Info("persistence: sqlite (encrypted at rest)", "path", cfg.Persistence.Path, "limit", cfg.Persistence.History,
+		"global", cfg.Persistence.Enabled, "durable_case_rooms", durable)
 	return st
 }
 

@@ -164,6 +164,15 @@ type SealRequestBody struct {
 type SealAckBody struct {
 	HeadHash []byte `json:"head_hash"`
 	Sig      []byte `json:"sig"`
+
+	// Meaning, SignerName and SignedAt carry the declared electronic-signature
+	// meaning (item 2). When Meaning is non-empty the co-signer signed the v2 seal
+	// preimage (SealSigningBytesV2) over these three fields; when empty it is a bare
+	// v1 co-signature (Sig over SealSigningBytes). They are reproduced into the
+	// sealed record's Endorsements so a verifier reconstructs the same preimage.
+	Meaning    string `json:"meaning,omitempty"`
+	SignerName string `json:"signer_name,omitempty"`
+	SignedAt   string `json:"signed_at,omitempty"`
 }
 
 // RosterRequestBody is the END-TO-END-ENCRYPTED plaintext of an OpRosterRequest
@@ -249,6 +258,16 @@ type ActionApprovalBody struct {
 	ParamsHash  string `json:"params_hash"`  // the approver independently verifies this matches the request
 	ApproverFpr string `json:"approver_fpr"` // must equal the signing sender's fingerprint
 	Sig         []byte `json:"sig"`
+
+	// Meaning, Name and SignedAt carry the declared electronic-signature meaning of
+	// this endorsement (item 2): why the member approved (e.g. "approved" or
+	// "reviewed"), their printed name, and the UTC time. When Meaning is non-empty,
+	// Sig is over ActionApprovalSigningBytesV2 (which binds all three); when empty,
+	// it is the bare v1 ActionApprovalSigningBytes. Every counting client derives the
+	// matching preimage from these fields, so the meaning cannot be altered in flight.
+	Meaning  string `json:"meaning,omitempty"`
+	Name     string `json:"name,omitempty"`
+	SignedAt string `json:"signed_at,omitempty"`
 }
 
 // ActionVetoBody is the END-TO-END-ENCRYPTED plaintext of an OpActionVeto Message

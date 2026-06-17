@@ -62,7 +62,10 @@ func buildCommands() *command.Set {
 		command.Command{Name: "propose", Args: "--source <agent> --ref <ref> --hash <sha256> [--summary <line>]", Help: "propose an agent-produced artifact for human approval (NC-W1)"},
 		command.Command{Name: "approve-artifact", Args: "<proposal-id>", Help: "approve a pending artifact proposal (an agent can never self-approve)"},
 		command.Command{Name: "reject-artifact", Args: "<proposal-id> [reason]", Help: "reject a pending artifact proposal; no record entry is written"},
-		command.Command{Name: "seal", Help: "seal the record: collect signatures, write record.json + minutes.md"},
+		command.Command{Name: "seal", Args: "[meaning]", Help: "seal the record: collect signatures, write record.json + minutes.md; optional meaning (authored|reviewed|approved|rejected) is signed in",
+			Complete: func(p string) []string {
+				return command.FilterPrefix([]string{"authored", "reviewed", "approved", "rejected"}, p)
+			}},
 		command.Command{Name: "roster", Args: "[--signed] [--out <path>]", Help: "show who holds the keys; --signed writes a co-signed attestation",
 			Complete: func(p string) []string { return command.FilterPrefix([]string{"--signed", "--out"}, p) }},
 		command.Command{Name: "peers", Help: "list room members and the transport (relay or direct, §1.1)"},
@@ -183,7 +186,7 @@ func (m *Model) runCommand(input string) tea.Cmd {
 	case "reject-artifact":
 		m.runRejectArtifact(r, arg)
 	case "seal":
-		m.runSeal(r)
+		m.runSeal(r, arg)
 	case "roster":
 		m.runRoster(r, arg)
 	case "whois":
@@ -979,12 +982,21 @@ func parseProposeArgs(arg string) (source, ref, hash, summary string, err error)
 	return source, ref, hash, summary, nil
 }
 
-// runSeal implements /seal (§1.4): initiate a seal, or co-sign a pending one.
-func (m *Model) runSeal(r *room) {
+// runSeal implements /seal (§1.4): initiate a seal, or co-sign a pending one. An
+// optional argument declares an electronic-signature meaning (item 2), e.g.
+// "/seal approved" — recorded under the signer's name and a UTC timestamp, bound
+// into the signature. With no argument it is a bare co-signature.
+func (m *Model) runSeal(r *room, arg string) {
 	if !m.connected(r) {
 		return
 	}
-	if err := r.client.Seal(); err != nil {
+	var err error
+	if meaning := strings.TrimSpace(arg); meaning != "" {
+		err = r.client.SealAs(meaning)
+	} else {
+		err = r.client.Seal()
+	}
+	if err != nil {
 		m.addError(err.Error())
 	}
 }

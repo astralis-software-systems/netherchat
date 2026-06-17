@@ -179,6 +179,16 @@ type RoomConfig struct {
 	TTL          Duration      `toml:"ttl"`
 	Scuttle      ScuttlePolicy `toml:"scuttle"`
 
+	// Durable opts this room into the "case room" profile: its (still E2E-encrypted)
+	// message history is persisted via the existing encrypted-SQLite store so it
+	// survives the room going empty and the server restarting, for the life of a
+	// review cycle — instead of the default, which keeps nothing. This is OPT-IN per
+	// room; ephemeral-with-zero-persistence remains the default and the documented
+	// norm. Persisted rows are ciphertext encrypted at rest exactly as the global
+	// SQLite option (the relay still holds no room key and cannot read them); set
+	// [persistence].path so the at-rest store is the encrypted SQLite database.
+	Durable bool `toml:"durable"`
+
 	// Status Beacon (§1.2): out-of-band, read-only incident status. BeaconToken
 	// gates PUT/DELETE /beacon/<room> (opt-in: a room with no beacon_token — and no
 	// webhook_token to fall back on — cannot have a beacon set). BeaconTTL caps how
@@ -339,7 +349,7 @@ func (c *Config) normalize() {
 	if c.Limits.MaxConcurrentTransfers <= 0 {
 		c.Limits.MaxConcurrentTransfers = protocol.DefaultMaxConcurrentTransfers
 	}
-	if c.Persistence.Enabled && c.Persistence.History <= 0 {
+	if (c.Persistence.Enabled || c.AnyDurableRoom()) && c.Persistence.History <= 0 {
 		c.Persistence.History = 100
 	}
 	if c.Rooms == nil {
@@ -350,3 +360,23 @@ func (c *Config) normalize() {
 // Room returns the policy for a room (the zero value — fully open — if the room
 // is not configured).
 func (c Config) Room(name string) RoomConfig { return c.Rooms[name] }
+
+// PersistRoom reports whether the relay should persist (and replay) a room's
+// ciphertext history: when global persistence is enabled (legacy all-rooms
+// behavior) OR the room is explicitly marked durable (the opt-in case-room
+// profile). A default room with neither keeps nothing — zero persistence.
+func (c Config) PersistRoom(room string) bool {
+	return c.Persistence.Enabled || c.Room(room).Durable
+}
+
+// AnyDurableRoom reports whether at least one configured room opts into the
+// durable case-room profile. The server uses it to open the message store even
+// when global persistence is disabled.
+func (c Config) AnyDurableRoom() bool {
+	for _, rc := range c.Rooms {
+		if rc.Durable {
+			return true
+		}
+	}
+	return false
+}

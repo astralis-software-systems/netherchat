@@ -13,6 +13,7 @@ import (
 
 	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/tui/internal/crypto"
+	"github.com/salehkreiner/netherchat/tui/record"
 )
 
 // This file holds the client-side Two-Person Rule machinery (§1.3): a privileged
@@ -151,11 +152,22 @@ func (c *Client) RequestAction(action, params string, quorum int, onApprove func
 	return requestID, nil
 }
 
-// ApproveAction signs and sends an approval for a pending request, then accounts
-// our own endorsement locally (the relay does not echo our own frame back to us).
-// requestID may be a unique prefix of the full id. It refuses to approve our own
-// request — the initiator is endorser #1 and cannot also approve.
+// ApproveAction signs and sends an approval for a pending request, declaring the
+// default "approved" meaning (item 2). See ApproveActionAs to declare a different
+// meaning (e.g. record.MeaningReviewed).
 func (c *Client) ApproveAction(requestID string) error {
+	return c.ApproveActionAs(requestID, record.MeaningApproved)
+}
+
+// ApproveActionAs signs and sends an approval carrying a declared
+// electronic-signature meaning, then accounts our own endorsement locally (the
+// relay does not echo our own frame back to us). The meaning, our printed name,
+// and a UTC timestamp are bound into the approval signature (item 2), so they
+// cannot be altered in flight. requestID may be a unique prefix of the full id.
+// It refuses to approve our own request — the initiator is endorser #1 and cannot
+// also approve. Meaning is opaque/extensible; the record.Meaning* values are the
+// defaults.
+func (c *Client) ApproveActionAs(requestID, meaning string) error {
 	c.mu.Lock()
 	id, ok := c.resolveActionIDLocked(requestID)
 	if !ok {
@@ -187,13 +199,23 @@ func (c *Client) ApproveAction(requestID string) error {
 	}
 
 	fpr := c.id.Fingerprint()
-	sig, err := c.id.Sign(protocol.ActionApprovalSigningBytes(req.RequestID, req.ParamsHash, fpr, req.Nonce))
+	// A declared meaning is signed over the v2 preimage (meaning/name/time bound in);
+	// an empty meaning is the bare v1 approval, byte-for-byte as before.
+	ab := protocol.ActionApprovalBody{RequestID: req.RequestID, ParamsHash: req.ParamsHash, ApproverFpr: fpr}
+	var sig []byte
+	var err error
+	if meaning != "" {
+		signedAt := time.Now().UTC().Format(time.RFC3339)
+		sig, err = c.id.Sign(protocol.ActionApprovalSigningBytesV2(req.RequestID, req.ParamsHash, fpr, req.Nonce, meaning, c.name, signedAt))
+		ab.Meaning, ab.Name, ab.SignedAt = meaning, c.name, signedAt
+	} else {
+		sig, err = c.id.Sign(protocol.ActionApprovalSigningBytes(req.RequestID, req.ParamsHash, fpr, req.Nonce))
+	}
 	if err != nil {
 		return err
 	}
-	body, _ := json.Marshal(protocol.ActionApprovalBody{
-		RequestID: req.RequestID, ParamsHash: req.ParamsHash, ApproverFpr: fpr, Sig: sig,
-	})
+	ab.Sig = sig
+	body, _ := json.Marshal(ab)
 	if err := c.sealAndSend(protocol.OpActionApproval, body); err != nil {
 		return err
 	}
@@ -208,7 +230,7 @@ func (c *Client) ApproveAction(requestID string) error {
 	}
 	ta.approved = true
 	c.mu.Unlock()
-	c.countApproval(req.RequestID, c.name, fpr, true)
+	c.countApproval(req.RequestID, c.name, fpr, meaning, true)
 	return nil
 }
 
@@ -319,18 +341,24 @@ func (c *Client) onActionApproval(senderName string, senderPub ed25519.PublicKey
 		c.emit(EvError{Err: fmt.Errorf("rejecting approval from %s: approver_fpr does not match the signer", senderName)})
 		return
 	}
+	// A meaning-bearing approval signed the v2 preimage (its meaning/name/time are
+	// reproduced from the body and bound into what we verify, so they cannot be
+	// altered in flight); a bare approval signed v1.
 	preimage := protocol.ActionApprovalSigningBytes(req.RequestID, req.ParamsHash, body.ApproverFpr, req.Nonce)
+	if body.Meaning != "" {
+		preimage = protocol.ActionApprovalSigningBytesV2(req.RequestID, req.ParamsHash, body.ApproverFpr, req.Nonce, body.Meaning, body.Name, body.SignedAt)
+	}
 	if len(senderPub) != ed25519.PublicKeySize || !ed25519.Verify(senderPub, preimage, body.Sig) {
 		c.emit(EvError{Err: fmt.Errorf("rejecting approval from %s: invalid signature", senderName)})
 		return
 	}
-	c.countApproval(body.RequestID, senderName, signerFpr, false)
+	c.countApproval(body.RequestID, senderName, signerFpr, body.Meaning, false)
 }
 
 // countApproval applies one verified approval to a tracked request — used both for
 // approvals that arrive over the wire and for our own (locally accounted) one — and
 // drives the executed/quorum transition. It must NOT be called with c.mu held.
-func (c *Client) countApproval(requestID, approverName, approverFpr string, self bool) {
+func (c *Client) countApproval(requestID, approverName, approverFpr, meaning string, self bool) {
 	c.mu.Lock()
 	ta := c.actions[requestID]
 	if ta == nil || ta.resolved {
@@ -358,7 +386,7 @@ func (c *Client) countApproval(requestID, approverName, approverFpr string, self
 
 	c.emit(EvActionApproval{
 		RequestID: requestID, Action: action, ApproverName: approverName, ApproverFpr: approverFpr,
-		Count: endorsements, Needed: needed, Self: self, At: time.Now(),
+		Meaning: meaning, Count: endorsements, Needed: needed, Self: self, At: time.Now(),
 	})
 	if !reached {
 		return
