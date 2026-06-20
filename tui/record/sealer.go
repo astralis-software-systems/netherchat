@@ -2,6 +2,7 @@ package record
 
 import (
 	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"time"
@@ -55,7 +56,8 @@ type Sealer struct {
 	head         []byte
 	sigs         map[string][]byte
 	keys         map[string][]byte
-	endorsements map[string]Endorsement // signers who declared a meaning (item 2)
+	endorsements map[string]Endorsement     // signers who declared a meaning (item 2)
+	approvals    map[string][]ApprovalProof // artifact two-person proofs, keyed by proposal id (GAP-1/GAP-2)
 }
 
 // NewSealer starts a seal over a finished chain. entries is the exact entry slice
@@ -158,6 +160,55 @@ func (s *Sealer) SignAs(a Author, meaning string) error {
 	return err
 }
 
+// AddArtifactApproval records an offline-verifiable human approval of an artifact
+// entry (NC-W1, GAP-1/GAP-2), keyed by the entry's proposal id. It reconstructs the
+// EXISTING approval preimage (protocol.ArtifactApprovalSigningBytes) from the
+// matching artifact entry's SIGNED body — its artifact hash and nonce — and verifies
+// sig before recording, so a caller cannot record an approval that would not verify.
+// pub is the approver's public key (its fingerprint is bound into the preimage and
+// recorded). Returns the approver fingerprint. The proposer-vs-approver (second law)
+// distinction is enforced by the verifier from the recorded proposer_fpr, not here.
+func (s *Sealer) AddArtifactApproval(proposalID string, pub ed25519.PublicKey, sig []byte) (string, error) {
+	if len(pub) != ed25519.PublicKeySize {
+		return "", fmt.Errorf("artifact approval: public key is %d bytes, want %d", len(pub), ed25519.PublicKeySize)
+	}
+	m, ok := s.artifactMetaByProposal(proposalID)
+	if !ok {
+		return "", fmt.Errorf("artifact approval: no artifact entry with proposal_id %q", proposalID)
+	}
+	if m.Nonce == "" {
+		return "", fmt.Errorf("artifact approval: artifact %q has no nonce to bind the approval", proposalID)
+	}
+	fpr := Fingerprint(pub)
+	preimage := protocol.ArtifactApprovalSigningBytes(proposalID, m.ArtifactHash, fpr, m.Nonce)
+	if !ed25519.Verify(pub, preimage, sig) {
+		return "", errors.New("artifact approval does not verify against the artifact hash")
+	}
+	if s.approvals == nil {
+		s.approvals = map[string][]ApprovalProof{}
+	}
+	s.approvals[proposalID] = append(s.approvals[proposalID], ApprovalProof{
+		ApproverFpr: fpr,
+		ApproverKey: base64.StdEncoding.EncodeToString(pub),
+		Sig:         base64.StdEncoding.EncodeToString(sig),
+	})
+	return fpr, nil
+}
+
+// artifactMetaByProposal finds the artifact entry in the snapshot whose signed body
+// carries proposalID and returns its parsed metadata.
+func (s *Sealer) artifactMetaByProposal(proposalID string) (ArtifactMeta, bool) {
+	for _, e := range s.entries {
+		if e.Kind != KindArtifact {
+			continue
+		}
+		if m, ok := ArtifactOf(e); ok && m.ProposalID == proposalID {
+			return m, true
+		}
+	}
+	return ArtifactMeta{}, false
+}
+
 // Count is the number of distinct co-signatures collected so far.
 func (s *Sealer) Count() int { return len(s.sigs) }
 
@@ -168,5 +219,5 @@ func (s *Sealer) Finalize() (*SealedRecord, error) {
 	if len(s.sigs) == 0 {
 		return nil, errors.New("cannot finalize a seal with no co-signatures")
 	}
-	return newSealedRecord(s.room, s.sealedBy, s.entries, s.head, s.sigs, s.keys, s.endorsements), nil
+	return newSealedRecord(s.room, s.sealedBy, s.entries, s.head, s.sigs, s.keys, s.endorsements, s.approvals), nil
 }

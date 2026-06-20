@@ -74,7 +74,7 @@ func RenderHTML(rec *record.SealedRecord, res *record.VerifyResult, opts Options
 	b.WriteString(`</div></header>` + "\n")
 
 	if opts.Executive {
-		b.WriteString(executiveSection(rec))
+		b.WriteString(executiveSection(rec, res))
 		b.WriteString(signOffsHTML(rec))
 		b.WriteString(rosterHTML(opts.Roster, true))
 		b.WriteString(footerHTML(rec, true))
@@ -85,7 +85,7 @@ func RenderHTML(rec *record.SealedRecord, res *record.VerifyResult, opts Options
 	sym, text, col := chainStatus(res)
 	b.WriteString(fmt.Sprintf(`<div class="chain" style="border-color:%s"><span class="sym" style="color:%s">%s</span> hash chain %s</div>`+"\n", col, col, sym, esc(text)))
 
-	b.WriteString(`<details class="exec"><summary>Executive summary</summary>` + executiveSection(rec) + `</details>` + "\n")
+	b.WriteString(`<details class="exec"><summary>Executive summary</summary>` + executiveSection(rec, res) + `</details>` + "\n")
 
 	b.WriteString(`<section><h2>Timeline</h2><ol class="timeline">` + "\n")
 	for _, e := range rec.Entries {
@@ -94,7 +94,7 @@ func RenderHTML(rec *record.SealedRecord, res *record.VerifyResult, opts Options
 		case e.Kind == record.KindAction && e.Actionee != "":
 			body = `<b>@` + esc(e.Actionee) + `</b>: ` + body
 		case e.Kind == record.KindArtifact:
-			body = artifactBodyHTML(e, false)
+			body = artifactBodyHTML(rec, res, e)
 		}
 		badge := `<span class="bad">✗ unverified</span>`
 		if res.Valid {
@@ -207,7 +207,7 @@ func rosterHTML(r *attest.RosterAttestation, executive bool) string {
 // executiveSection renders the leadership summary: what happened, decisions,
 // actions, a name-only timeline, and the resolution time. No fingerprints, hashes,
 // or note entries (§2.6).
-func executiveSection(rec *record.SealedRecord) string {
+func executiveSection(rec *record.SealedRecord, res *record.VerifyResult) string {
 	var b strings.Builder
 	b.WriteString(`<div class="execbody"><h3>What happened</h3><p>` + esc(whatHappened(rec)) + `</p>`)
 
@@ -238,8 +238,12 @@ func executiveSection(rec *record.SealedRecord) string {
 			if !ok {
 				continue
 			}
+			attribution := `, <span class="bad">approval not offline-verified</span>`
+			if who, ok := approverDisplay(rec, res, e, false); ok {
+				attribution = `, approved by ` + esc(who)
+			}
 			b.WriteString(`<li>📋 <b>` + esc(m.ArtifactRef) + `</b> — drafted by ` + esc(m.Source) +
-				`, approved by ` + esc(e.AuthorName) + ` at ` + esc(approvedAt(m)) + `</li>`)
+				attribution + ` at ` + esc(approvedAt(m)) + `</li>`)
 		}
 		b.WriteString(`</ul>`)
 	}
@@ -267,7 +271,7 @@ func executiveSection(rec *record.SealedRecord) string {
 // "AI-drafted artifact approved" block with source, ref, hash (shortened), the
 // approver and their fingerprint, and the approval time (NC-W1). It never shows the
 // artifact content — only its hash.
-func artifactBodyHTML(e record.Entry, _ bool) string {
+func artifactBodyHTML(rec *record.SealedRecord, res *record.VerifyResult, e record.Entry) string {
 	m, ok := record.ArtifactOf(e)
 	if !ok {
 		return esc(e.Body)
@@ -277,7 +281,16 @@ func artifactBodyHTML(e record.Entry, _ bool) string {
 	b.WriteString(`Source: ` + esc(m.Source) + `<br>`)
 	b.WriteString(`Artifact: ` + esc(m.ArtifactRef) + `<br>`)
 	b.WriteString(`Hash: <span class="fpr">` + esc(shortHash(m.ArtifactHash, 16)) + `</span><br>`)
-	b.WriteString(`Approved by: ` + esc(e.AuthorName) + ` (<span class="fpr">` + esc(shortHash(m.ApproverFpr, 16)) + `</span>)<br>`)
+	// The entry author is cryptographically bound (the entry signature), so they are
+	// the verified recorder. The approver(s) are authoritative ONLY when backed by a
+	// verified ArtifactApprovals proof; otherwise we say so rather than trust the
+	// body's approver_fpr (GAP-1).
+	b.WriteString(`Recorded by: ` + esc(e.AuthorName) + `<br>`)
+	if who, ok := approverDisplay(rec, res, e, true); ok {
+		b.WriteString(`Approved by (verified): <span class="ok">` + esc(who) + `</span><br>`)
+	} else {
+		b.WriteString(`<span class="bad">Approver attribution not offline-verified (legacy record)</span><br>`)
+	}
 	b.WriteString(`At: ` + esc(approvedAt(m)))
 	return b.String()
 }

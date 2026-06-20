@@ -17,6 +17,19 @@
 // report, or attest without being re-exported here, so the façade can never
 // silently drift out of sync.
 //
+// VALIDITY IS NOT POLICY. A VerifyResult.Valid of true means the record is
+// cryptographically SOUND — the hash chain links, and every entry, seal, and
+// artifact-approval signature verifies. It does NOT mean any policy is satisfied,
+// in particular the two-person rule. To treat an agent-produced artifact as
+// two-person approved, read VerifyResult.ArtifactApprovers (or the helper
+// VerifiedArtifactApprovers): it surfaces, per artifact proposal, the set of
+// DISTINCT cryptographically verified approver fingerprints, excluding the entry
+// author and the proposer. Apply your own policy over that set — at least N
+// distinct fingerprints, each a reviewer you recognize/pinned. A record sealed
+// before this feature carries no approval proofs and is surfaced with an empty
+// ArtifactApprovers: it is a single attested approver and is NOT offline-provable
+// as two-person — verify it byte-for-byte, but do not treat it as a quorum.
+//
 // See the package example for the full offline lifecycle (create → seal → verify
 // → render) written with only this package and the standard library.
 package sealedrecord
@@ -33,16 +46,17 @@ import (
 // append-only sequence, a Sealer collects seal co-signatures, and SealedRecord is
 // the finished, self-verifying artifact. VerifyResult is the verdict.
 type (
-	Entry        = record.Entry
-	Author       = record.Author
-	Chain        = record.Chain
-	EntrySpec    = record.EntrySpec
-	Link         = record.Link
-	Sealer       = record.Sealer
-	SealedRecord = record.SealedRecord
-	Endorsement  = record.Endorsement
-	VerifyResult = record.VerifyResult
-	ArtifactMeta = record.ArtifactMeta
+	Entry         = record.Entry
+	Author        = record.Author
+	Chain         = record.Chain
+	EntrySpec     = record.EntrySpec
+	Link          = record.Link
+	Sealer        = record.Sealer
+	SealedRecord  = record.SealedRecord
+	Endorsement   = record.Endorsement
+	ApprovalProof = record.ApprovalProof
+	VerifyResult  = record.VerifyResult
+	ArtifactMeta  = record.ArtifactMeta
 )
 
 // On-disk schema versions and the built-in entry kinds. KindTyped marks a
@@ -69,18 +83,19 @@ const (
 // Record constructors, verification, the public fingerprint helper, and the
 // artifact-body codecs.
 var (
-	NewChain            = record.NewChain
-	NewSealer           = record.NewSealer
-	NewSealedRecord     = record.NewSealedRecord
-	Parse               = record.Parse
-	Verify              = record.Verify
-	VerifyBytes         = record.VerifyBytes
-	VerifyEntry         = record.VerifyEntry
-	Fingerprint         = record.Fingerprint
-	ArtifactOf          = record.ArtifactOf
-	MarshalArtifactBody = record.MarshalArtifactBody
-	ParseArtifactBody   = record.ParseArtifactBody
-	RenderMinutes       = record.RenderMinutes
+	NewChain                  = record.NewChain
+	NewSealer                 = record.NewSealer
+	NewSealedRecord           = record.NewSealedRecord
+	Parse                     = record.Parse
+	Verify                    = record.Verify
+	VerifyBytes               = record.VerifyBytes
+	VerifyEntry               = record.VerifyEntry
+	VerifiedArtifactApprovers = record.VerifiedArtifactApprovers
+	Fingerprint               = record.Fingerprint
+	ArtifactOf                = record.ArtifactOf
+	MarshalArtifactBody       = record.MarshalArtifactBody
+	ParseArtifactBody         = record.ParseArtifactBody
+	RenderMinutes             = record.RenderMinutes
 )
 
 // --- Reports (tui/report) --------------------------------------------------

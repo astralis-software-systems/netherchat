@@ -79,6 +79,36 @@ func signerNames(rec *record.SealedRecord) map[string]string {
 	return m
 }
 
+// approverDisplay renders an artifact entry's approval attribution from ONLY the
+// cryptographically verified approver set (VerifyResult.ArtifactApprovers) — never
+// the body's approver_fpr — so a renderer never presents an unverified approver as
+// authoritative (GAP-1). withFpr appends the short fingerprint (full report only).
+// ok is false when there are no verified approvers (a legacy or unproven record),
+// so the caller renders a not-verified caveat instead of a name.
+func approverDisplay(rec *record.SealedRecord, res *record.VerifyResult, e record.Entry, withFpr bool) (string, bool) {
+	m, ok := record.ArtifactOf(e)
+	if !ok || m.ProposalID == "" {
+		return "", false
+	}
+	fprs := record.VerifiedArtifactApprovers(res, m.ProposalID)
+	if len(fprs) == 0 {
+		return "", false
+	}
+	names := signerNames(rec)
+	parts := make([]string, 0, len(fprs))
+	for _, fpr := range fprs {
+		who := names[fpr]
+		if who == "" {
+			who = "verified reviewer"
+		}
+		if withFpr {
+			who += " (" + shortHash(fpr, 16) + ")"
+		}
+		parts = append(parts, who)
+	}
+	return strings.Join(parts, ", "), true
+}
+
 // Netherchat brand palette (CLAUDE.md → Brand & Design Constraints).
 const (
 	colBg     = "#0a0a12"

@@ -321,6 +321,22 @@ func (c *Client) finalizeSeal() {
 			_, _ = sealer.AddCosignature(key, sig)
 		}
 	}
+	// Persist the retained artifact approval proofs so two-person approval is
+	// offline-provable (GAP-1/GAP-2). Add only those whose proposal id matches an
+	// artifact entry in this seal (avoiding an unanchored proof set, which the
+	// verifier rejects); the Sealer re-verifies each proof against the entry's body.
+	for _, e := range c.sealEntries {
+		if e.Kind != record.KindArtifact {
+			continue
+		}
+		m, ok := record.ArtifactOf(e)
+		if !ok || m.ProposalID == "" {
+			continue
+		}
+		for _, ca := range c.artifactProofs[m.ProposalID] {
+			_, _ = sealer.AddArtifactApproval(m.ProposalID, ed25519.PublicKey(ca.key), ca.sig)
+		}
+	}
 	rec, err := sealer.Finalize()
 	if err != nil || rec == nil {
 		rec = record.NewSealedRecord(c.room, c.id.Fingerprint(), c.sealEntries, c.sealHead, c.sealSigs, c.sealKeys)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/salehkreiner/netherchat/protocol"
+	"github.com/salehkreiner/netherchat/sealedrecord"
 	"github.com/salehkreiner/netherchat/server"
 	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/tui/record"
@@ -216,6 +217,99 @@ func TestQuorum2NeedsTwoDistinct(t *testing.T) {
 	got := waitFor[EvRecordEntry](t, alice, 5*time.Second)
 	if got.Kind != record.KindArtifact {
 		t.Fatalf("alice should receive the artifact entry, got kind %q", got.Kind)
+	}
+}
+
+// TestQuorum2OfflineProvableTwoPerson is the client-capture end-to-end test: a
+// quorum-2 artifact, once sealed, persists TWO distinct identity-bound approval
+// proofs into the record, so the two-person approval is provable OFFLINE through the
+// public façade (sealedrecord.VerifyBytes) — the GAP-1/GAP-2 closure.
+func TestQuorum2OfflineProvableTwoPerson(t *testing.T) {
+	relay := httptest.NewServer(server.Handler(config.Default(), quietLog()))
+	defer relay.Close()
+	agent := dialClient(t, relay.URL, "ops", "agent")
+	waitFor[EvKeyReady](t, agent, 5*time.Second)
+	alice := dialClient(t, relay.URL, "ops", "alice")
+	waitFor[EvKeyReady](t, alice, 5*time.Second)
+	bob := dialClient(t, relay.URL, "ops", "bob")
+	waitFor[EvKeyReady](t, bob, 5*time.Second)
+	waitFor[EvMemberJoined](t, agent, 5*time.Second) // alice
+	waitFor[EvMemberJoined](t, agent, 5*time.Second) // bob
+
+	hash := hashOf("the plan")
+	id, err := agent.Propose("planner-agent", "plan", hash, "", 2)
+	if err != nil {
+		t.Fatalf("propose: %v", err)
+	}
+	waitFor[EvArtifactProposed](t, alice, 5*time.Second)
+	waitFor[EvArtifactProposed](t, bob, 5*time.Second)
+
+	if err := alice.ApproveArtifact(id); err != nil {
+		t.Fatalf("alice approve: %v", err)
+	}
+	waitFor[EvArtifactApproved](t, alice, 5*time.Second)
+	if err := bob.ApproveArtifact(id); err != nil {
+		t.Fatalf("bob approve: %v", err)
+	}
+	waitFor[EvArtifactSealed](t, bob, 5*time.Second)
+
+	// Deterministically make the NON-writer the sealer (§9.6): the writer is minFpr of
+	// the approver set — the same rule the production code uses — so the OTHER member
+	// seals. This proves a member that did NOT author the artifact entry still holds the
+	// full proof set (captured in countArtifactApproval, which every observer runs).
+	writerFpr := minFpr([]string{alice.Fingerprint(), bob.Fingerprint()})
+	sealer, leaver := alice, bob
+	if alice.Fingerprint() == writerFpr {
+		sealer, leaver = bob, alice
+	}
+	// The non-writer sealer must have the artifact entry on its chain before sealing.
+	waitFor[EvRecordEntry](t, sealer, 5*time.Second)
+
+	// The proposer and the WRITER leave so the non-writer sealer finalizes alone, still
+	// holding both approval proofs.
+	_ = agent.Close()
+	_ = leaver.Close()
+	waitFor[EvMemberLeft](t, sealer, 5*time.Second)
+	waitFor[EvMemberLeft](t, sealer, 5*time.Second)
+
+	if err := sealer.Seal(); err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	complete := waitFor[EvSealComplete](t, sealer, 5*time.Second)
+	rec := complete.Record
+	if sealer.Fingerprint() == writerFpr {
+		t.Fatal("test setup error: the sealer must be the non-writer")
+	}
+
+	// Two distinct approval proofs were persisted under the proposal id.
+	if got := len(rec.ArtifactApprovals[id]); got != 2 {
+		t.Fatalf("want 2 persisted approval proofs, got %d (%v)", got, rec.ArtifactApprovals[id])
+	}
+
+	// Offline-provable two-person through the public façade.
+	b, err := rec.Marshal()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	res, err := sealedrecord.VerifyBytes(b)
+	if err != nil || !res.Valid {
+		t.Fatalf("sealed record must verify offline: err=%v reason=%q", err, res.Reason)
+	}
+	approvers := sealedrecord.VerifiedArtifactApprovers(res, id)
+	if len(approvers) != 1 {
+		t.Fatalf("want exactly one distinct approver beyond the author, got %v", approvers)
+	}
+
+	// The surfaced approver is distinct from the entry author: author + approver = two
+	// distinct people who signed off, provable from the file alone.
+	var artAuthor string
+	for _, e := range rec.Entries {
+		if e.Kind == record.KindArtifact {
+			artAuthor = e.AuthorID
+		}
+	}
+	if approvers[0] == artAuthor {
+		t.Fatal("the surfaced approver must be distinct from the entry author")
 	}
 }
 

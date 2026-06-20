@@ -168,15 +168,86 @@ func TestArtifactRendersInFullReport(t *testing.T) {
 		"requirements-agent",
 		"Q3-requirements",
 		"0123456789abcdef...", // hash shortened to 16 chars
-		"Approved by: alice",
+		"Recorded by: alice",
+		// This fixture is a LEGACY artifact (no offline approval proofs), so the report
+		// must NOT present an approver as authoritative — it says so plainly (GAP-1).
+		"Approver attribution not offline-verified",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("full report missing %q", want)
 		}
 	}
+	if strings.Contains(out, "Approved by (verified)") {
+		t.Fatal("a legacy artifact (no proofs) must not claim a verified approver")
+	}
 	// The full hash must never appear — only the 16-char prefix.
 	if strings.Contains(out, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") {
 		t.Fatal("full report leaked the entire artifact hash")
+	}
+}
+
+// buildWithVerifiedArtifact assembles a sealed record whose artifact entry carries a
+// real, offline-verifiable approval proof by a DISTINCT approver (bob) — the
+// new-format two-person case the report renders authoritatively.
+func buildWithVerifiedArtifact(t *testing.T) *record.SealedRecord {
+	t.Helper()
+	alice, err := crypto.GenerateIdentity() // writer / entry author
+	if err != nil {
+		t.Fatalf("identity: %v", err)
+	}
+	bob, err := crypto.GenerateIdentity() // distinct approver
+	if err != nil {
+		t.Fatalf("identity: %v", err)
+	}
+	const pid, nonce = "p1prop", "n1nonce"
+	const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	body, err := record.MarshalArtifactBody(record.ArtifactMeta{
+		Source: "requirements-agent", ArtifactRef: "Q3-requirements", ArtifactHash: hash,
+		ApproverFpr: alice.Fingerprint(), ProposalID: pid, Nonce: nonce, ProposerFpr: "SHA256:agent",
+		ProposedAt: "2026-06-12T10:00:00Z", ApprovedAt: "2026-06-12T10:03:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain := record.NewChain()
+	author := record.Author{ID: alice.Fingerprint(), Name: "alice", Key: alice.SignPub, Sign: alice.Sign}
+	if _, err := chain.Append(author, record.EntrySpec{Kind: record.KindArtifact, Body: body}); err != nil {
+		t.Fatalf("append artifact: %v", err)
+	}
+	s := record.NewSealer("ops", author.ID, chain.Entries())
+	if err := s.Sign(author); err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	bobSig, err := bob.Sign(protocol.ArtifactApprovalSigningBytes(pid, hash, bob.Fingerprint(), nonce))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddArtifactApproval(pid, bob.SignPub, bobSig); err != nil {
+		t.Fatalf("add approval: %v", err)
+	}
+	rec, err := s.Finalize()
+	if err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	return rec
+}
+
+func TestArtifactVerifiedApproverRendersAuthoritatively(t *testing.T) {
+	rec := buildWithVerifiedArtifact(t)
+	res, err := record.Verify(rec)
+	if err != nil || !res.Valid {
+		t.Fatalf("verified artifact record should verify: err=%v reason=%q", err, res.Reason)
+	}
+	out := RenderHTML(rec, res, Options{})
+	if !strings.Contains(out, "Approved by (verified):") {
+		t.Error("a proofs-bearing artifact must render an authoritative verified approver")
+	}
+	if strings.Contains(out, "Approver attribution not offline-verified") {
+		t.Error("a proofs-bearing artifact must not be marked unverified")
+	}
+	md := RenderMarkdown(rec, res, Options{})
+	if !strings.Contains(md, "approved by") {
+		t.Error("markdown report should render the verified approver")
 	}
 }
 
