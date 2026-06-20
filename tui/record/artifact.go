@@ -12,13 +12,29 @@ import "encoding/json"
 // ArtifactHash (hex SHA-256) is its only representation.
 
 // ArtifactMeta is the structured Body of an artifact record entry.
+//
+// The first six fields are the original (v1.8.0) shape. The last three are the
+// additive, omitempty extensions that make two-person approval offline-provable
+// (GAP-1/GAP-2): they let an offline verifier reconstruct the artifact-approval
+// preimage (protocol.ArtifactApprovalSigningBytes binds proposal_id + artifact_hash
+// + approver_fpr + nonce) and enforce the second law (approver ≠ proposer). They
+// are part of the entry's SIGNED Body, so they are tamper-evident; an old record
+// simply lacks them and verifies byte-for-byte as before. ApproverFpr remains the
+// writer's claimed approver but is NOT authoritative on its own — authoritative,
+// offline-verified approvers come from SealedRecord.ArtifactApprovals (see Verify).
 type ArtifactMeta struct {
 	Source       string `json:"source"`        // agent/tool label, e.g. "requirements-agent"
 	ArtifactRef  string `json:"artifact_ref"`  // title or reference id of the artifact
 	ArtifactHash string `json:"artifact_hash"` // hex SHA-256 of the artifact content — NEVER the content
-	ApproverFpr  string `json:"approver_fpr"`  // Ed25519 fingerprint of the approving human
+	ApproverFpr  string `json:"approver_fpr"`  // Ed25519 fingerprint of the writer's claimed approver (NOT authoritative alone)
 	ProposedAt   string `json:"proposed_at"`   // RFC3339, when the agent submitted the proposal
 	ApprovedAt   string `json:"approved_at"`   // RFC3339, when the human approved
+
+	// Additive (omitempty): the proposal correlator, nonce, and proposer needed to
+	// verify the record-level ArtifactApprovals proofs offline. Absent on old records.
+	ProposalID  string `json:"proposal_id,omitempty"`  // correlates the approval proofs; bound into the approval preimage
+	Nonce       string `json:"nonce,omitempty"`        // proposal nonce; bound into the approval preimage
+	ProposerFpr string `json:"proposer_fpr,omitempty"` // the proposer/agent; excluded from the approver set (the second law)
 }
 
 // MarshalArtifactBody renders an ArtifactMeta as the entry Body (compact JSON). The

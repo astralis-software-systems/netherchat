@@ -22,7 +22,7 @@ func RenderMarkdown(rec *record.SealedRecord, res *record.VerifyResult, opts Opt
 	}
 	b.WriteString("\n")
 
-	b.WriteString(executiveMarkdown(rec))
+	b.WriteString(executiveMarkdown(rec, res))
 
 	if opts.Executive {
 		b.WriteString(signOffsMarkdown(rec))
@@ -39,8 +39,12 @@ func RenderMarkdown(rec *record.SealedRecord, res *record.VerifyResult, opts Opt
 			body = "@" + e.Actionee + ": " + body
 		case e.Kind == record.KindArtifact:
 			if m, ok := record.ArtifactOf(e); ok {
-				body = fmt.Sprintf("📋 AI-drafted artifact approved — source: %s, artifact: %s, hash: %s, approved by %s (%s)",
-					m.Source, m.ArtifactRef, shortHash(m.ArtifactHash, 16), e.AuthorName, shortHash(m.ApproverFpr, 16))
+				attribution := "approval not offline-verified"
+				if who, ok := approverDisplay(rec, res, e, true); ok {
+					attribution = "approved by " + who
+				}
+				body = fmt.Sprintf("📋 AI-drafted artifact approved — source: %s, artifact: %s, hash: %s, recorded by %s, %s",
+					m.Source, m.ArtifactRef, shortHash(m.ArtifactHash, 16), e.AuthorName, attribution)
 			}
 		}
 		status := "✗ unverified"
@@ -143,7 +147,7 @@ func rosterMarkdown(r *attest.RosterAttestation, executive bool) string {
 
 // executiveMarkdown renders the leadership summary — what happened, decisions,
 // actions, resolution time — with no fingerprints, hashes, or notes (§2.6).
-func executiveMarkdown(rec *record.SealedRecord) string {
+func executiveMarkdown(rec *record.SealedRecord, res *record.VerifyResult) string {
 	var b strings.Builder
 	b.WriteString("## Executive summary\n\n")
 	fmt.Fprintf(&b, "**What happened:** %s\n\n", whatHappened(rec))
@@ -173,7 +177,11 @@ func executiveMarkdown(rec *record.SealedRecord) string {
 			if !ok {
 				continue
 			}
-			fmt.Fprintf(&b, "- 📋 %s — drafted by %s, approved by %s at %s\n", m.ArtifactRef, m.Source, e.AuthorName, approvedAt(m))
+			attribution := "approval not offline-verified"
+			if who, ok := approverDisplay(rec, res, e, false); ok {
+				attribution = "approved by " + who
+			}
+			fmt.Fprintf(&b, "- 📋 %s — drafted by %s, recorded by %s, %s at %s\n", m.ArtifactRef, m.Source, e.AuthorName, attribution, approvedAt(m))
 		}
 		b.WriteString("\n")
 	}

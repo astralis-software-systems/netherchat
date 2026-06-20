@@ -48,6 +48,28 @@ type Endorsement struct {
 	SignedAt string `json:"signed_at"`
 }
 
+// ApprovalProof is one human's offline-verifiable approval of a specific artifact
+// (NC-W1, GAP-1/GAP-2). It is the approver's Ed25519 signature, retained from the
+// live Two-Person Rule exchange, over the EXISTING approval preimage
+// protocol.ArtifactApprovalSigningBytes(proposalID, artifactHash, ApproverFpr,
+// nonce) — proposalID/artifactHash/nonce come from the artifact entry's signed
+// Body (ArtifactMeta). A verifier reconstructs that preimage, checks the signature
+// with ApproverKey, and checks Fingerprint(ApproverKey)==ApproverFpr, so the
+// approver attribution is unforgeable: only the holder of the approver's private
+// key can produce a proof that verifies under their fingerprint.
+//
+// Proofs are self-authenticating and live at the record level
+// (SealedRecord.ArtifactApprovals); they are NOT covered by any entry or seal
+// signature. Adding a junk/forged proof makes verification fail (fail-closed);
+// adding a proof signed by an attacker's own key contributes only an UNRECOGNIZED
+// fingerprint, which a consumer's authorized-reviewer policy rejects. Forging a
+// victim's approval is impossible without the victim's key.
+type ApprovalProof struct {
+	ApproverFpr string `json:"approver_fpr"`
+	ApproverKey string `json:"approver_key"` // base64 Ed25519 public key
+	Sig         string `json:"sig"`          // base64 Ed25519 signature over the approval preimage
+}
+
 // SealedRecord is the machine-readable artifact written by /seal: the entire
 // entry chain plus, for each participant who co-signed, an Ed25519 signature over
 // the chain head (§1.4). It is self-verifying — SignerKeys carries the public
@@ -68,6 +90,14 @@ type SealedRecord struct {
 	// for records that use signature meanings; a signer WITHOUT an entry here
 	// co-signed the bare v1 head preimage. Absent entirely on v1 records.
 	Endorsements map[string]Endorsement `json:"endorsements,omitempty"`
+
+	// ArtifactApprovals carries, per artifact PROPOSAL ID, the set of identity-bound
+	// approval proofs collected under the Two-Person Rule (GAP-1/GAP-2). Keying by
+	// proposal_id (unique per proposal) makes the same-content-twice collision
+	// structurally impossible; the artifact hash stays bound in each proof's preimage.
+	// Additive and omitempty: absent on every pre-existing record, so those verify
+	// byte-for-byte. NOT part of any entry or seal signing preimage.
+	ArtifactApprovals map[string][]ApprovalProof `json:"artifact_approvals,omitempty"`
 }
 
 // NewSealedRecord assembles a record from a finished chain and the collected seal
@@ -76,12 +106,13 @@ type SealedRecord struct {
 // base64-encoded here. The record's Version is v2 if any entry is extended
 // (typed kind / links), else v1.
 func NewSealedRecord(room, sealedBy string, entries []Entry, head []byte, sealerSigs, sealerKeys map[string][]byte) *SealedRecord {
-	return newSealedRecord(room, sealedBy, entries, head, sealerSigs, sealerKeys, nil)
+	return newSealedRecord(room, sealedBy, entries, head, sealerSigs, sealerKeys, nil, nil)
 }
 
-// newSealedRecord is the shared assembler. endorsements (item 2) is optional: when
-// non-empty, those signers' meanings are recorded and the record is v2.
-func newSealedRecord(room, sealedBy string, entries []Entry, head []byte, sealerSigs, sealerKeys map[string][]byte, endorsements map[string]Endorsement) *SealedRecord {
+// newSealedRecord is the shared assembler. endorsements (item 2) and approvals
+// (artifact two-person proofs) are optional: when either is non-empty those facts
+// are recorded and the record is labeled v2.
+func newSealedRecord(room, sealedBy string, entries []Entry, head []byte, sealerSigs, sealerKeys map[string][]byte, endorsements map[string]Endorsement, approvals map[string][]ApprovalProof) *SealedRecord {
 	sigs := make(map[string]string, len(sealerSigs))
 	for fpr, sig := range sealerSigs {
 		sigs[fpr] = base64.StdEncoding.EncodeToString(sig)
@@ -91,7 +122,7 @@ func newSealedRecord(room, sealedBy string, entries []Entry, head []byte, sealer
 		keys[fpr] = base64.StdEncoding.EncodeToString(k)
 	}
 	rec := &SealedRecord{
-		Version:    recordVersion(entries, endorsements),
+		Version:    recordVersion(entries, endorsements, approvals),
 		Room:       room,
 		SealedAt:   time.Now().UTC().Format(time.RFC3339),
 		SealedBy:   sealedBy,
@@ -103,14 +134,19 @@ func newSealedRecord(room, sealedBy string, entries []Entry, head []byte, sealer
 	if len(endorsements) > 0 {
 		rec.Endorsements = endorsements
 	}
+	if len(approvals) > 0 {
+		rec.ArtifactApprovals = approvals
+	}
 	return rec
 }
 
 // recordVersion picks the on-disk schema version: v2 if any v2 feature is used
-// (declared signature meanings, or an entry with a typed kind / traceability
-// links), else v1 — so a plain record stays v1 and maximally compatible.
-func recordVersion(entries []Entry, endorsements map[string]Endorsement) string {
-	if len(endorsements) > 0 {
+// (declared signature meanings, artifact approval proofs, or an entry with a typed
+// kind / traceability links), else v1 — so a plain record stays v1 and maximally
+// compatible. A proofs-bearing record stays under the v2 label (no new label), so
+// the existing version gate keeps accepting it.
+func recordVersion(entries []Entry, endorsements map[string]Endorsement, approvals map[string][]ApprovalProof) string {
+	if len(endorsements) > 0 || len(approvals) > 0 {
 		return FormatVersionV2
 	}
 	for _, e := range entries {
@@ -141,7 +177,16 @@ func Parse(b []byte) (*SealedRecord, error) {
 }
 
 // VerifyResult summarizes a verification. Valid is true only if the chain links,
-// every entry signature, the head hash, and every seal signature all check out.
+// every entry signature, the head hash, every seal signature, AND every artifact
+// approval proof all check out.
+//
+// IMPORTANT (GAP-5): Valid==true means the record is cryptographically SOUND, not
+// that any POLICY (e.g. the two-person rule) is satisfied. To treat an artifact as
+// two-person approved, read ArtifactApprovers (or VerifiedArtifactApprovers) and
+// apply your own policy: at least N distinct fingerprints you recognize, none the
+// author/proposer. A record sealed before this feature carries no proofs and is
+// surfaced with an empty ArtifactApprovers — it is a single attested approver, NOT
+// offline-provable as two-person.
 type VerifyResult struct {
 	Valid    bool     `json:"valid"`
 	Room     string   `json:"room"`
@@ -149,6 +194,26 @@ type VerifyResult struct {
 	Signers  []string `json:"signers"`          // fingerprints whose seal signature verified
 	HeadHash string   `json:"head_hash"`        // recomputed, hex
 	Reason   string   `json:"reason,omitempty"` // failure detail when !Valid
+
+	// ArtifactApprovers maps an artifact PROPOSAL ID to the sorted set of DISTINCT,
+	// cryptographically verified approver fingerprints, EXCLUDING the artifact entry's
+	// author and the recorded proposer. It is the offline-provable two-person evidence:
+	// the library surfaces the verified set; it imposes NO quorum minimum (consumer
+	// policy). Empty/absent for legacy artifact entries (approval not offline-provable).
+	ArtifactApprovers map[string][]string `json:"artifact_approvers,omitempty"`
+}
+
+// VerifiedArtifactApprovers returns the sorted set of distinct, cryptographically
+// verified approver fingerprints for an artifact proposal (excluding the artifact
+// entry's author and proposer), or nil if there are none. It is a nil-safe accessor
+// over VerifyResult.ArtifactApprovers and imposes NO quorum minimum: a consumer
+// enforcing the two-person rule checks len(set) against its own N and confirms each
+// fingerprint is a reviewer it recognizes (GAP-5).
+func VerifiedArtifactApprovers(res *VerifyResult, proposalID string) []string {
+	if res == nil {
+		return nil
+	}
+	return res.ArtifactApprovers[proposalID]
 }
 
 // Verify recomputes the chain from scratch and checks every integrity property
@@ -245,8 +310,100 @@ func Verify(r *SealedRecord) (*VerifyResult, error) {
 	}
 	sort.Strings(signers)
 	res.Signers = signers
+
+	// 5: artifact approval proofs (GAP-1/GAP-2). Independent of the seal/entry
+	// signatures above and impossible to confuse with them — approvals sign the
+	// "netherchat/artifact-approval/v1" preimage, entries sign "netherchat/record/*",
+	// seals sign "netherchat/seal/*", so a signature from one context can never
+	// verify in another. This block only ADDS failure conditions; it runs before
+	// res.Valid is set, so a bad proof keeps the record invalid (fail-closed). It is
+	// skipped entirely when no proofs are present, so old records are unaffected.
+	if len(r.ArtifactApprovals) > 0 {
+		approvers, err := r.verifyArtifactApprovals()
+		if err != nil {
+			res.Reason = err.Error()
+			return res, nil
+		}
+		if len(approvers) > 0 {
+			res.ArtifactApprovers = approvers
+		}
+	}
+
 	res.Valid = true
 	return res, nil
+}
+
+// verifyArtifactApprovals strictly verifies every record-level artifact approval
+// proof and returns, per proposal id, the sorted set of DISTINCT verified approver
+// fingerprints EXCLUDING the artifact entry's author and the recorded proposer (the
+// second law). It fails closed: any unanchored proof set (no matching artifact
+// entry), any proof whose key does not hash to its claimed fingerprint, or any
+// signature that does not verify over the reconstructed approval preimage returns
+// an error so Verify reports Valid=false. The artifact hash and nonce come from the
+// entry's SIGNED body, so they cannot be altered without breaking the entry itself.
+func (r *SealedRecord) verifyArtifactApprovals() (map[string][]string, error) {
+	// Index artifact entries by proposal id (from their signed bodies); a duplicate
+	// proposal id across entries is ambiguous and rejected.
+	metaByProposal := make(map[string]ArtifactMeta)
+	authorByProposal := make(map[string]string)
+	for _, e := range r.Entries {
+		if e.Kind != KindArtifact {
+			continue
+		}
+		m, ok := ArtifactOf(e)
+		if !ok || m.ProposalID == "" {
+			continue
+		}
+		if _, dup := metaByProposal[m.ProposalID]; dup {
+			return nil, fmt.Errorf("artifact_approvals: duplicate proposal_id %q across artifact entries", m.ProposalID)
+		}
+		metaByProposal[m.ProposalID] = m
+		authorByProposal[m.ProposalID] = e.AuthorID
+	}
+
+	out := make(map[string][]string)
+	for pid, proofs := range r.ArtifactApprovals {
+		m, ok := metaByProposal[pid]
+		if !ok {
+			return nil, fmt.Errorf("artifact_approvals references unknown proposal %q", pid)
+		}
+		if m.Nonce == "" {
+			return nil, fmt.Errorf("artifact %q has approval proofs but no nonce to verify them", pid)
+		}
+		distinct := make(map[string]bool)
+		for _, p := range proofs {
+			key, err := base64.StdEncoding.DecodeString(p.ApproverKey)
+			if err != nil || len(key) != ed25519.PublicKeySize {
+				return nil, fmt.Errorf("artifact %q: approver key for %s is malformed", pid, p.ApproverFpr)
+			}
+			if crypto.Fingerprint(ed25519.PublicKey(key)) != p.ApproverFpr {
+				return nil, fmt.Errorf("artifact %q: approver key does not match fingerprint %s", pid, p.ApproverFpr)
+			}
+			sig, err := base64.StdEncoding.DecodeString(p.Sig)
+			if err != nil {
+				return nil, fmt.Errorf("artifact %q: approval signature for %s is not valid base64", pid, p.ApproverFpr)
+			}
+			preimage := protocol.ArtifactApprovalSigningBytes(pid, m.ArtifactHash, p.ApproverFpr, m.Nonce)
+			if !ed25519.Verify(ed25519.PublicKey(key), preimage, sig) {
+				return nil, fmt.Errorf("artifact %q: approval by %s does not verify against the artifact hash", pid, p.ApproverFpr)
+			}
+			distinct[p.ApproverFpr] = true
+		}
+		// Surface the verified set minus the entry author and the proposer: the
+		// "second person(s)" beyond the author who recorded the entry.
+		set := make([]string, 0, len(distinct))
+		for fpr := range distinct {
+			if fpr == authorByProposal[pid] || fpr == m.ProposerFpr {
+				continue
+			}
+			set = append(set, fpr)
+		}
+		sort.Strings(set)
+		if len(set) > 0 {
+			out[pid] = set
+		}
+	}
+	return out, nil
 }
 
 // nameByFingerprint builds a fingerprint -> display name map from entry authors,
@@ -325,12 +482,13 @@ func RenderMinutes(r *SealedRecord) string {
 			if !ok {
 				continue
 			}
-			who := names[m.ApproverFpr]
-			if who == "" {
-				who = e.AuthorName
-			}
-			fmt.Fprintf(&b, "- **%s** — source: %s · hash: %s… · approved by %s\n",
-				m.ArtifactRef, m.Source, shortHash(m.ArtifactHash, 16), who)
+			// RenderMinutes does not take a VerifyResult and therefore cannot verify
+			// the approval, so it must NOT present an approver as authoritative — the
+			// body's approver_fpr is the writer's unverified claim (GAP-1). Show the
+			// entry author (who at least signed the entry) as the recorder and point
+			// readers at the verified report for authoritative approvers.
+			fmt.Fprintf(&b, "- **%s** — source: %s · hash: %s… · recorded by %s (approval not verified here; see the report for verified approvers)\n",
+				m.ArtifactRef, m.Source, shortHash(m.ArtifactHash, 16), e.AuthorName)
 		}
 	}
 	if len(notes) > 0 {

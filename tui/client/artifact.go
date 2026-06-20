@@ -34,15 +34,27 @@ import (
 // discarded (NC-W1: 300s). It is a var only so tests can shorten it.
 var artifactProposalTTL = 300 * time.Second
 
+// capturedApproval is one approver's retained, already-verified approval signature
+// (NC-W1, GAP-1/GAP-2): the verifying key and the Ed25519 signature over the
+// artifact-approval preimage. Retained so that whichever member later seals can
+// persist it into SealedRecord.ArtifactApprovals, making two-person approval
+// offline-provable. fpr is the approver fingerprint.
+type capturedApproval struct {
+	fpr string
+	key []byte
+	sig []byte
+}
+
 // trackedProposal is the in-memory lifecycle of one artifact proposal, held by every
 // client that observes it. All access is under Client.mu.
 type trackedProposal struct {
 	prop      protocol.ArtifactProposalBody
-	fromName  string          // proposer display name (for events)
-	approvers map[string]bool // distinct human approver fingerprints (NEVER the proposer)
-	order     []string        // approver fingerprints in arrival order (for the sealed event)
-	approved  bool            // (approver side) we have already sent our approval
-	initiator bool            // we created this proposal
+	fromName  string                      // proposer display name (for events)
+	approvers map[string]bool             // distinct human approver fingerprints (NEVER the proposer)
+	order     []string                    // approver fingerprints in arrival order (for the sealed event)
+	proofs    map[string]capturedApproval // fpr -> retained approval proof (for offline ArtifactApprovals)
+	approved  bool                        // (approver side) we have already sent our approval
+	initiator bool                        // we created this proposal
 	timer     *time.Timer
 	resolved  bool // approved-to-quorum | rejected | expired — latched, then dropped
 }
@@ -120,7 +132,7 @@ func (c *Client) Propose(source, ref, hash, summary string, quorum int) (string,
 		ExpiresUnix:  time.Now().Add(artifactProposalTTL).Unix(),
 		Nonce:        newRequestID(),
 	}
-	tp := &trackedProposal{prop: body, fromName: c.name, approvers: map[string]bool{}, initiator: true}
+	tp := &trackedProposal{prop: body, fromName: c.name, approvers: map[string]bool{}, proofs: map[string]capturedApproval{}, initiator: true}
 
 	c.mu.Lock()
 	c.armProposalTimerLocked(tp)
@@ -198,7 +210,7 @@ func (c *Client) ApproveArtifact(proposalID string) error {
 	}
 	tp.approved = true
 	c.mu.Unlock()
-	c.countArtifactApproval(prop.ProposalID, c.name, fpr, true)
+	c.countArtifactApproval(prop.ProposalID, c.name, capturedApproval{fpr: fpr, key: c.id.SignPub, sig: sig}, true)
 	return nil
 }
 
@@ -276,7 +288,7 @@ func (c *Client) onArtifactProposal(senderName, senderFpr string, body protocol.
 		c.mu.Unlock()
 		return
 	}
-	tp := &trackedProposal{prop: body, fromName: senderName, approvers: map[string]bool{}}
+	tp := &trackedProposal{prop: body, fromName: senderName, approvers: map[string]bool{}, proofs: map[string]capturedApproval{}}
 	c.armProposalTimerLocked(tp)
 	c.proposals[body.ProposalID] = tp
 	c.mu.Unlock()
@@ -312,7 +324,7 @@ func (c *Client) onArtifactApproval(senderName string, senderPub ed25519.PublicK
 		c.emit(EvError{Err: fmt.Errorf("rejecting artifact approval from %s: invalid signature", senderName)})
 		return
 	}
-	c.countArtifactApproval(body.ProposalID, senderName, signerFpr, false)
+	c.countArtifactApproval(body.ProposalID, senderName, capturedApproval{fpr: signerFpr, key: append([]byte(nil), senderPub...), sig: append([]byte(nil), body.Sig...)}, false)
 }
 
 // onArtifactRejection cancels a pending proposal seen on the wire.
@@ -336,17 +348,18 @@ func (c *Client) onArtifactRejection(senderName, senderFpr string, body protocol
 // one — and drives the quorum/seal transition. The approver that COMPLETES quorum
 // (self) writes the signed artifact record entry; every client emits the sealed
 // event. It must NOT be called with c.mu held.
-func (c *Client) countArtifactApproval(proposalID, approverName, approverFpr string, self bool) {
+func (c *Client) countArtifactApproval(proposalID, approverName string, proof capturedApproval, self bool) {
 	c.mu.Lock()
 	tp := c.proposals[proposalID]
 	if tp == nil || tp.resolved {
 		c.mu.Unlock()
 		return
 	}
-	if !tp.addApprover(approverFpr) {
+	if !tp.addApprover(proof.fpr) {
 		c.mu.Unlock()
 		return // proposer, duplicate, or already resolved
 	}
+	tp.proofs[proof.fpr] = proof // retain the identity-bound approval for offline ArtifactApprovals
 	count := len(tp.approvers)
 	needed := tp.prop.Quorum
 	reached := count >= needed
@@ -356,13 +369,20 @@ func (c *Client) countArtifactApproval(proposalID, approverName, approverFpr str
 		tp.resolved = true
 		tp.stop()
 		approvers = tp.approverList()
+		// Snapshot the retained proofs (in arrival order) so whichever member seals can
+		// persist them into SealedRecord.ArtifactApprovals (GAP-1/GAP-2).
+		captured := make([]capturedApproval, 0, len(tp.order))
+		for _, f := range tp.order {
+			captured = append(captured, tp.proofs[f])
+		}
+		c.artifactProofs[proposalID] = captured
 		delete(c.proposals, proposalID)
 	}
 	c.mu.Unlock()
 
 	c.emit(EvArtifactApproved{
 		ProposalID: proposalID, ArtifactRef: prop.ArtifactRef, ArtifactHash: prop.ArtifactHash,
-		ApproverName: approverName, ApproverFpr: approverFpr,
+		ApproverName: approverName, ApproverFpr: proof.fpr,
 		Count: count, Quorum: needed, Self: self, At: time.Now(),
 	})
 	if !reached {
@@ -413,6 +433,12 @@ func (c *Client) writeArtifactEntry(prop protocol.ArtifactProposalBody, approver
 		ApproverFpr:  approverFpr,
 		ProposedAt:   prop.ProposedAt,
 		ApprovedAt:   time.Now().UTC().Format(time.RFC3339),
+		// Persist the proposal correlator, nonce, and proposer into the SIGNED body so
+		// an offline verifier can reconstruct and check the ArtifactApprovals proofs
+		// and enforce the second law (approver ≠ proposer). GAP-1/GAP-2.
+		ProposalID:  prop.ProposalID,
+		Nonce:       prop.Nonce,
+		ProposerFpr: prop.ProposerFpr,
 	}
 	body, err := record.MarshalArtifactBody(meta)
 	if err != nil {
@@ -472,11 +498,14 @@ func (c *Client) resolveProposalIDLocked(prefix string) (string, bool) {
 	return match, n == 1
 }
 
-// clearProposalsLocked drops all tracked proposals and stops their timers. Caller
-// holds c.mu. Called on /vanish and scuttle: the room state is being reset.
+// clearProposalsLocked drops all tracked proposals and stops their timers, and
+// discards any retained approval proofs. Caller holds c.mu. Called on /vanish and
+// scuttle: the room state is being reset, so an unsealed chain and its pending
+// artifact evidence are deliberately not kept.
 func (c *Client) clearProposalsLocked() {
 	for id, tp := range c.proposals {
 		tp.stop()
 		delete(c.proposals, id)
 	}
+	c.artifactProofs = make(map[string][]capturedApproval)
 }

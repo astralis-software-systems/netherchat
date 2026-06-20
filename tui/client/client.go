@@ -124,6 +124,13 @@ type Client struct {
 	// completes it writes the signed "artifact" record entry. See artifact.go.
 	proposals map[string]*trackedProposal
 
+	// artifactProofs retains the identity-bound approval signatures collected for each
+	// artifact (keyed by proposal_id), so that whichever member later seals can persist
+	// them into SealedRecord.ArtifactApprovals — making two-person approval
+	// offline-provable (GAP-1/GAP-2). Captured by EVERY observing client (any member
+	// may seal), not just the writer; reset on /vanish. See artifact.go.
+	artifactProofs map[string][]capturedApproval
+
 	// Status Beacon (§1.2): the per-room token authorizing beacon writes over REST
 	// (PUT/DELETE /beacon/<room>). Read-only beacon GETs need no token. See beacon.go.
 	beaconToken string
@@ -223,11 +230,12 @@ func NewWithIdentity(serverURL, room, name string, id *crypto.Identity) (*Client
 		acks:    make(map[string]map[string]bool),
 		chain:   record.NewChain(),
 
-		sends:        make(map[string]*sendState),
-		recvs:        make(map[string]*recvState),
-		maxFileBytes: protocol.DefaultMaxFileBytes,
-		actions:      make(map[string]*trackedAction),
-		proposals:    make(map[string]*trackedProposal),
+		sends:          make(map[string]*sendState),
+		recvs:          make(map[string]*recvState),
+		maxFileBytes:   protocol.DefaultMaxFileBytes,
+		actions:        make(map[string]*trackedAction),
+		proposals:      make(map[string]*trackedProposal),
+		artifactProofs: make(map[string][]capturedApproval),
 	}, nil
 }
 
