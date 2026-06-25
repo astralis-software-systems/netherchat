@@ -1,8 +1,10 @@
 # Role-Typed N-of-M Quorum — Implementation Plan
 
-> **Status:** Plan only. No code written. Three build passes (A, B, C) are
-> specified here; **only Pass A is approved to build next**. Passes B and C are
-> designed but explicitly *not-yet-built*.
+> **Status:** Passes A and B are **BUILT and shipped** (Netherchat `v1.9.0` and
+> `v1.10.0`, public tags). Pass C (CipherSigil consumer enforcement) is **BUILT** per
+> §7 — role-typed quorum primitive, role-carrying roster, config, and `go.mod`
+> honesty bump, committed local-only on `master`. The §1–§6 design text is retained
+> as the build record.
 >
 > **Goal:** Pharma segregation-of-duties (SoD) approval — *"one verified approver
 > from each required function (e.g. Technical + QA + System-Owner)"* — built on the
@@ -783,23 +785,451 @@ touches no symbol the consumer references:
   accepting it.
 - **No `go.mod` / tag edits inside the pass** — `v1.10.0` is the discrete step after.
 
-## 7. Pass C outline (NOT YET BUILT — CipherSigil consumer policy + housekeeping)
+## 7. Pass C build spec (BUILD-READY — CipherSigil consumer policy + housekeeping)
 
-Consumes the post-Pass-B additive API. See Q5 for the full design and file list.
-Summary:
-- `internal/record/seal.go` — `Roster` → `map[string]RosterMember{Name, Roles}`;
-  preserve `Roster.Name`; add `Roster.HasRole`.
-- `internal/record/artifact.go` — add `ArtifactRecordMeetsRoleQuorum(b, roster,
-  requiredRoles)` (per-role `verified-as-R ∩ roster-authorizes-R`, all-or-nothing,
-  fail-closed, distinct-person across roles per §9); keep `ArtifactRecordIsTwoPerson`.
-- `internal/config/…` — role-aware roster format + per-action-class quorum policy
-  (mode + `n` or `requiredRoles`).
-- Update `Roster` construction/consumption call sites + tests (count-mode tests stay
-  green; M3 `validateSealPolicy` unaffected via preserved `Name`).
-- `go.mod` — `require` `v1.9.0 → v1.10.0`; keep `replace`.
+> Re-verified against the codebase by a dedicated read (CipherSigil HEAD `a32d28d`,
+> working tree clean, branch `master`, **no git remote**; Netherchat `main` = `v1.10.0`
+> = `059b3f1`, which the `replace => ../netherchat` already compiles the consumer
+> against). This section **supersedes** the pre-read outline. Where it contradicts the
+> earlier Q5 sketch, the read is authoritative and the correction leads. Pass C is
+> **CipherSigil-only** (`C:\Users\saleh\ciphersigil` — the Go/Wails app with
+> `internal/record|workflow|config`, **not** the UI prototype) and consumes only the
+> already-landed v1.10.0 role surface; it touches no Netherchat code.
 
-**What Pass C is NOT:** no Netherchat edits; no change to M3's deliverable workflow;
-no role policy in records.
+### 7.0 Corrections from the read (these reframe the whole pass)
+
+The pre-read outline assumed things the codebase does not contain. Build to the
+corrected picture:
+
+| # | Pre-read assumption | Ground truth (read) | Consequence for Pass C |
+| --- | --- | --- | --- |
+| **R1** | Required-roles "attach to an existing action-class / risk-tier / PROD gate." | **No such concept exists anywhere in CipherSigil.** No action-class, risk-tier, or `target=PROD → HOLD` gate; the workflow is a flat phase machine (`PhaseIngested → PhaseDrafted → PhaseApproved/PhaseRejected → PhaseSealed`), and the only "risk class" string is an aspirational comment in `internal/record/artifact.go:32`. | Action-class is **100% net-new**. Pass C ships a single `requiredRoles` policy now; the *config shape* is designed so a class-keyed dimension is a later **additive** extension (§7.4). |
+| **R2** | Pass C enforcement runs in the app. | **Nothing Pass C builds will run.** The workflow `Engine` and the existing `ArtifactRecordIsTwoPerson` are **both unmounted** — `app.go:64-66` states the engine is mounted "in a later one," and `startLocalAPI()` wires only the single-signer Ingest path (`core.NewService` + `api.NewServer`). `config.Roster()` and `ArtifactRecordIsTwoPerson` have **zero non-test callers**. | Pass C lands a **tested-but-unmounted** library primitive, exactly as count-mode already lives. App-wiring is a **named future pass** (§7.10), not planned here. |
+| **R3** | Changing `Roster` is the architectural "biggest ripple." | The ripple is **contained to library + test code, with zero composition-root change** (nothing constructs a `Roster` in the running app). Preserving `Name(fpr)(string,bool)` keeps **every consumer call site compiling untouched**; only **construction** sites change. | The `Roster` type change is mechanical and test-heavy (§7.3), not a wiring refactor. `internal/workflow/workflow.go` needs **no edit at all**. |
+| **R4** | `go.mod` is one hop from honest. | `require … netherchat v1.8.0` predates **even the v1.9.0 API the consumer already uses** (`VerifiedArtifactApprovers`, `ArtifactApprovers`, `ArtifactMeta.ProposalID`); only the `replace` makes it build. | go.mod honesty is a **two-hop** fix: `v1.8.0 → v1.10.0` (§7.6). |
+| **R5** | `TestLoadRosterValid` breaks when `approverEntry` gains roles. | **Refinement: it does not.** It calls `loadRoster` + asserts `r.Name(fpr)`; with `Name` preserved and `roles` an `omitempty` field absent from its fixture JSON, it compiles and passes unchanged. The config-side test work is **purely additive** (new role-loading tests). | No forced edit to existing config tests; only new tests (§7.7). |
+
+### 7.1 Scope statement & non-goals
+
+**In scope:** the role-typed enforcement *primitive* and its config + roster
+substrate, with full tests — **unmounted**, mirroring how `ArtifactRecordIsTwoPerson`
+already exists. Specifically: a role-mode enforcement function, a role-carrying
+`Roster`, a forward-compatible config shape, the new role-loading path, and the
+`go.mod` honesty bump.
+
+**Explicit non-goals (anti-bloat — see also §7.9):**
+- **No `app.go` / composition-root changes; no Engine mounting.** `startLocalAPI`
+  stays as-is.
+- **No action-class policy table** (R1) — single `requiredRoles`, config shaped to
+  grow one additively.
+- **No change to M3** (`internal/workflow`: `Decide`/`Seal`/`validateSealPolicy`).
+  It uses `roster.Name` for membership only and keeps compiling via the preserved
+  accessor; it reads neither `ArtifactApprovers` nor `ArtifactApproverRoles`.
+- **No activation of `ErrDuplicateApprover`** (still the deferred N-of-M guard in
+  `Decide`; KNOWN_LIMITATIONS §4). Role-mode distinctness is a *new* check over the
+  role surface, unrelated to it.
+- **No Netherchat edits; no role policy baked into records.**
+
+### 7.2 The role-mode enforcement primitive (`internal/record/artifact.go`)
+
+**Recommended signature** (refines the outline's bare `requiredRoles []string`,
+because distinctness must ride along and the policy must be forward-compatible — a
+bare `bool` would be call-site-illegible and a bare slice can't carry the toggle):
+
+```go
+// RoleQuorum is the consumer's role-typed SoD policy for ONE evaluation. The zero
+// value is the safe SoD default: a DISTINCT fingerprint per required role.
+type RoleQuorum struct {
+    RequiredRoles     []string // each must be filled by ≥1 verified, roster-AUTHORIZED approver
+    AllowSharedPerson bool     // zero=false ⇒ distinct person per role; true relaxes it (deliberate, visible)
+}
+
+func ArtifactRecordMeetsRoleQuorum(b []byte, roster Roster, policy RoleQuorum) error
+```
+
+`RoleQuorum`'s zero value being the strict default is intentional: a config that
+forgets the toggle gets *more* segregation, never less. (`AllowSharedPerson` names the
+*relaxation*, so the unsafe state is the one you must spell out.) The struct is the
+config-resolution boundary (§7.4) and can grow fields without changing this contract.
+
+**Full logic, in order (fail-closed at every step):**
+
+1. **Arg guard (before any parse):** `len(policy.RequiredRoles) == 0` → error. An
+   empty required-role set is the *absence* of a policy, and "≥1 of each of zero
+   roles" is vacuously true for *every* proposal — a silent universal pass. Reject it,
+   exactly as count-mode rejects `n < 1` (`artifact.go:111-113`). Also reject a
+   `RequiredRoles` containing an empty/whitespace-only or duplicate entry (defensive;
+   the loader §7.4 also rejects these, but the primitive must not trust its caller).
+2. **Parse → verify → validity:** `Parse(b)`; `sealedrecord.Verify(rec)`; fail on
+   parse error, verify error, or `!res.Valid` — byte-identical posture to count-mode
+   (`artifact.go:114-124`).
+3. **Per artifact proposal** (each `KindArtifact` entry, via `ArtifactOf`; an entry
+   with no `ProposalID` fails closed, as today): read the verified role pairs
+   `pairs := sealedrecord.VerifiedArtifactApproverRoles(res, pid)` (`[]VerifiedApprover`,
+   already author/proposer-excluded and `(fpr,role)`-deduped **by the library**, Pass B
+   — Pass C re-excludes nothing). For each required role `R`, build the authorized set
+   `F_R = { p.Fingerprint : p ∈ pairs, p.Role == R, roster.HasRole(p.Fingerprint, R) }`.
+   This is the **role-layer generalization of count-mode's `verified ∩ roster`**:
+   `verified-as-R ∩ roster-authorizes-R` (§7.7). If any `F_R` is empty → fail closed
+   naming **(proposal, role)** and enumerating the verified pairs present (§7.5
+   ergonomics).
+4. **Distinctness:**
+   - `AllowSharedPerson == false` (default): require an assignment of a **distinct**
+     fingerprint to each required role — i.e. a system of distinct representatives
+     across the `F_R` sets. **Build note (correctness):** this is bipartite matching,
+     **not** a naive "pick one per role then check pairwise-distinct" — greedy picking
+     can fail when a matching exists (e.g. required `{qa, technical}`, `F_qa={Alice,Bob}`,
+     `F_technical={Alice}`: greedy may take `qa→Alice` and then deadlock). Use a small
+     matching / Hall's-condition check (role counts are tiny — 2-4). If no perfect
+     matching exists → fail closed naming the proposal and the unsatisfiable role set.
+   - `AllowSharedPerson == true`: skip the matching; each `F_R` non-empty suffices (one
+     authorized person may cover several roles).
+5. **All-or-nothing across proposals:** every artifact proposal must clear the bar
+   (one approved artifact cannot vouch for an unapproved sibling) — same as count-mode
+   (`artifact.go:126-140`).
+6. **No artifact proposals at all:** reuse `ErrNoArtifactApprovals` (valid record,
+   nothing offline-provable — the exact count-mode sentinel, `artifact.go:141-143`).
+
+The **only** thing Pass C adds on top of the library's guarantees is the cross-role
+distinct-person rule (step 4) and the `HasRole` authorization filter (step 3, `F_R`):
+author/proposer exclusion and `(fpr,role)` dedup are already absolute upstream (I10,
+Pass B `dedupApproverRoles`).
+
+**Code structure — recommendation: shared private core + two thin public entries.**
+Count-mode and role-mode share ~80% of the body (parse → verify → `!Valid` →
+iterate `KindArtifact` proposals → all-or-nothing → `ErrNoArtifactApprovals`); they
+differ **only** in the per-proposal predicate. Extract the skeleton:
+
+```go
+// eachArtifactProposal owns the mode-agnostic, security-critical skeleton; check
+// supplies the mode-specific per-proposal predicate (nil ⇒ this proposal passes).
+func eachArtifactProposal(b []byte, check func(pid string, res *ParsedVerifyResult) error) error
+```
+
+Both `ArtifactRecordIsTwoPerson` and `ArtifactRecordMeetsRoleQuorum` keep their own
+cheap arg guards (`n<1` / empty-`RequiredRoles`) and then delegate, each passing a
+closure. **Recommended over two independent siblings** because the load-bearing,
+must-be-identical part is precisely the **fail-closed skeleton** — making parity
+*structural* (write-once) is safer for a compliance primitive than two functions that
+must independently maintain identical posture. The honest risk — refactoring the
+already-shipped, mutation-pinned count-mode function — is bounded: the refactor is
+**behavior-preserving** (same public signature, same error wording), and the six
+existing count-mode tests (§7.7) are the safety net. If any of them go red during the
+refactor, the **refactor** is wrong, not the test. The coupling is limited to genuinely
+shared concerns: the predicate is fully mode-specific, so role logic cannot leak into
+count-mode and vice versa. (If, at build time, the closure seam proves to obscure
+count-mode's error messages, fall back to two siblings with a shared doc-comment
+checklist — the parity is the requirement, the mechanism is not.)
+
+### 7.3 The `Roster` type change & exact blast radius (`internal/record/seal.go`)
+
+```go
+// Roster authorizes a fingerprint as a named person AND for a set of opaque roles.
+type Roster map[string]RosterMember
+
+type RosterMember struct {
+    Name  string   // operator-pinned printed name (unchanged role from today)
+    Roles []string // functions this fingerprint is AUTHORIZED for, e.g. {"qa","technical"}
+}
+
+// Name is preserved verbatim in signature so every existing consumer keeps compiling.
+func (r Roster) Name(fpr string) (string, bool) { m, ok := r[fpr]; return m.Name, ok }
+
+// HasRole reports whether fpr is rostered AND explicitly authorized for role.
+// No implicit authorization: a rostered member with role not listed ⇒ false.
+func (r Roster) HasRole(fpr, role string) bool
+```
+
+`HasRole` closes the role-layer forgery: a valid signature "as QA" from a fingerprint
+the roster does **not** authorize for QA must **not** count. There is **no**
+"rostered ⇒ any role" default — that would re-open the forgery one level up.
+
+**Source files that change vs. compile unchanged (read-confirmed):**
+
+| File | Change? | Why |
+| --- | --- | --- |
+| `internal/record/seal.go` | **EDIT** | type `Roster` (line 275), `Name` body (278-281), **add** `RosterMember` + `HasRole`. |
+| `internal/record/artifact.go` | **EDIT** | add `RoleQuorum`, `ArtifactRecordMeetsRoleQuorum`, `eachArtifactProposal`, a `recognizedApproversByRole`-style helper; keep `ArtifactRecordIsTwoPerson`. |
+| `internal/config/config.go` | **EDIT** | `approverEntry` gains `roles`; new quorum config + loader; the one construction line `roster[fpr] = name` (236) → `RosterMember{...}` (§7.4). |
+| `internal/workflow/workflow.go` | **NO EDIT** | only *consumes* `roster.Name` (303, 398, 537, 544) — preserved signature ⇒ compiles unchanged. Field/param type refs (219, 240) resolve to the new type for free. |
+| `internal/config/roster_test.go` | **NO EDIT** | uses `loadRoster` + `r.Name` only; no `Roster{}` literal (R5). |
+
+**Construction sites that change (compile-only, mechanical wrap):**
+- `internal/record/artifact_test.go` — the **6** `record.Roster{fpr: "Name"}` literals
+  at lines **122, 159, 213, 234, 257, 313** → `record.Roster{fpr: record.RosterMember{Name: "Name"}}`
+  (count-mode tests need only `Name`; same values, same assertions — see §7.7).
+- `internal/workflow/workflow_test.go` — `rosterFor` helper (lines **145-146**:
+  `r[id.Fingerprint()] = id.Name()` → `= record.RosterMember{Name: id.Name()}`) and the
+  literal at **736-738** (wrap each value in `RosterMember{Name: …}`).
+- `internal/config/config.go:236` — the loader build line (§7.4).
+
+**Zero production-wiring change:** `app.go`, `internal/core`, `internal/api`,
+`internal/apiclient`, `internal/repository`, `internal/bundle`, `internal/archive`,
+`internal/cipherbond` reference `Roster` **nowhere**. The whole ripple is the three
+edited source files + the test literals above.
+
+### 7.4 Config shape (action-class-ready forward-compat) (`internal/config/config.go`)
+
+Today `file` carries `signal_key`, `cipherbond_archive_signer`, `approvers[]{name,
+fingerprint}`. Extend additively:
+
+```go
+type file struct {
+    SignalKey               string            `json:"signal_key"`
+    CipherBondArchiveSigner string            `json:"cipherbond_archive_signer,omitempty"`
+    Approvers               []approverEntry   `json:"approvers,omitempty"`
+    ArtifactQuorum          *quorumConfig     `json:"artifact_quorum,omitempty"` // NEW
+}
+
+type approverEntry struct {
+    Name        string   `json:"name"`
+    Fingerprint string   `json:"fingerprint"`
+    Roles       []string `json:"roles,omitempty"` // NEW: authorized functions (opaque)
+}
+
+// quorumConfig is the forward-compat envelope. Today only `default` is read; a
+// `classes` map is a LATER ADDITIVE key (commented, not built — R1) that needs no
+// change to RoleQuorum or to ArtifactRecordMeetsRoleQuorum.
+type quorumConfig struct {
+    Default *roleQuorumConfig `json:"default,omitempty"`
+    // FUTURE (additive): Classes map[string]roleQuorumConfig `json:"classes,omitempty"`
+}
+
+type roleQuorumConfig struct {
+    RequiredRoles     []string `json:"required_roles"`
+    AllowSharedPerson bool     `json:"allow_shared_person,omitempty"`
+}
+```
+
+On-disk example:
+
+```json
+{
+  "signal_key": "…hex…",
+  "approvers": [
+    {"name": "Dr. Bob", "fingerprint": "SHA256:…", "roles": ["qa", "technical"]},
+    {"name": "Sam Owner", "fingerprint": "SHA256:…", "roles": ["system-owner"]}
+  ],
+  "artifact_quorum": {
+    "default": { "required_roles": ["qa", "technical", "system-owner"], "allow_shared_person": false }
+  }
+}
+```
+
+**Why this is the forward-compat shape (R1):** the enforcement function takes a
+resolved `RoleQuorum`. *Where* that comes from is a pure config concern — today the
+loader returns `default`; tomorrow a `classes["prod-deploy"]` lookup returns a
+different one. Adding the `classes` key changes neither `RoleQuorum` nor
+`ArtifactRecordMeetsRoleQuorum`. The class *selector* (what binds a record/action to a
+class) is part of the future pass, not now.
+
+**Loaders & fail-closed rules** (mirror the three-state `ArchiveSigner` precedent,
+`config.go:138-169`, but applied to each value's real semantics):
+
+- **Roster (role-carrying):** extend `loadRoster` to build `RosterMember{Name, Roles}`.
+  Keep the existing loud guards (missing name/fpr; duplicate fpr; duplicate name).
+  **Add:** reject an empty/whitespace-only role string and a duplicate role within one
+  approver's `roles` (loud, not silently deduped — ambiguity in a compliance roster
+  fails closed). Absent file / absent `approvers` → empty roster (unchanged; role-mode
+  then fails closed because every `HasRole` is false → every required role unmet).
+- **Quorum policy** — a new `RoleQuorumPolicy()` / `loadRoleQuorum(path)` returning
+  `(record.RoleQuorum, error)`. Three states, but note its benign state differs from
+  the archive pin's:
+  - **ABSENT** (`artifact_quorum` or `default` missing) → a **distinct loud "not
+    configured" sentinel** (e.g. `ErrNoRoleQuorum`), **not** a benign TOFU. The archive
+    pin has a *safe* degraded mode (store VALID, loudly marked unverified); a
+    required-role policy has **none** — "no required roles" must never silently mean
+    "everything passes," and inventing a default role set is forbidden (honesty, below).
+  - **PRESENT well-formed** → `(policy, nil)`.
+  - **PRESENT malformed** (empty `required_roles`, empty/whitespace/duplicate role
+    string) → loud fail-closed error, distinct from "not configured."
+
+**Honesty constraints (load-bearing):**
+- **No implicit authorization** — `HasRole` false unless the role is explicitly listed
+  for that fingerprint. Never "rostered ⇒ any role."
+- **No speculative default required-role set** — there is no real SOP today, so baking
+  in a default (`["qa","technical",…]`) would be fabricating policy. Mirror
+  `MinArtifactApprovers`'s stance (`artifact.go:23-36`): the requirement is a
+  config-supplied value, not a hardcoded one; absent config fails closed, it does not
+  invent a quorum.
+- Role authorization is **operator-pinned** in `approvers[].roles`, exactly as names
+  are operator-pinned today — real, configurable data, not synthesized.
+
+### 7.5 Role-string canonicalization — analysis & recommendation (decision C5)
+
+Three independently operator-authored string sets must agree for a match: the **signed
+role** (in the v2 proof, surfaced verbatim as `VerifiedApprover.Role` — the library
+**never** normalizes it, `protocol/artifact_signing.go:40-44`), the **roster's
+authorized roles** (`approvers[].roles`), and the **config's required roles**
+(`required_roles`).
+
+| | **A — exact byte-for-byte match (recommended)** | **B — consumer canonicalization (trim + case-fold)** |
+| --- | --- | --- |
+| Auditability | **Highest:** what was signed *is* what is compared. An auditor reads the proof's `role`, the config's `required_roles`, and the roster's `roles` and confirms the match by inspection — no hidden transform in the trust path. | A normalization sits between "what was signed" and "what was enforced." `"QA"` required vs `"qa"` signed "match" only if the auditor knows the (security-relevant) folding rule. |
+| Failure ergonomics | A case/whitespace typo fails **closed** but presents as "missing required role R" — mitigated by enumerating the present `(fpr, role)` pairs in the error, making the mismatch self-evident. | Forgiving of case/whitespace typos — they just match. |
+| Footgun surface | None added; comparison is `==`. | Unicode case-folding has locale traps (e.g. dotless-i); ASCII-only folding is safer but is itself a documented rule the operator must internalize. The fold becomes trusted, must-be-correct code. |
+| Operator burden | Use one spelling consistently (documented convention). | May spell loosely; tooling hides drift. |
+
+**Recommendation: A — exact match, no canonicalization in the comparison.** For
+compliance-grade SoD, auditability outranks typo-forgiveness, and the failure is
+fail-closed (safe) and made self-diagnosing by a good error. Specifics:
+
+- **Comparison-time only, and there is nothing to normalize:** compare
+  `VerifiedApprover.Role` **verbatim** against the (validated) config/roster strings
+  with `==`. **Never** normalize at verify-time — the role is in the signed preimage,
+  so any transform there would break the signature.
+- **Config hygiene, not comparison canonicalization:** the loader (§7.4) **rejects**
+  empty/whitespace-only and duplicate role strings on the *operator-authored* side
+  (loud fail) so config can't carry an invisible trailing-space that would never match.
+  It **validates**, it does **not rewrite** — the comparison stays a pure `==`, and the
+  signed string is never altered.
+- **Self-diagnosing errors:** the missing-role failure (§7.2 step 3) enumerates the
+  verified `(fpr, role)` pairs actually present, so a `"QA"`-vs-`"qa"` mismatch is
+  obvious at a glance.
+- **Canonical form = the literal string, no normalization.** Publish an *unenforced*
+  operator convention (lowercase-hyphenated: `qa`, `technical`, `system-owner`) as
+  guidance.
+- If you instead choose **B**: fold to a copy *only for comparison* (never re-sign,
+  never persist the folded form), apply the **same** ASCII trim+lowercase uniformly to
+  all three sets at compare time, and document the rule prominently in
+  `KNOWN_LIMITATIONS`. (Not recommended.)
+
+### 7.6 go.mod honesty fix (two hops — R4)
+
+`ciphersigil/go.mod:7` still pins `github.com/salehkreiner/netherchat v1.8.0` — a
+version that predates **even** `VerifiedArtifactApprovers` / `ArtifactApprovers` /
+`ArtifactMeta.ProposalID` (all already used by `internal/record/artifact.go`), and of
+course the role API. Only `replace => ../netherchat` (line 14) makes it build.
+
+- **Bump `require` to `v1.10.0`** — the first tag that actually contains the consumed
+  role surface (`ArtifactApproverRoles`, `VerifiedApprover`,
+  `VerifiedArtifactApproverRoles`). Any claim below v1.10.0 is false against Pass C's
+  imports; v1.8.0 is false even against the *pre*-Pass-C imports.
+- **Recommendation: keep `replace => ../netherchat` for development.** It builds
+  offline against the working tree (currently `v1.10.0` = `059b3f1`); for a
+  path-replace, `go.sum` needs no upstream module hash. Bumping `require` to the version
+  whose code the replace points at makes the pin *honest* while preserving local
+  co-dev. **Alternative** (drop the `replace`, require the real public tag): reproducible
+  builds against the immutable tag, but needs network fetch + `go.sum` hashes and loses
+  local co-dev — defer to whenever the spine is declared stable (the replace comment at
+  `go.mod:11-13` already anticipates this).
+- This bump **is part of Pass C** (the read confirmed the plan's earlier "bump to
+  v1.9.0 with that tag" step was **never done** — the pin is still v1.8.0).
+
+### 7.7 Invariant preservation & test plan
+
+**Existing count-mode tests that MUST stay green (all `internal/record/artifact_test.go`,
+all mutation-style):** `TestArtifactRecordTwoPerson_Genuine` (112),
+`TestArtifactRecordTwoPerson_ApproverNotInRoster` (141, the roster-intersection pin),
+`TestArtifactRecord_TamperedFailsClosed` (173),
+`TestArtifactRecordTwoPerson_AllProposalsMustPass` (221),
+`TestArtifactRecord_ForgedAttributionNotTwoPerson` (249),
+`TestArtifactRecord_OwnDeliverableIsNoArtifactApprovals` (280). They get only the
+mechanical `RosterMember{Name:…}` wrap (§7.3); values, assertions, and count-mode
+behavior are unchanged. If the §7.2 shared-core refactor is taken, these six are the
+behavior-preservation safety net.
+
+**Existing config tests:** `TestLoadRosterValid/MissingFileIsEmpty/RejectsDuplicate
+Fingerprint/RejectsDuplicateName/RejectsMissingFields` (`roster_test.go`) stay green
+**unchanged** (R5 — they use `loadRoster` + `Name`, both preserved; `roles` is
+`omitempty` and absent from their fixtures). Config test work is **additive**.
+
+**Roster-intersection generalization (the load-bearing rule):** count-mode's
+`verified ∩ roster` (`recognizedApprovers`, `artifact.go:150-158`) generalizes to
+role-mode's per-role `verified-as-R ∩ roster-authorizes-R` (`F_R`, §7.2 step 3). The
+role-mode analog of the line-141 mutation test is mandatory (below).
+
+**New role-mode tests** (`artifact_test.go`; mutation-style where noted):
+- **Happy path:** required `{qa, technical}`, two distinct rostered+authorized signers
+  each signing their role → passes; `VerifiedArtifactApproverRoles` surfaces both pairs.
+- **Missing required role → fail closed:** required `{qa, technical, system-owner}`,
+  only `qa`+`technical` present → fails naming the unmet `(proposal, role)`.
+- **Role-signed-but-not-rostered → fail closed** (mutation pin for `HasRole`): a valid
+  signature as `qa` from a fpr the roster does **not** authorize for `qa` → does not
+  count. Reverting the `HasRole` filter makes this pass.
+- **Authorized-for-a-different-role → fail closed** (pins per-`(fpr,role)`, not
+  per-fpr): fpr authorized for `technical` signs as `qa` → the `qa` requirement is
+  unmet by them.
+- **Distinct-per-role default** (two tests, pin the toggle): one person authorized for
+  both `qa` and `technical` signs **both** → with `AllowSharedPerson=false` (default)
+  **fails**; with `true` **passes**. Include the **matching-not-greedy** case
+  (`F_qa={Alice,Bob}`, `F_technical={Alice}`, default) → must **pass** (a distinct
+  assignment exists), proving the SDR/matching logic (§7.2 step 4).
+- **Multi-proposal all-or-nothing:** one proposal meets quorum, sibling doesn't → fails
+  naming the sibling.
+- **v1/v2 coexistence in one proposal:** a roleless v1 approver + role-typed v2
+  approvers → role-mode reads only the v2 subset (count-mode still reads the union);
+  quorum evaluated correctly over the v2 pairs.
+- **Empty `RequiredRoles` guard:** `ArtifactRecordMeetsRoleQuorum` with no required
+  roles → error (no degenerate pass), mirroring count-mode's `n<1`.
+- **Fail-closed parity:** tampered / `!Valid` record → error; valid-record-no-proposals
+  → `ErrNoArtifactApprovals`.
+
+**New config tests** (`config` package): roles parsed into `RosterMember`; `HasRole`
+true/false (incl. not-listed ⇒ false); empty/whitespace role rejected; duplicate role
+within one approver rejected; `artifact_quorum.default` → `RoleQuorum`; absent
+`artifact_quorum` → `ErrNoRoleQuorum`; malformed (empty `required_roles`) → loud fail;
+`allow_shared_person` parsed.
+
+**Fixtures go through the REAL v2 path** (as count-mode fixtures use the real
+`AddArtifactApproval`). **Confirmed signatures** (`tui/record/sealer.go`, re-read for
+this spec):
+`func (s *Sealer) ArtifactApprovalSigningBytesV2(proposalID, role string, pub ed25519.PublicKey) ([]byte, error)`
+(line 205) and
+`func (s *Sealer) AddArtifactApprovalV2(proposalID, role string, pub ed25519.PublicKey, sig []byte) (string, error)`
+(line 230); the matching preimage helper
+`protocol.ArtifactApprovalSigningBytesV2(proposalID, artifactHash, approverFpr, nonce, role)`
+(line 54). The existing `buildArtifactRecord` helper (`artifact_test.go:71`) gains a
+role-bearing approver variant that signs
+`protocol.ArtifactApprovalSigningBytesV2(...)` and records via `AddArtifactApprovalV2`.
+*Build-time precondition: re-confirm these three signatures unchanged at the moment of
+writing fixtures (they are correct as of `059b3f1` / v1.10.0).*
+
+### 7.8 Seam & order of operations (CipherSigil-internal — no tag act)
+
+```
+1. Enrich Roster (seal.go) + config (config.go: approverEntry.roles, quorumConfig,
+   loaders).            → count-mode tests get the mechanical RosterMember wrap; count-
+                          mode BEHAVIOR unchanged.
+2. Add the role primitive (artifact.go): RoleQuorum, ArtifactRecordMeetsRoleQuorum,
+   eachArtifactProposal core [+ behavior-preserving count-mode delegation].
+3. Bump go.mod require v1.8.0 → v1.10.0 (keep replace).
+4. Run the suite: count-mode green UNCHANGED; new role-mode + config tests green;
+   gofmt; go vet ./...; go build ./...   (Per memory: run `go test` via PowerShell,
+   one package at a time — the Bash tool hangs go test on Windows.)
+5. NO tag / NO release. CipherSigil is local-only (branch master, no remote), so there
+   is no publish act here — distinct from the Netherchat passes (which tag v1.9.0 /
+   v1.10.0). go.mod honesty is achieved by the require bump alone.
+```
+
+The seam holds because count-mode's public contract and error wording are preserved
+and the new primitive is purely additive and unmounted.
+
+### 7.9 What Pass C is NOT doing (anti-bloat)
+
+- **No `app.go` / composition-root edits; no Engine mounting** — enforcement lands
+  unmounted (R2).
+- **No action-class / risk-tier policy table** — single `requiredRoles`; config merely
+  *shaped* to grow one additively (R1).
+- **No M3 changes** — `Decide`/`Seal`/`validateSealPolicy` untouched; `roster.Name`
+  preserved keeps them compiling.
+- **No `ErrDuplicateApprover` activation** — still the deferred N-of-M guard.
+- **No Netherchat edits, no new library role logic, no role policy in records.**
+- **No removal of the `replace` directive** during development; **no tag** (no remote).
+
+### 7.10 Future pass (deferred — named, not planned here)
+
+**Pass D — App-wiring & action-class enforcement (FUTURE).** What it would entail (one
+line, for context only): mount role-typed (and count) artifact verification into the
+running app — construct the role-aware `Roster` and quorum policy from config in
+`app.go`/`startLocalAPI`, resolve a per-action-class `RoleQuorum` (grow
+`quorumConfig.classes` + a class selector binding a record/action to a class), wire the
+workflow `Engine` and surface verdicts through the API/UI, and add the identity/sole-
+control hardening (KNOWN_LIMITATIONS §3/§5). **Out of scope for Pass C; no part of it is
+planned now.**
+
+**What Pass C is NOT (summary):** no Netherchat edits; no change to M3's deliverable
+workflow; no role policy in records; no app wiring.
 
 ---
 
