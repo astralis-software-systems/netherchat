@@ -46,17 +46,18 @@ import (
 // append-only sequence, a Sealer collects seal co-signatures, and SealedRecord is
 // the finished, self-verifying artifact. VerifyResult is the verdict.
 type (
-	Entry         = record.Entry
-	Author        = record.Author
-	Chain         = record.Chain
-	EntrySpec     = record.EntrySpec
-	Link          = record.Link
-	Sealer        = record.Sealer
-	SealedRecord  = record.SealedRecord
-	Endorsement   = record.Endorsement
-	ApprovalProof = record.ApprovalProof
-	VerifyResult  = record.VerifyResult
-	ArtifactMeta  = record.ArtifactMeta
+	Entry            = record.Entry
+	Author           = record.Author
+	Chain            = record.Chain
+	EntrySpec        = record.EntrySpec
+	Link             = record.Link
+	Sealer           = record.Sealer
+	SealedRecord     = record.SealedRecord
+	Endorsement      = record.Endorsement
+	ApprovalProof    = record.ApprovalProof
+	VerifyResult     = record.VerifyResult
+	ArtifactMeta     = record.ArtifactMeta
+	VerifiedApprover = record.VerifiedApprover
 )
 
 // On-disk schema versions and the built-in entry kinds. KindTyped marks a
@@ -83,19 +84,20 @@ const (
 // Record constructors, verification, the public fingerprint helper, and the
 // artifact-body codecs.
 var (
-	NewChain                  = record.NewChain
-	NewSealer                 = record.NewSealer
-	NewSealedRecord           = record.NewSealedRecord
-	Parse                     = record.Parse
-	Verify                    = record.Verify
-	VerifyBytes               = record.VerifyBytes
-	VerifyEntry               = record.VerifyEntry
-	VerifiedArtifactApprovers = record.VerifiedArtifactApprovers
-	Fingerprint               = record.Fingerprint
-	ArtifactOf                = record.ArtifactOf
-	MarshalArtifactBody       = record.MarshalArtifactBody
-	ParseArtifactBody         = record.ParseArtifactBody
-	RenderMinutes             = record.RenderMinutes
+	NewChain                      = record.NewChain
+	NewSealer                     = record.NewSealer
+	NewSealedRecord               = record.NewSealedRecord
+	Parse                         = record.Parse
+	Verify                        = record.Verify
+	VerifyBytes                   = record.VerifyBytes
+	VerifyEntry                   = record.VerifyEntry
+	VerifiedArtifactApprovers     = record.VerifiedArtifactApprovers
+	VerifiedArtifactApproverRoles = record.VerifiedArtifactApproverRoles
+	Fingerprint                   = record.Fingerprint
+	ArtifactOf                    = record.ArtifactOf
+	MarshalArtifactBody           = record.MarshalArtifactBody
+	ParseArtifactBody             = record.ParseArtifactBody
+	RenderMinutes                 = record.RenderMinutes
 )
 
 // --- Reports (tui/report) --------------------------------------------------

@@ -173,3 +173,28 @@ func TestRenderMinutes(t *testing.T) {
 func b64(b []byte) string {
 	return base64.StdEncoding.EncodeToString(b)
 }
+
+// TestParseRejectsUnknownFieldInProof pins the NESTED forward-incompat boundary: an
+// unknown field inside an ApprovalProof inside a record makes Parse reject the WHOLE
+// record (DisallowUnknownFields applies recursively, not just at the top level). This is
+// the mechanism that guarantees a pre-v2 verifier rejects a record carrying a v2 `role`
+// field outright rather than silently ignoring it. (The read found only the top-level
+// case was previously tested.)
+func TestParseRejectsUnknownFieldInProof(t *testing.T) {
+	alice, _, _ := fixedAuthor(11, "alice")
+	_, bobPub, bobPriv := fixedAuthor(12, "bob")
+	rec := artifactRecord(t, alice, alice.ID, pid, hash, nonce, "SHA256:agent")
+	rec.ArtifactApprovals = map[string][]ApprovalProof{pid: {proofOver(pid, hash, nonce, bobPub, bobPriv)}}
+	b, err := rec.Marshal()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// Inject an unknown key inside the proof object (before its approver_fpr field).
+	withBogus := strings.Replace(string(b), `"approver_fpr"`, `"bogus": 1, "approver_fpr"`, 1)
+	if withBogus == string(b) {
+		t.Fatal("precondition: injection did not change the JSON")
+	}
+	if _, err := Parse([]byte(withBogus)); err == nil {
+		t.Fatal("Parse must reject an unknown field nested inside a proof (DisallowUnknownFields)")
+	}
+}

@@ -369,3 +369,296 @@ func contains(s []string, v string) bool {
 	}
 	return false
 }
+
+// --- Pass B: role-typed artifact-approval/v2 ---------------------------------
+
+// roleProofOver builds a v2 (role-typed) ApprovalProof: pub/priv sign the v2 approval
+// preimage for (proposalID, hash, Fingerprint(pub), nonce, role), and the proof carries
+// the declared role so the verifier dispatches to the v2 path.
+func roleProofOver(proposalID, hash, nonce, role string, pub ed25519.PublicKey, priv ed25519.PrivateKey) ApprovalProof {
+	sig := ed25519.Sign(priv, protocol.ArtifactApprovalSigningBytesV2(proposalID, hash, Fingerprint(pub), nonce, role))
+	return ApprovalProof{
+		ApproverFpr: Fingerprint(pub),
+		ApproverKey: base64.StdEncoding.EncodeToString(pub),
+		Sig:         base64.StdEncoding.EncodeToString(sig),
+		Role:        role,
+	}
+}
+
+// contains2 reports whether any surfaced (fpr, role) pair has the given fingerprint.
+func contains2(rs []VerifiedApprover, fpr string) bool {
+	for _, r := range rs {
+		if r.Fingerprint == fpr {
+			return true
+		}
+	}
+	return false
+}
+
+// (V1) A single role-typed proof verifies, surfaces exactly one (fpr, role) pair, and
+// the approver's fingerprint ALSO appears in the role-agnostic ArtifactApprovers set.
+func TestArtifactRoleTypedHappyPath(t *testing.T) {
+	alice, _, _ := fixedAuthor(11, "alice")
+	_, bobPub, bobPriv := fixedAuthor(12, "bob")
+	rec := artifactRecord(t, alice, alice.ID, pid, hash, nonce, "SHA256:agent")
+	rec.ArtifactApprovals = map[string][]ApprovalProof{pid: {roleProofOver(pid, hash, nonce, "qa", bobPub, bobPriv)}}
+
+	res, _ := Verify(rec)
+	if !res.Valid {
+		t.Fatalf("role-typed record should verify: %s", res.Reason)
+	}
+	roles := VerifiedArtifactApproverRoles(res, pid)
+	if len(roles) != 1 || roles[0].Fingerprint != Fingerprint(bobPub) || roles[0].Role != "qa" {
+		t.Fatalf("role surface must be {bob, qa}, got %v", roles)
+	}
+	if got := VerifiedArtifactApprovers(res, pid); len(got) != 1 || got[0] != Fingerprint(bobPub) {
+		t.Fatalf("a v2 approver must also appear in ArtifactApprovers, got %v", got)
+	}
+}
+
+// (V2) A proposal may carry both a v1 (roleless) and a v2 (role) proof: both verify; only
+// the v2 one is in the role map; both fingerprints are in ArtifactApprovers.
+func TestArtifactMixedV1V2Bag(t *testing.T) {
+	alice, _, _ := fixedAuthor(11, "alice")
+	_, bobPub, bobPriv := fixedAuthor(12, "bob")       // v2 role approver
+	_, carolPub, carolPriv := fixedAuthor(13, "carol") // v1 roleless approver
+	rec := artifactRecord(t, alice, alice.ID, pid, hash, nonce, "SHA256:agent")
+	rec.ArtifactApprovals = map[string][]ApprovalProof{pid: {
+		roleProofOver(pid, hash, nonce, "qa", bobPub, bobPriv),
+		proofOver(pid, hash, nonce, carolPub, carolPriv),
+	}}
+
+	res, _ := Verify(rec)
+	if !res.Valid {
+		t.Fatalf("mixed v1/v2 bag should verify: %s", res.Reason)
+	}
+	roles := VerifiedArtifactApproverRoles(res, pid)
+	if len(roles) != 1 || roles[0].Fingerprint != Fingerprint(bobPub) || roles[0].Role != "qa" {
+		t.Fatalf("only the v2 proof belongs in the role map, got %v", roles)
+	}
+	approvers := VerifiedArtifactApprovers(res, pid)
+	if len(approvers) != 2 || !contains(approvers, Fingerprint(bobPub)) || !contains(approvers, Fingerprint(carolPub)) {
+		t.Fatalf("both v1 and v2 approvers must be in ArtifactApprovers, got %v", approvers)
+	}
+}
+
+// (V3) The same fingerprint signing two DISTINCT roles surfaces BOTH pairs (per-(fpr,role)
+// dedup), while collapsing to one entry in the role-agnostic ArtifactApprovers set.
+func TestArtifactSameFprTwoRoles(t *testing.T) {
+	alice, _, _ := fixedAuthor(11, "alice")
+	_, bobPub, bobPriv := fixedAuthor(12, "bob")
+	rec := artifactRecord(t, alice, alice.ID, pid, hash, nonce, "SHA256:agent")
+	rec.ArtifactApprovals = map[string][]ApprovalProof{pid: {
+		roleProofOver(pid, hash, nonce, "qa", bobPub, bobPriv),
+		roleProofOver(pid, hash, nonce, "technical", bobPub, bobPriv),
+	}}
+
+	res, _ := Verify(rec)
+	if !res.Valid {
+		t.Fatalf("two-role record should verify: %s", res.Reason)
+	}
+	roles := VerifiedArtifactApproverRoles(res, pid)
+	if len(roles) != 2 || roles[0].Role != "qa" || roles[1].Role != "technical" {
+		t.Fatalf("per-(fpr,role) dedup must surface both roles sorted, got %v", roles)
+	}
+	if got := VerifiedArtifactApprovers(res, pid); len(got) != 1 {
+		t.Fatalf("one fpr collapses to one entry in ArtifactApprovers, got %v", got)
+	}
+}
+
+// (V4) An identical (fpr, role) pair repeated collapses to one.
+func TestArtifactDuplicateRolePairCollapses(t *testing.T) {
+	alice, _, _ := fixedAuthor(11, "alice")
+	_, bobPub, bobPriv := fixedAuthor(12, "bob")
+	rec := artifactRecord(t, alice, alice.ID, pid, hash, nonce, "SHA256:agent")
+	rp := roleProofOver(pid, hash, nonce, "qa", bobPub, bobPriv)
+	rec.ArtifactApprovals = map[string][]ApprovalProof{pid: {rp, rp}}
+
+	res, _ := Verify(rec)
+	if !res.Valid {
+		t.Fatalf("duplicate role pair should still verify: %s", res.Reason)
+	}
+	if roles := VerifiedArtifactApproverRoles(res, pid); len(roles) != 1 {
+		t.Fatalf("identical (fpr, role) pair must collapse to one, got %v", roles)
+	}
+}
+
+// (V5) Role-typed proofs by the entry author and the proposer are excluded from the role
+// map (the second law), exactly like the roleless set; only a distinct third party shows.
+func TestArtifactRoleAuthorProposerExcluded(t *testing.T) {
+	alice, alicePub, alicePriv := fixedAuthor(11, "alice") // entry author
+	agent, agentPub, agentPriv := fixedAuthor(99, "agent") // proposer
+	_, bobPub, bobPriv := fixedAuthor(12, "bob")           // genuine distinct approver
+	rec := artifactRecord(t, alice, alice.ID, pid, hash, nonce, agent.ID)
+	rec.ArtifactApprovals = map[string][]ApprovalProof{pid: {
+		roleProofOver(pid, hash, nonce, "qa", alicePub, alicePriv),        // author — excluded
+		roleProofOver(pid, hash, nonce, "technical", agentPub, agentPriv), // proposer — excluded
+		roleProofOver(pid, hash, nonce, "system-owner", bobPub, bobPriv),  // surfaced
+	}}
+
+	res, _ := Verify(rec)
+	if !res.Valid {
+		t.Fatalf("all proofs valid; should verify: %s", res.Reason)
+	}
+	roles := VerifiedArtifactApproverRoles(res, pid)
+	if len(roles) != 1 || roles[0].Fingerprint != Fingerprint(bobPub) || roles[0].Role != "system-owner" {
+		t.Fatalf("role map must be exactly {bob, system-owner}, got %v", roles)
+	}
+	if contains2(roles, alice.ID) || contains2(roles, agent.ID) {
+		t.Fatal("author/proposer must not appear in the role map")
+	}
+}
+
+// (V6 / I2′) A record carrying only v1 (roleless) proofs serializes with NO role key and
+// round-trips byte-identically after the Role field was added (omitempty). This pins the
+// property the read found previously untested.
+func TestV1ArtifactProofByteIdenticalWithRoleField(t *testing.T) {
+	alice, _, _ := fixedAuthor(11, "alice")
+	_, bobPub, bobPriv := fixedAuthor(12, "bob")
+
+	meta := ArtifactMeta{Source: "agent", ArtifactRef: "ref", ArtifactHash: hash, ApproverFpr: Fingerprint(bobPub), ProposalID: pid, Nonce: nonce, ProposerFpr: "SHA256:agent"}
+	body, _ := MarshalArtifactBody(meta)
+	c := NewChain()
+	if _, err := c.Append(alice, EntrySpec{Kind: KindArtifact, Body: body}); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSealer("ops", alice.ID, c.Entries())
+	if err := s.Sign(alice); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddArtifactApproval(pid, bobPub, ed25519.Sign(bobPriv, protocol.ArtifactApprovalSigningBytes(pid, hash, Fingerprint(bobPub), nonce))); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := s.Finalize()
+
+	b1, err := rec.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(b1, []byte(`"role"`)) {
+		t.Fatal("a v1 proof must not serialize a role key (omitempty)")
+	}
+	parsed, err := Parse(b1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2, _ := parsed.Marshal()
+	if !bytes.Equal(b1, b2) {
+		t.Fatalf("v1-proof record not byte-identical after adding Role:\n%s\n---\n%s", b1, b2)
+	}
+	if res, _ := Verify(parsed); !res.Valid {
+		t.Fatalf("v1-proof record must verify: %s", res.Reason)
+	}
+}
+
+// (V7) A v2 proof whose role is relabeled AFTER signing fails closed (preimage mismatch).
+func TestArtifactV2RoleTamperFailsClosed(t *testing.T) {
+	alice, _, _ := fixedAuthor(11, "alice")
+	_, bobPub, bobPriv := fixedAuthor(12, "bob")
+	rec := artifactRecord(t, alice, alice.ID, pid, hash, nonce, "SHA256:agent")
+	p := roleProofOver(pid, hash, nonce, "qa", bobPub, bobPriv)
+	p.Role = "system-owner" // relabel after signing
+	rec.ArtifactApprovals = map[string][]ApprovalProof{pid: {p}}
+
+	if res, _ := Verify(rec); res.Valid {
+		t.Fatal("a v2 proof whose role was relabeled after signing must fail closed")
+	}
+}
+
+// (V8) A v1-signed proof with a role ADDED to the JSON flips dispatch to v2 and fails
+// closed (the signature covers the v1 preimage, not the v2 one).
+func TestArtifactRoleAddedToV1ProofFailsClosed(t *testing.T) {
+	alice, _, _ := fixedAuthor(11, "alice")
+	_, bobPub, bobPriv := fixedAuthor(12, "bob")
+	rec := artifactRecord(t, alice, alice.ID, pid, hash, nonce, "SHA256:agent")
+	p := proofOver(pid, hash, nonce, bobPub, bobPriv) // signed over the v1 preimage
+	p.Role = "qa"                                     // add a role → dispatch flips to v2
+	rec.ArtifactApprovals = map[string][]ApprovalProof{pid: {p}}
+
+	if res, _ := Verify(rec); res.Valid {
+		t.Fatal("a v1-signed proof with a role added to the JSON must fail closed")
+	}
+}
+
+// (V9) A v2 proof whose key does not hash to its claimed fingerprint fails closed.
+func TestArtifactV2KeyFprMismatchFailsClosed(t *testing.T) {
+	alice, _, _ := fixedAuthor(11, "alice")
+	_, bobPub, bobPriv := fixedAuthor(12, "bob")
+	rec := artifactRecord(t, alice, alice.ID, pid, hash, nonce, "SHA256:agent")
+	p := roleProofOver(pid, hash, nonce, "qa", bobPub, bobPriv)
+	p.ApproverFpr = "SHA256:NOTBOBxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+	rec.ArtifactApprovals = map[string][]ApprovalProof{pid: {p}}
+
+	if res, _ := Verify(rec); res.Valid {
+		t.Fatal("a v2 proof whose key does not match its fingerprint must fail closed")
+	}
+}
+
+// (V10) The PUBLIC v2 construction path (Sealer.AddArtifactApprovalV2 + the preimage
+// exposer) produces a record that verifies offline via VerifyBytes and surfaces the role.
+func TestArtifactV2OfflineProvableViaSealer(t *testing.T) {
+	alice, _, _ := fixedAuthor(11, "alice")
+	_, bobPub, bobPriv := fixedAuthor(12, "bob")
+
+	meta := ArtifactMeta{Source: "agent", ArtifactRef: "ref", ArtifactHash: hash, ApproverFpr: Fingerprint(bobPub), ProposalID: pid, Nonce: nonce, ProposerFpr: "SHA256:agent"}
+	body, _ := MarshalArtifactBody(meta)
+	c := NewChain()
+	if _, err := c.Append(alice, EntrySpec{Kind: KindArtifact, Body: body}); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSealer("ops", alice.ID, c.Entries())
+	if err := s.Sign(alice); err != nil {
+		t.Fatal(err)
+	}
+	preimage, err := s.ArtifactApprovalSigningBytesV2(pid, "qa", bobPub)
+	if err != nil {
+		t.Fatalf("exposer: %v", err)
+	}
+	if _, err := s.AddArtifactApprovalV2(pid, "qa", bobPub, ed25519.Sign(bobPriv, preimage)); err != nil {
+		t.Fatalf("add v2 approval: %v", err)
+	}
+	rec, _ := s.Finalize()
+	if rec.Version != FormatVersionV2 {
+		t.Fatalf("proofs-bearing record should be v2, got %q", rec.Version)
+	}
+
+	b, err := rec.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := VerifyBytes(b)
+	if err != nil {
+		t.Fatalf("verify bytes: %v", err)
+	}
+	if !res.Valid {
+		t.Fatalf("v2 record must verify: %s", res.Reason)
+	}
+	roles := VerifiedArtifactApproverRoles(res, pid)
+	if len(roles) != 1 || roles[0].Role != "qa" || roles[0].Fingerprint != Fingerprint(bobPub) {
+		t.Fatalf("surface must be {bob, qa}, got %v", roles)
+	}
+}
+
+// (V11) The v2 exposer and AddArtifactApprovalV2 reject an empty role (an empty role is
+// the v1 form, not a valid v2 approval).
+func TestArtifactV2RejectsEmptyRole(t *testing.T) {
+	alice, _, _ := fixedAuthor(11, "alice")
+	_, bobPub, bobPriv := fixedAuthor(12, "bob")
+
+	meta := ArtifactMeta{Source: "agent", ArtifactRef: "ref", ArtifactHash: hash, ApproverFpr: Fingerprint(bobPub), ProposalID: pid, Nonce: nonce, ProposerFpr: "SHA256:agent"}
+	body, _ := MarshalArtifactBody(meta)
+	c := NewChain()
+	if _, err := c.Append(alice, EntrySpec{Kind: KindArtifact, Body: body}); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSealer("ops", alice.ID, c.Entries())
+	if err := s.Sign(alice); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ArtifactApprovalSigningBytesV2(pid, "", bobPub); err == nil {
+		t.Fatal("the v2 exposer must reject an empty role")
+	}
+	if _, err := s.AddArtifactApprovalV2(pid, "", bobPub, ed25519.Sign(bobPriv, []byte("x"))); err == nil {
+		t.Fatal("AddArtifactApprovalV2 must reject an empty role")
+	}
+}

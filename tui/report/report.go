@@ -90,11 +90,29 @@ func approverDisplay(rec *record.SealedRecord, res *record.VerifyResult, e recor
 	if !ok || m.ProposalID == "" {
 		return "", false
 	}
+	names := signerNames(rec)
+	// Prefer the role-attributed surface (artifact-approval/v2) when present, so the
+	// report reads "Dr. Alice — qa" rather than a bare "verified reviewer". Falls back to
+	// the role-agnostic verified set for proposals that carry only v1 (roleless) proofs.
+	if roleApprovers := record.VerifiedArtifactApproverRoles(res, m.ProposalID); len(roleApprovers) > 0 {
+		parts := make([]string, 0, len(roleApprovers))
+		for _, ra := range roleApprovers {
+			who := names[ra.Fingerprint]
+			if who == "" {
+				who = "verified reviewer"
+			}
+			label := who + " — " + ra.Role
+			if withFpr {
+				label += " (" + shortHash(ra.Fingerprint, 16) + ")"
+			}
+			parts = append(parts, label)
+		}
+		return strings.Join(parts, ", "), true
+	}
 	fprs := record.VerifiedArtifactApprovers(res, m.ProposalID)
 	if len(fprs) == 0 {
 		return "", false
 	}
-	names := signerNames(rec)
 	parts := make([]string, 0, len(fprs))
 	for _, fpr := range fprs {
 		who := names[fpr]

@@ -68,6 +68,15 @@ type ApprovalProof struct {
 	ApproverFpr string `json:"approver_fpr"`
 	ApproverKey string `json:"approver_key"` // base64 Ed25519 public key
 	Sig         string `json:"sig"`          // base64 Ed25519 signature over the approval preimage
+
+	// Role is the opaque, declared role the approver signed AS (artifact-approval/v2):
+	// e.g. "qa", "technical", "system-owner". It is the content discriminator between a
+	// v1 and a v2 proof — ABSENT (empty) ⇒ the signature covers the v1 preimage
+	// (protocol.ArtifactApprovalSigningBytes); NON-EMPTY ⇒ it covers the v2 preimage
+	// (protocol.ArtifactApprovalSigningBytesV2), which binds the role. omitempty keeps v1
+	// proofs byte-identical. The library treats Role as opaque and never normalizes it
+	// (it is inside the signed bytes); the consumer owns the role vocabulary and policy.
+	Role string `json:"role,omitempty"`
 }
 
 // SealedRecord is the machine-readable artifact written by /seal: the entire
@@ -200,7 +209,28 @@ type VerifyResult struct {
 	// author and the recorded proposer. It is the offline-provable two-person evidence:
 	// the library surfaces the verified set; it imposes NO quorum minimum (consumer
 	// policy). Empty/absent for legacy artifact entries (approval not offline-provable).
+	// A role-typed (v2) approver's fingerprint ALSO appears here, so a role-agnostic
+	// count still sees it.
 	ArtifactApprovers map[string][]string `json:"artifact_approvers,omitempty"`
+
+	// ArtifactApproverRoles maps an artifact PROPOSAL ID to the verified ROLE-TYPED
+	// approvals (artifact-approval/v2): each a distinct (fingerprint, role) pair,
+	// EXCLUDING the entry author and proposer, deduplicated by the PAIR and sorted (by
+	// fingerprint, then role). Additive and omitempty: absent on records with no v2
+	// proofs. The library surfaces the verified pairs faithfully (including the same
+	// fingerprint under two distinct roles); it imposes NO required-role set, threshold,
+	// or distinctness rule — that is consumer policy. A roleless v1 approver appears only
+	// in ArtifactApprovers, never here.
+	ArtifactApproverRoles map[string][]VerifiedApprover `json:"artifact_approver_roles,omitempty"`
+}
+
+// VerifiedApprover is one cryptographically-verified role-typed approval
+// (artifact-approval/v2): the approver's fingerprint and the opaque role they signed
+// AS. The library attaches no meaning to Role and never normalizes it; the consumer
+// owns the role vocabulary (as with Endorsement.Meaning and Entry.Schema).
+type VerifiedApprover struct {
+	Fingerprint string `json:"fingerprint"`
+	Role        string `json:"role"`
 }
 
 // VerifiedArtifactApprovers returns the sorted set of distinct, cryptographically
@@ -214,6 +244,19 @@ func VerifiedArtifactApprovers(res *VerifyResult, proposalID string) []string {
 		return nil
 	}
 	return res.ArtifactApprovers[proposalID]
+}
+
+// VerifiedArtifactApproverRoles returns the verified, distinct (fingerprint, role)
+// approvals for an artifact proposal (excluding the entry author and proposer), or nil
+// if there are none. It is a nil-safe accessor over VerifyResult.ArtifactApproverRoles
+// and imposes NO role/quorum policy: a consumer enforcing role-typed quorum reads these
+// pairs and applies its own required-role set and distinctness rule (the role-typed
+// counterpart of VerifiedArtifactApprovers; GAP-5).
+func VerifiedArtifactApproverRoles(res *VerifyResult, proposalID string) []VerifiedApprover {
+	if res == nil {
+		return nil
+	}
+	return res.ArtifactApproverRoles[proposalID]
 }
 
 // Verify recomputes the chain from scratch and checks every integrity property
@@ -319,7 +362,7 @@ func Verify(r *SealedRecord) (*VerifyResult, error) {
 	// res.Valid is set, so a bad proof keeps the record invalid (fail-closed). It is
 	// skipped entirely when no proofs are present, so old records are unaffected.
 	if len(r.ArtifactApprovals) > 0 {
-		approvers, err := r.verifyArtifactApprovals()
+		approvers, roles, err := r.verifyArtifactApprovals()
 		if err != nil {
 			res.Reason = err.Error()
 			return res, nil
@@ -327,21 +370,27 @@ func Verify(r *SealedRecord) (*VerifyResult, error) {
 		if len(approvers) > 0 {
 			res.ArtifactApprovers = approvers
 		}
+		if len(roles) > 0 {
+			res.ArtifactApproverRoles = roles
+		}
 	}
 
 	res.Valid = true
 	return res, nil
 }
 
-// verifyArtifactApprovals strictly verifies every record-level artifact approval
-// proof and returns, per proposal id, the sorted set of DISTINCT verified approver
-// fingerprints EXCLUDING the artifact entry's author and the recorded proposer (the
-// second law). It fails closed: any unanchored proof set (no matching artifact
-// entry), any proof whose key does not hash to its claimed fingerprint, or any
-// signature that does not verify over the reconstructed approval preimage returns
-// an error so Verify reports Valid=false. The artifact hash and nonce come from the
-// entry's SIGNED body, so they cannot be altered without breaking the entry itself.
-func (r *SealedRecord) verifyArtifactApprovals() (map[string][]string, error) {
+// verifyArtifactApprovals strictly verifies every record-level artifact approval proof
+// and returns, per proposal id: (1) the sorted set of DISTINCT verified approver
+// fingerprints and (2) the verified role-typed (fingerprint, role) pairs — both
+// EXCLUDING the artifact entry's author and the recorded proposer (the second law). It
+// dispatches per proof on the content discriminator p.Role: an empty role verifies
+// against the v1 preimage (unchanged), a non-empty role against the v2 preimage (which
+// binds the role). It fails closed: any unanchored proof set (no matching artifact
+// entry), any proof whose key does not hash to its claimed fingerprint, or any signature
+// that does not verify over the reconstructed (v1 or v2) preimage returns an error so
+// Verify reports Valid=false. The artifact hash and nonce come from the entry's SIGNED
+// body, so they cannot be altered without breaking the entry itself.
+func (r *SealedRecord) verifyArtifactApprovals() (map[string][]string, map[string][]VerifiedApprover, error) {
 	// Index artifact entries by proposal id (from their signed bodies); a duplicate
 	// proposal id across entries is ambiguous and rejected.
 	metaByProposal := make(map[string]ArtifactMeta)
@@ -355,39 +404,53 @@ func (r *SealedRecord) verifyArtifactApprovals() (map[string][]string, error) {
 			continue
 		}
 		if _, dup := metaByProposal[m.ProposalID]; dup {
-			return nil, fmt.Errorf("artifact_approvals: duplicate proposal_id %q across artifact entries", m.ProposalID)
+			return nil, nil, fmt.Errorf("artifact_approvals: duplicate proposal_id %q across artifact entries", m.ProposalID)
 		}
 		metaByProposal[m.ProposalID] = m
 		authorByProposal[m.ProposalID] = e.AuthorID
 	}
 
 	out := make(map[string][]string)
+	roles := make(map[string][]VerifiedApprover)
 	for pid, proofs := range r.ArtifactApprovals {
 		m, ok := metaByProposal[pid]
 		if !ok {
-			return nil, fmt.Errorf("artifact_approvals references unknown proposal %q", pid)
+			return nil, nil, fmt.Errorf("artifact_approvals references unknown proposal %q", pid)
 		}
 		if m.Nonce == "" {
-			return nil, fmt.Errorf("artifact %q has approval proofs but no nonce to verify them", pid)
+			return nil, nil, fmt.Errorf("artifact %q has approval proofs but no nonce to verify them", pid)
 		}
 		distinct := make(map[string]bool)
+		var rolePairs []VerifiedApprover
 		for _, p := range proofs {
 			key, err := base64.StdEncoding.DecodeString(p.ApproverKey)
 			if err != nil || len(key) != ed25519.PublicKeySize {
-				return nil, fmt.Errorf("artifact %q: approver key for %s is malformed", pid, p.ApproverFpr)
+				return nil, nil, fmt.Errorf("artifact %q: approver key for %s is malformed", pid, p.ApproverFpr)
 			}
 			if crypto.Fingerprint(ed25519.PublicKey(key)) != p.ApproverFpr {
-				return nil, fmt.Errorf("artifact %q: approver key does not match fingerprint %s", pid, p.ApproverFpr)
+				return nil, nil, fmt.Errorf("artifact %q: approver key does not match fingerprint %s", pid, p.ApproverFpr)
 			}
 			sig, err := base64.StdEncoding.DecodeString(p.Sig)
 			if err != nil {
-				return nil, fmt.Errorf("artifact %q: approval signature for %s is not valid base64", pid, p.ApproverFpr)
+				return nil, nil, fmt.Errorf("artifact %q: approval signature for %s is not valid base64", pid, p.ApproverFpr)
 			}
-			preimage := protocol.ArtifactApprovalSigningBytes(pid, m.ArtifactHash, p.ApproverFpr, m.Nonce)
+			// Content-gated dispatch (fork #2): a non-empty role binds the v2 preimage; an
+			// empty role is the unchanged v1 path. The two preimages differ by tag and the
+			// trailing field(role), so every tamper direction (relabel / add / strip a role)
+			// fails the signature check below — fail-closed.
+			var preimage []byte
+			if p.Role != "" {
+				preimage = protocol.ArtifactApprovalSigningBytesV2(pid, m.ArtifactHash, p.ApproverFpr, m.Nonce, p.Role)
+			} else {
+				preimage = protocol.ArtifactApprovalSigningBytes(pid, m.ArtifactHash, p.ApproverFpr, m.Nonce)
+			}
 			if !ed25519.Verify(ed25519.PublicKey(key), preimage, sig) {
-				return nil, fmt.Errorf("artifact %q: approval by %s does not verify against the artifact hash", pid, p.ApproverFpr)
+				return nil, nil, fmt.Errorf("artifact %q: approval by %s does not verify against the artifact hash", pid, p.ApproverFpr)
 			}
 			distinct[p.ApproverFpr] = true
+			if p.Role != "" {
+				rolePairs = append(rolePairs, VerifiedApprover{Fingerprint: p.ApproverFpr, Role: p.Role})
+			}
 		}
 		// Surface the verified set minus the entry author and the proposer: the
 		// "second person(s)" beyond the author who recorded the entry.
@@ -402,8 +465,41 @@ func (r *SealedRecord) verifyArtifactApprovals() (map[string][]string, error) {
 		if len(set) > 0 {
 			out[pid] = set
 		}
+		// The role-typed surface: the same author/proposer exclusion, deduped by the
+		// (fingerprint, role) PAIR so one person who signed two distinct roles keeps both.
+		if rset := dedupApproverRoles(rolePairs, authorByProposal[pid], m.ProposerFpr); len(rset) > 0 {
+			roles[pid] = rset
+		}
 	}
-	return out, nil
+	return out, roles, nil
+}
+
+// dedupApproverRoles returns the role-typed approvals minus the entry author and the
+// proposer, deduplicated by the (fingerprint, role) PAIR and sorted by fingerprint then
+// role for a stable surface. Per-pair dedup preserves a person who legitimately signed
+// under two distinct roles; only an identical (fpr, role) repeat collapses. Whether the
+// same person may fill two REQUIRED roles is a consumer policy decision, NOT enforced
+// here — the library surfaces the verified pairs faithfully.
+func dedupApproverRoles(pairs []VerifiedApprover, author, proposer string) []VerifiedApprover {
+	seen := make(map[VerifiedApprover]bool, len(pairs))
+	out := make([]VerifiedApprover, 0, len(pairs))
+	for _, p := range pairs {
+		if p.Fingerprint == author || p.Fingerprint == proposer {
+			continue
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Fingerprint != out[j].Fingerprint {
+			return out[i].Fingerprint < out[j].Fingerprint
+		}
+		return out[i].Role < out[j].Role
+	})
+	return out
 }
 
 // nameByFingerprint builds a fingerprint -> display name map from entry authors,

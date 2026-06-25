@@ -195,6 +195,59 @@ func (s *Sealer) AddArtifactApproval(proposalID string, pub ed25519.PublicKey, s
 	return fpr, nil
 }
 
+// ArtifactApprovalSigningBytesV2 returns the exact ROLE-TYPED (v2) approval preimage a
+// caller must sign, reconstructed from the matching artifact entry's SIGNED body (its
+// artifact hash and nonce) plus the approver fingerprint and the declared role — WITHOUT
+// importing protocol. It mirrors EndorsementSigningBytes for the v2 seal preimage but,
+// unlike it, must resolve the artifact entry, so it returns an error when there is no
+// matching proposal or the entry carries no nonce. role is opaque and MUST be non-empty
+// (an empty role is the v1 form; the library never normalizes the role — it is signed).
+func (s *Sealer) ArtifactApprovalSigningBytesV2(proposalID, role string, pub ed25519.PublicKey) ([]byte, error) {
+	if len(pub) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("artifact approval: public key is %d bytes, want %d", len(pub), ed25519.PublicKeySize)
+	}
+	if role == "" {
+		return nil, errors.New("artifact approval v2: role must be non-empty")
+	}
+	m, ok := s.artifactMetaByProposal(proposalID)
+	if !ok {
+		return nil, fmt.Errorf("artifact approval: no artifact entry with proposal_id %q", proposalID)
+	}
+	if m.Nonce == "" {
+		return nil, fmt.Errorf("artifact approval: artifact %q has no nonce to bind the approval", proposalID)
+	}
+	return protocol.ArtifactApprovalSigningBytesV2(proposalID, m.ArtifactHash, Fingerprint(pub), m.Nonce, role), nil
+}
+
+// AddArtifactApprovalV2 records an offline-verifiable, ROLE-TYPED human approval of an
+// artifact entry (artifact-approval/v2), keyed by the entry's proposal id. It
+// reconstructs the v2 approval preimage (binding the declared role) from the matching
+// entry's signed body and verifies sig before recording, so a caller cannot record an
+// approval that would not verify. role is opaque and must be non-empty; pub is the
+// approver's public key (its fingerprint is bound into the preimage and recorded).
+// Returns the approver fingerprint. The v1 AddArtifactApproval is left unchanged; the
+// proposer-vs-approver (second law) distinction is enforced by the verifier.
+func (s *Sealer) AddArtifactApprovalV2(proposalID, role string, pub ed25519.PublicKey, sig []byte) (string, error) {
+	preimage, err := s.ArtifactApprovalSigningBytesV2(proposalID, role, pub)
+	if err != nil {
+		return "", err
+	}
+	if !ed25519.Verify(pub, preimage, sig) {
+		return "", errors.New("artifact approval does not verify against the artifact hash")
+	}
+	fpr := Fingerprint(pub)
+	if s.approvals == nil {
+		s.approvals = map[string][]ApprovalProof{}
+	}
+	s.approvals[proposalID] = append(s.approvals[proposalID], ApprovalProof{
+		ApproverFpr: fpr,
+		ApproverKey: base64.StdEncoding.EncodeToString(pub),
+		Sig:         base64.StdEncoding.EncodeToString(sig),
+		Role:        role,
+	})
+	return fpr, nil
+}
+
 // artifactMetaByProposal finds the artifact entry in the snapshot whose signed body
 // carries proposalID and returns its parsed metadata.
 func (s *Sealer) artifactMetaByProposal(proposalID string) (ArtifactMeta, bool) {
