@@ -459,38 +459,329 @@ verified — §4 Q6 — and is itself a tagging action, not a code change.)
 
 ---
 
-## 6. Pass B outline (NOT YET BUILT — Netherchat v2 role structure)
+## 6. Pass B build spec (BUILD-READY — Netherchat v2 role structure)
 
-Additive only. No existing exported signature, record byte, or proof byte changes.
+> Re-verified against the working tree after Pass A landed (HEAD `18e6142`; v1.9.0
+> tagged and **public**). Pass B is **Netherchat-only and purely additive**: it makes
+> an approver's *role* expressible in signed bytes and surfaced through verification.
+> It does **not** enforce any policy — that is Pass C (§7). CipherSigil compiles
+> unmodified against the result (§6.9).
 
-**Files:**
-- `protocol/artifact_signing.go` — add `ArtifactApprovalSigningBytesV2(proposalID,
-  artifactHash, approverFpr, nonce, role string)` under tag
-  `netherchat/artifact-approval/v2` (Q3). Leave v1 untouched.
-- `protocol/artifact_signing_test.go` — add `TestArtifactApprovalSigningBytesV2Vector`
-  (frozen + re-derived) and `TestArtifactApprovalV2DiffersFromV1` (I8).
-- `tui/record/sealed.go` — add `ApprovalProof.Role` (`omitempty`); per-proof dispatch
-  in `verifyArtifactApprovals` (Q3); add `VerifyResult.ArtifactApproverRoles` +
-  `VerifiedApprover` + `VerifiedArtifactApproverRoles` accessor (Q4); apply existing
-  exclusion/distinctness to the combined set (I10).
-- `tui/record/sealer.go` — add a role-aware approval method (e.g.
-  `AddArtifactApprovalV2(proposalID, role, pub, sig)`) and a `SigningBytes`-style
-  exposure of the v2 preimage (mirroring `EndorsementSigningBytes`) so an ssh-agent
-  caller need not import `protocol`. Leave `AddArtifactApproval` (v1) untouched.
-- `tui/report/report.go` — role-aware `approverDisplay` (Q4), fallback to roleless.
-- `sealedrecord/sealedrecord.go` — **re-export** `VerifiedApprover` and
-  `VerifiedArtifactApproverRoles` (I6 — surface guard breaks the build otherwise).
-- Tests: extend `tui/record/artifact_proof_test.go` with a role-typed happy path,
-  a v1+v2 mixed-bag record, a v2 forged-role-attribution fail-closed, and a
-  **byte-identical v1-only** regression (re-assert I2 with the new field present in
-  the struct but `omitempty`-absent on v1 proofs).
+### 6.0 Intent
 
-**Backward-compat (must re-verify I1, I2, I4, I8, I9, I10):** v1 proofs and old
-records verify byte-identically; new domain tag isolates v2; role is opaque.
+An approver may sign an artifact approval **with a declared, opaque role** (e.g.
+`qa`, `technical`, `system-owner`) under a new domain tag
+`netherchat/artifact-approval/v2`. The verifier reconstructs the role-bearing
+preimage, and `Verify` surfaces, per proposal, the set of **(fingerprint, role)**
+pairs that cryptographically verified — alongside the existing role-agnostic
+`ArtifactApprovers` set, which is **left exactly as it is**. v1 proofs and pre-v2
+records remain byte-identical.
 
-**What Pass B is NOT:** no consumer code, no policy/threshold, no name/signedAt/meaning
-in the preimage, no change to `ArtifactApprovers`' existing shape, no `go.mod`/tag
-edits inside the pass (tag `v1.10.0` is the discrete step after).
+### 6.1 The two design forks, resolved (analysis + recommendation)
+
+These were the open questions; both are recommended here for sign-off. Everything
+else in §6 is settled by the decisions in the task brief (#1 layout, #4 opacity, #5
+test placement/style, #6 `omitempty` last field, #7 Sealer ergonomics).
+
+#### Fork #2 — version discriminator: content-gate on `Role != ""` vs. explicit field
+
+**Recommendation: content-gate on `Role != ""`** (no explicit version field).
+
+| Criterion | Content-gate (`Role != ""`) | Explicit field (e.g. `Ver int`) |
+| --- | --- | --- |
+| v1 byte-identity | **Cleanest:** one `omitempty` field, **zero** populated for v1 → v1 JSON unchanged. | Two new fields (`Ver`+`Role`), both must be `omitempty`/zero on v1; more to keep byte-identical. |
+| Verifier dispatch | One branch at the single dispatch point: `if p.Role != "" { v2 } else { v1 }`. | `switch p.Ver` **plus** a cross-field consistency rule (reject `Ver=2,Role==""` and `Ver=0,Role!=""`) — extra fail-closed surface. |
+| House idiom | **Matches** `Entry.extended()` (`record.go:117-119`) and the endorsement dispatch (`sealed.go:301-304`): content-gated, no version int. | New idiom for this codebase. |
+| Auditor reading raw JSON | A proof either shows `"role":"qa"` (v2) or has no `role` key (v1) — the key's presence *is* the version. | `"ver":2,"role":"qa"` is marginally more self-declaring, but the redundancy invites "why both?" |
+| Tamper safety | All directions fail closed: relabel/strip/add a role and the reconstructed preimage no longer matches the signature (v1 and v2 preimages differ by tag **and** trailing `field(role)`). | Same crypto, but the redundant `Ver` can disagree with `Role`, so it adds a consistency check that must itself be correct. |
+
+**On "empty-role v2 is unrepresentable":** this is **not a loss** for role-typed
+quorum. A role is, by definition (decision #1, SoD use case), a meaningful non-empty
+function name. An approval whose role is the empty string carries **no** segregation
+information that a v1 roleless approval does not already express — so forbidding it
+removes a degenerate, redundant state rather than a useful one. Content-gating turns
+"a v2 proof's role must be non-empty" into a structural invariant for free.
+
+#### Fork #3 — `VerifyResult` role surface: shape and dedup key
+
+**Recommendation: a parallel, `omitempty` map of (fingerprint, role) pairs, deduped
+by the PAIR.** Exact Go type:
+
+```go
+// VerifiedApprover is one cryptographically-verified role-typed approval: the
+// approver's fingerprint and the opaque role they signed with. (Library attaches no
+// meaning to Role; the consumer owns the vocabulary — decision #4.)
+type VerifiedApprover struct {
+    Fingerprint string `json:"fingerprint"`
+    Role        string `json:"role"`
+}
+
+// On VerifyResult, additive and omitempty (absent on records with no v2 proofs):
+ArtifactApproverRoles map[string][]VerifiedApprover `json:"artifact_approver_roles,omitempty"`
+```
+
+- **Dedup by (fpr, role), not by fpr.** Tie to the distinctness decision (configurable,
+  default distinct, relaxable so one authorized person may fill multiple roles when
+  relaxed): the consumer (Pass C) must be able to ask *both* "is required role R
+  covered by an authorized fpr?" and "are the fprs covering the required roles
+  distinct from each other?". If the same person legitimately signs as **two** roles
+  (Alice as `qa` **and** as `technical`), only **per-(fpr,role)** preserves both pairs;
+  **per-fpr would collapse them and destroy information the consumer cannot recover**,
+  pre-deciding the distinctness question the library is supposed to leave open. A
+  duplicate *pair* (Alice signs `qa` twice) still collapses to one — that is real
+  de-duplication, not information loss.
+- **Roleless (v1) approvers do NOT appear in `ArtifactApproverRoles`** (read's
+  recommendation, confirmed). They have no signed role; surfacing them with `Role:""`
+  would pollute the role map and force the consumer to filter empties. They remain in
+  `ArtifactApprovers` only.
+- **A v2 approver appears in BOTH maps** (deliberate): its fingerprint joins the
+  role-agnostic `ArtifactApprovers` distinct set **and** its pair joins
+  `ArtifactApproverRoles`. This keeps CipherSigil's existing **count-mode**
+  (`ArtifactRecordIsTwoPerson`/`VerifiedArtifactApprovers`) counting role-typed
+  approvers too, so Pass C can add role-mode *beside* count-mode without changing
+  count-mode's results. There is no existing record with v2 proofs, so no prior
+  `ArtifactApprovers` content changes.
+- **Accessor** (nil-safe, mirrors `VerifiedArtifactApprovers`):
+  `VerifiedArtifactApproverRoles(res *VerifyResult, proposalID string) []VerifiedApprover`.
+
+### 6.2 v2 preimage spec (exact bytes)
+
+New function in `protocol/artifact_signing.go` (same file as v1, `…V2` suffix — house
+convention per `action_signing.go`):
+
+```
+func ArtifactApprovalSigningBytesV2(proposalID, artifactHash, approverFpr, nonce, role string) []byte
+
+Layout (artifact-approval v2):
+
+    field("netherchat/artifact-approval/v2")
+      || field(proposal_id) || field(artifact_hash) || field(approver_fpr) || field(nonce)
+      || field(role)
+
+where field(b) = uint64-big-endian(len(b)) || b.   // role is length-prefixed like every other field
+```
+
+The four v1 fields are emitted **verbatim and in the same order**; `field(role)` is
+appended **last** (decision #1). New tag only; v1 (`…/v1`) function untouched.
+
+**Frozen byte-vector (self-checked, not asserted).** Inputs
+`ArtifactApprovalSigningBytesV2("a3f9", "deadbeef", "SHA256:abc", "nonce0", "qa")`.
+The four middle fields are byte-for-byte the **already-verified** fragments from the
+Pass A v1 vector; only the tag and the new `role` field are new, and both were
+self-checked with `xxd`:
+
+- tag `"netherchat/artifact-approval/v2"` → length 31 (`0x1f`); hex
+  `6e6574686572636861742f61727469666163742d617070726f76616c2f7632`
+  (identical to the v1 tag except the final byte `31`→`32`, i.e. `v1`→`v2` — confirmed
+  via `printf … | xxd -p`).
+- role `"qa"` → length 2; hex `7161` (confirmed via `xxd`).
+
+Full expected preimage (the frozen `const want` for the new test):
+
+```
+000000000000001f 6e6574686572636861742f61727469666163742d617070726f76616c2f7632  field("netherchat/artifact-approval/v2")
+0000000000000004 61336639                                                          field("a3f9")
+0000000000000008 6465616462656566                                                  field("deadbeef")
+000000000000000a 5348413235363a616263                                              field("SHA256:abc")
+0000000000000006 6e6f6e636530                                                      field("nonce0")
+0000000000000002 7161                                                              field("qa")
+```
+
+The test's `const want` MUST be written as the `+`-joined per-field hex fragments
+**exactly as the table above lists them** (Pass A `artifact_signing_test.go` style:
+one `"len" + "bytes"` pair per line with a `// field(...)` comment), NOT as one
+monolithic string — each fragment stays independently legible and the four middle
+pairs are copy-verifiable against the Pass A v1 vector. The test MUST **also** include
+an independent `refField`/`cat` re-derivation (decision #5) asserting equality with
+both the const and the production output, so a field reorder is caught even if the
+const were edited to match a drifted function.
+
+### 6.3 Proof model & verifier dispatch
+
+**Struct change** (`tui/record/sealed.go`, current `ApprovalProof` at lines 67-71) —
+append one field, decision #6:
+
+```go
+type ApprovalProof struct {
+    ApproverFpr string `json:"approver_fpr"`
+    ApproverKey string `json:"approver_key"`
+    Sig         string `json:"sig"`
+    Role        string `json:"role,omitempty"` // NEW: opaque signed role; absent ⇒ v1 proof (content-gate, fork #2)
+}
+```
+
+**Coexistence:** a single `ArtifactApprovals[pid]` bag may hold a mix of v1 (no role)
+and v2 (role) proofs. Dispatch is **per proof**, content-gated on `p.Role`.
+
+**Where the dispatch slots in.** The current loop in `verifyArtifactApprovals()`
+(`tui/record/sealed.go:373-391`):
+
+```go
+distinct := make(map[string]bool)
+for _, p := range proofs {
+    key, err := base64.StdEncoding.DecodeString(p.ApproverKey)
+    if err != nil || len(key) != ed25519.PublicKeySize { return nil, … }
+    if crypto.Fingerprint(ed25519.PublicKey(key)) != p.ApproverFpr { return nil, … } // key→fpr binding (I7/I9)
+    sig, err := base64.StdEncoding.DecodeString(p.Sig)
+    if err != nil { return nil, … }
+    preimage := protocol.ArtifactApprovalSigningBytes(pid, m.ArtifactHash, p.ApproverFpr, m.Nonce)   // ← single dispatch point
+    if !ed25519.Verify(ed25519.PublicKey(key), preimage, sig) { return nil, … }
+    distinct[p.ApproverFpr] = true
+}
+```
+
+The **only** change to the loop body is the one `preimage :=` line, which becomes a
+content-gated branch (shape of the change; not committed code):
+
+```go
+    var preimage []byte
+    if p.Role != "" {
+        preimage = protocol.ArtifactApprovalSigningBytesV2(pid, m.ArtifactHash, p.ApproverFpr, m.Nonce, p.Role)
+    } else {
+        preimage = protocol.ArtifactApprovalSigningBytes(pid, m.ArtifactHash, p.ApproverFpr, m.Nonce)
+    }
+    if !ed25519.Verify(ed25519.PublicKey(key), preimage, sig) { return nil, … }
+    distinct[p.ApproverFpr] = true
+    if p.Role != "" { rolePairs = append(rolePairs, VerifiedApprover{p.ApproverFpr, p.Role}) } // collect v2 pairs
+```
+
+`rolePairs` is accumulated per proposal, then — **after** the same author/proposer
+exclusion the roleless set already applies (`sealed.go:394-400`) — deduped by
+(fpr, role) and sorted into `ArtifactApproverRoles[pid]`. `verifyArtifactApprovals()`
+returns **two** maps now (the existing `map[string][]string` and the new
+`map[string][]VerifiedApprover`); `Verify` populates both result fields. Everything
+else in the function (artifact-entry indexing, nonce requirement, key→fpr binding,
+orphan/duplicate-proposal rejection) is **unchanged**.
+
+### 6.4 Surfacing & rendering
+
+- `VerifyResult` gains `ArtifactApproverRoles` (type/shape per §6.1, fork #3);
+  `ArtifactApprovers` (`sealed.go:203`) is **untouched** in name, type, JSON tag, and
+  population.
+- `Verify` (`sealed.go:321-330`) populates `res.ArtifactApproverRoles` from the second
+  returned map, guarded by `len(...) > 0` exactly like `ArtifactApprovers`, so it stays
+  absent (omitempty) on records with no v2 proofs.
+- **Report** (`tui/report/report.go`, `approverDisplay` at lines 82-110): prefer the
+  role-attributed display when `VerifiedArtifactApproverRoles(res, pid)` is non-empty —
+  render each as `"<name> — <role>"` (full report appends the short fpr, matching the
+  existing `withFpr` path), falling back to the current roleless rendering when a
+  proposal has only v1 proofs. Presentational only; no policy, no verdict.
+
+### 6.5 Sealer + preimage-exposer API (decision #7)
+
+Additive methods on `Sealer` (`tui/record/sealer.go`); v1 `AddArtifactApproval`
+(lines 171-196) left untouched:
+
+```go
+// Exposer: returns the exact v2 preimage to sign, WITHOUT importing protocol.
+// Mirrors EndorsementSigningBytes (sealer.go:102-104) but — unlike it — must look the
+// artifact entry up (artifactMetaByProposal) for the signed artifact_hash + nonce, so
+// it returns an error when there is no matching proposal / no nonce.
+func (s *Sealer) ArtifactApprovalSigningBytesV2(proposalID, role string, pub ed25519.PublicKey) ([]byte, error)
+
+// Records a verified role-typed approval. Mirrors AddArtifactApproval: reconstructs the
+// v2 preimage from the entry's signed body + role, verifies sig, then appends
+// ApprovalProof{ApproverFpr, ApproverKey, Sig, Role: role}. Returns the approver fpr.
+func (s *Sealer) AddArtifactApprovalV2(proposalID, role string, pub ed25519.PublicKey, sig []byte) (string, error)
+```
+
+(The `([]byte, error)` return on the exposer is a deliberate, documented divergence
+from `EndorsementSigningBytes`, which needs no lookup and cannot fail.)
+
+### 6.6 Façade re-exports (`sealedrecord/sealedrecord.go`) — I6
+
+The surface guard (`TestFacadeReexportsFullPublicSurface`) scans `tui/record`,
+`tui/report`, `tui/attest` for **top-level** exported decls and fails the build if any
+is not aliased. Exactly **two** new symbols are top-level and therefore MANDATORY to
+add:
+
+| New symbol | Kind | Façade action |
+| --- | --- | --- |
+| `VerifiedApprover` | type (in `tui/record`) | add `VerifiedApprover = record.VerifiedApprover` to the `type (…)` block (`sealedrecord.go:48-60`) |
+| `VerifiedArtifactApproverRoles` | func (in `tui/record`) | add `VerifiedArtifactApproverRoles = record.VerifiedArtifactApproverRoles` to the `var (…)` block (`sealedrecord.go:85-99`) |
+
+Everything else rides along on **existing** aliases and needs **no** re-export:
+`ApprovalProof.Role` (field on aliased `ApprovalProof`),
+`VerifyResult.ArtifactApproverRoles` (field on aliased `VerifyResult`),
+`Sealer.AddArtifactApprovalV2` / `Sealer.ArtifactApprovalSigningBytesV2` (methods on
+aliased `Sealer`). **`protocol.ArtifactApprovalSigningBytesV2` is NOT re-exported** —
+the surface guard does not scan `protocol`, the v1 function is likewise not in the
+façade, and the Sealer exposer (§6.5) gives external signers the preimage without
+importing `protocol`. (If we later choose to expose it on the façade for symmetry,
+that is optional, not guard-mandated.)
+
+### 6.7 Invariant preservation proof
+
+| Inv | Property | How Pass B preserves it | Proof (test) |
+| --- | --- | --- | --- |
+| **I1** | old v1 records verify VALID | Old records have no `artifact_approvals`; the `if len(r.ArtifactApprovals) > 0` gate (`sealed.go:321`) skips the whole block. No change to the chain/seal path. | `TestVerifyOldFormatRecordStillValid` |
+| **I2** | old artifact records byte-identical | Old records carry no proofs; nothing in `ArtifactMeta` changes (role lives on the **proof**, not the meta). | `TestOldArtifactRecordByteIdenticalNotTwoPerson` |
+| **I2′** | **v1-proof** records byte-identical | `Role` is `omitempty` and **never set** by v1 `AddArtifactApproval`, so a v1 proof serializes with no `role` key, byte-for-byte as before. | **NEW** `TestV1ArtifactProofByteIdenticalWithRoleField` (the read found this property currently **unpinned** — only the no-proofs case was tested) |
+| **I4** | v2 follows content-gated new-tag precedent | New tag `…/v2`; layout is v1 fields + `field(role)`; dispatch mirrors `Entry.extended()`. | reuse-of-precedent; covered by I8 test |
+| **I5/forward-incompat** | a v2 proof makes a **pre-v2** verifier reject the **whole record** | `Parse` uses `DisallowUnknownFields()` (`sealed.go:168`), which applies **recursively** — an old `ApprovalProof` without a `role` field rejects any proof carrying `"role"`. Record-level reject, not field-ignore. | `TestRoundTripDisallowUnknownFields` (top-level only) **+ NEW** `TestParseRejectsUnknownFieldInProof` (the read found **no test asserts the nested case**; this pins it by injecting a bogus key inside a proof and asserting `Parse` errors) |
+| **I6** | façade mirrors full surface | Add the two aliases in §6.6. | `TestFacadeReexportsFullPublicSurface` (fails build if missing) |
+| **I7** | SSH-wire fingerprint dialect intact | v2 verify still binds key→fpr via `crypto.Fingerprint` (`sealed.go:379`); role never touches fingerprinting; no new dialect. | `TestSSHKeyFileFingerprintMatchesSSH` + the in-loop key→fpr check |
+| **I8** | domain-tag separation | `netherchat/artifact-approval/v2` is unique (grep: appears only in the plan doc today); v2 preimage ≠ v1 even structurally. | **NEW** `TestArtifactApprovalV2DiffersFromV1` (mirrors `TestRecordV2DiffersFromV1`): assert `v1(p,h,f,n) != v2(p,h,f,n,"qa")` |
+| **I9** | fail-closed on bad proofs | The single dispatch only changes which preimage is reconstructed; a wrong/forged/relabeled v2 proof fails `ed25519.Verify` exactly as v1 does; key→fpr binding unchanged. | **NEW** fail-closed v2 tests (§6.8) |
+| **I10** | author/proposer exclusion + distinctness | Roleless set keeps fpr-string exclusion (`sealed.go:396`) unchanged; the role map applies the **same** exclusion before emitting pairs, and dedups by (fpr, role). | extend `TestArtifactProofAuthorAndProposerExcluded` for a v2 pair; **NEW** dedup-by-pair test |
+
+### 6.8 New tests (build-ready list)
+
+- **`protocol/v2_signing_test.go`** (house location for v2 vectors, decision #5):
+  `TestArtifactApprovalSigningBytesV2Vector` — frozen `const want` (§6.2) **and** a
+  `refField`/`cat` re-derivation cross-check; `TestArtifactApprovalV2DiffersFromV1`
+  (I8). *(Correction vs. the earlier outline, which named `artifact_signing_test.go`;
+  v2 vectors live in `v2_signing_test.go` per house convention, but we keep the
+  frozen-hex anchor that the other v2 vectors omit.)*
+- **`tui/record/artifact_proof_test.go`**: role-typed happy path (one v2 proof →
+  surfaces one `(fpr, role)` pair, fpr also in `ArtifactApprovers`); v1↔v2 mixed bag in
+  one proposal (both verify; only the v2 one appears in the role map); same-fpr-two-roles
+  (both pairs surface — pins per-(fpr,role) dedup); duplicate identical pair collapses to
+  one; v2 author/proposer excluded from the role map; **I2′** byte-identical v1-proof
+  record; fail-closed: v2 proof whose `Role` was tampered after signing, v2 proof signed
+  over the **v1** preimage (role added to JSON), v1 proof with a role added (dispatch flips,
+  verify fails), v2 key→fpr mismatch.
+- **`tui/record/sealed_test.go`**: `TestParseRejectsUnknownFieldInProof` (nested
+  `DisallowUnknownFields`).
+
+### 6.9 Seam confirmation & order of operations
+
+**CipherSigil compiles unmodified against post-Pass-B** because Pass B is additive and
+touches no symbol the consumer references:
+- `ArtifactApprovers`, `VerifiedArtifactApprovers`, `VerifiedArtifactApprovals`,
+  `ArtifactOf`, `KindArtifact`, `ArtifactMeta.ProposalID`, `AddArtifactApproval`,
+  `Verify`, `Parse` — **all unchanged in signature and shape**.
+- New struct fields are additive; CipherSigil never constructs `sealedrecord.ApprovalProof{}`
+  or `sealedrecord.VerifyResult{}` (verified by grep — its only `VerifyResult{…}` literals
+  are its **own** unrelated types), and builds proofs via `Sealer.AddArtifactApproval`, so
+  field additions are transparent.
+- The new role surface is simply unused by the consumer until Pass C.
+
+**Order of operations (seam stays green at every commit):**
+1. Land Pass B in Netherchat (additive only). Run the full Netherchat suite incl.
+   I1/I2/I2′/I5/I6/I8/I9/I10, `gofmt`, `vet`, boundary guard.
+2. **Verify `cd ../ciphersigil && go build ./...` (and `./internal/...`) is GREEN** —
+   the consumer is unmodified and must still build against the replace-linked tree.
+3. Tag **`v1.10.0`** with the forward-incompat release note (records carrying
+   `artifact-approval/v2` proofs fail to parse on verifiers < v1.10.0 — §4 Q6).
+4. Pass C (CipherSigil) consumes the role surface and bumps `require` → `v1.10.0`.
+
+### 6.10 What Pass B is NOT adding (anti-bloat)
+
+- **No consumer policy / threshold / quorum logic** — count- and role-mode enforcement
+  is Pass C.
+- **No roster changes** — `Roster map[string]string` and the `RosterMember{Name,Roles}`
+  change are Pass C; Pass B does not touch CipherSigil at all.
+- **No required-role config** and **no distinctness enforcement** — the library
+  surfaces all verified `(fpr, role)` pairs faithfully; *deciding* which roles are
+  required and whether they must be distinct people is Pass C.
+- **No `name`, `signed_at`, or `meaning`** in the v2 preimage (decision #1) — role is
+  the only new field; the approval act stays implicit ("approved"), names stay
+  roster-resolved by the consumer, timestamps stay in `ArtifactMeta`.
+- **No new on-disk record version label** — an approvals-bearing record is already
+  `FormatVersionV2` (`recordVersion`, `sealed.go:148-158`); the version gate keeps
+  accepting it.
+- **No `go.mod` / tag edits inside the pass** — `v1.10.0` is the discrete step after.
 
 ## 7. Pass C outline (NOT YET BUILT — CipherSigil consumer policy + housekeeping)
 
