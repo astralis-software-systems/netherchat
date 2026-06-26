@@ -143,7 +143,7 @@ true. Adapters are thin typed sugar over the NC-1 schema — zero core coupling.
 Deliverables:
 - **IAS scanner adapter** — emits the generic schema; documented config + example,
   not a code dependency. (Keeps your IP untangled from the scanner.)
-- **Scrubadubber adapter** — a critical egress signal POSTs the generic schema and
+- **AI-egress monitor adapter** — a critical egress signal POSTs the generic schema and
   routes to a war room. (Same arms-length pattern.)
 - **One SIEM adapter (Sentinel or Splunk)** — a correlation alert opens a room.
 - **The end-to-end loop:** detection → auto-spawned war room → human coordination
@@ -156,7 +156,7 @@ Acceptance criteria:
 - No adapter carries raw content across the boundary (tested per adapter).
 
 > **Demo-readiness milestone:** after NC-2, the lab demo's Act 3 is live. This is
-> the natural point to run the Tim session (see `tim-lab-demo-runbook.md`).
+> the natural point to run the lab demo session (see the lab demo runbook).
 
 ---
 

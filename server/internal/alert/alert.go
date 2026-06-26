@@ -1,7 +1,7 @@
 // Package alert implements the generic signed ingress socket (NC-1): the schema,
 // per-source authentication, and rate/spawn hardening for inbound metadata alerts
 // that POST /api/v1/alert accepts. It is the keystone every inbound connector
-// rides — the scanner, Scrubadubber, and SIEMs (NC-2) are thin adapters that emit
+// rides — the scanner, an AI-egress monitor, and SIEMs (NC-2) are thin adapters that emit
 // this exact shape; no app-specific code lives here.
 //
 // Everything an alert carries is METADATA ONLY (the boundary law): a source, a

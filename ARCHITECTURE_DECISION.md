@@ -354,7 +354,7 @@ YAML footguns).
 - **Release (R7):** **GoReleaser** produces the GitHub-release binary matrix
   (darwin amd64/arm64, linux amd64/arm64, windows amd64), the Homebrew formula,
   and the `salkreiner/netherchat` Docker image in one config — a direct match for
-  R7 and the Scrubadubber installer benchmark.
+  R7 and the reference installer benchmark.
 
 ---
 
@@ -413,7 +413,7 @@ netherchat/
 │   └── src/
 │
 ├── installer/
-│   ├── install.sh                  # mirrors Scrubadubber UX (checkmarks, OS detect, no-sudo, clean uninstall)
+│   ├── install.sh                  # mirrors a reference installer UX (checkmarks, OS detect, no-sudo, clean uninstall)
 │   └── install.ps1                 # Windows/PowerShell
 │
 └── docs/

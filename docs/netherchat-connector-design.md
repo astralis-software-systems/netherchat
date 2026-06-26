@@ -43,9 +43,9 @@ action), and it's what stops the universal socket from becoming an abuse vector.
 
 ## Architecture — one generic socket, typed adapters on top
 
-No connector-specific code lives in the core. The scanner and Scrubadubber are
+No connector-specific code lives in the core. The scanner and the egress monitor are
 **not** special — they are two clients of a generic mechanism. That's what keeps
-your IP untangled from Tim's scanner and from your own Scrubadubber.
+your IP untangled from a third-party scanner and from your own egress monitor.
 
 - **Ingress (inbound):** an authenticated, schema-validated, rate-limited alert
   endpoint per room. A POST that matches a `[[route]]` rule spawns a break-glass
@@ -87,7 +87,7 @@ compliance-fit note. **Foundation + Tier 1 is the MVP**; the rest are expansions
 
 - **IAS AWS scanner** — pushes a cloud/infra finding; severity routes it to an
   auto-spawned, sealed-record war room. *Fit: finding metadata only.*
-- **Scrubadubber** — pushes a critical AI-egress signal; routes to a war room
+- **AI-egress monitor** — pushes a critical AI-egress signal; routes to a war room
   for coordinated response. *Fit: the signal, never the data.*
 - **SIEM (Sentinel / Splunk / Elastic)** — a correlation rule opens a war room
   with the right responders. *Fit: alert metadata, not log content.*
@@ -151,7 +151,7 @@ approve, seal, or execute. All rejections logged as metadata only.
 ## Next step
 
 Confirm or trim the connector set above. The MVP I'd recommend is **Foundation +
-Tier 1** (generic webhook, scanner, Scrubadubber, one SIEM, Teams, one ITSM) —
+Tier 1** (generic webhook, scanner, AI-egress monitor, one SIEM, Teams, one ITSM) —
 that alone makes the note's "any alert source opens a war room" claim true and
 demos the full detect → respond → attest loop. Once you lock the set, the
 roadmap sequences the generic socket first, then the typed adapters, then the
