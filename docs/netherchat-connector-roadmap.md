@@ -141,7 +141,7 @@ Acceptance criteria:
 true. Adapters are thin typed sugar over the NC-1 schema — zero core coupling.*
 
 Deliverables:
-- **IAS scanner adapter** — emits the generic schema; documented config + example,
+- **Third-party scanner adapter** — emits the generic schema; documented config + example,
   not a code dependency. (Keeps your IP untangled from the scanner.)
 - **AI-egress monitor adapter** — a critical egress signal POSTs the generic schema and
   routes to a war room. (Same arms-length pattern.)

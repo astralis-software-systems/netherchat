@@ -85,7 +85,7 @@ compliance-fit note. **Foundation + Tier 1 is the MVP**; the rest are expansions
 
 ### Tier 1 — inbound triggers (detection → war room)
 
-- **IAS AWS scanner** — pushes a cloud/infra finding; severity routes it to an
+- **Third-party AWS scanner** — pushes a cloud/infra finding; severity routes it to an
   auto-spawned, sealed-record war room. *Fit: finding metadata only.*
 - **AI-egress monitor** — pushes a critical AI-egress signal; routes to a war room
   for coordinated response. *Fit: the signal, never the data.*
