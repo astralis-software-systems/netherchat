@@ -24,6 +24,7 @@ type Config struct {
 	Rooms       map[string]RoomConfig   `toml:"rooms"`
 	Routes      []RouteConfig           `toml:"route"`
 	Sources     []SourceConfig          `toml:"source"`
+	Ingest      IngestConfig            `toml:"ingest"`
 	Actions     map[string]ActionPolicy `toml:"action"`
 	Trust       []TrustEntry            `toml:"trust"`
 	Direct      DirectConfig            `toml:"direct"`
@@ -93,6 +94,18 @@ type SourceConfig struct {
 	HMACSecret    string `toml:"hmac_secret"`     // HMAC-SHA256 signature auth (the alert's `signature` field)
 	RatePerMinute int    `toml:"rate_per_minute"` // inbound alert rate cap per source (0 = default)
 	SpawnPerHour  int    `toml:"spawn_per_hour"`  // war-room spawn cap per source (0 = default)
+
+	// Freshness (replay/timestamp-window) overrides for the signed-alert socket
+	// (NC-1). The window validates the already-signed `ts` an HMAC source carries;
+	// it is inert for a token-only source (whose `ts` is unsigned, attacker-
+	// controllable). RequireFresh escalates the always-on enforce-if-present
+	// baseline to strict — a missing (ts==0) or out-of-window timestamp is rejected.
+	// Setting require_fresh without an hmac_secret is a fail-closed config error.
+	// The two override durations follow the `0 = use the [ingest.freshness] global`
+	// precedent.
+	RequireFresh        bool     `toml:"require_fresh"`
+	FreshnessWindow     Duration `toml:"freshness_window"`      // past tolerance (0 = global)
+	FreshnessFutureSkew Duration `toml:"freshness_future_skew"` // future skew (0 = global)
 }
 
 // Source returns the registered alert source with this name (NC-1), if any.
@@ -103,6 +116,35 @@ func (c Config) Source(name string) (SourceConfig, bool) {
 		}
 	}
 	return SourceConfig{}, false
+}
+
+// Default freshness-window parameters for the signed-alert ingest socket (NC-1).
+// The 5m past tolerance is deliberately anchored to the ~300s artifact-proposal
+// expiry so the product has a single, easy-to-reason-about freshness horizon; the
+// 60s future-skew tolerance is standard NTP slack (and matches the per-minute rate
+// granularity). Asymmetric on purpose: legitimate past latency (retries/queues)
+// routinely exceeds legitimate future drift.
+const (
+	DefaultFreshnessWindow     = 5 * time.Minute
+	DefaultFreshnessFutureSkew = 60 * time.Second
+)
+
+// IngestConfig groups server-side ingress hardening that is not per-source. Today
+// it holds only the freshness (timestamp-window) defaults for the signed-alert
+// socket; it never involves message content (the relay stays blind).
+type IngestConfig struct {
+	Freshness FreshnessConfig `toml:"freshness"`
+}
+
+// FreshnessConfig is the global default timestamp-acceptance window for signed
+// alerts (NC-1). It validates the `ts` that is already inside an HMAC source's
+// signed preimage (protocol.AlertSigningBytes) — so a replayed alert carries an
+// old, signed `ts` and is rejected. Per-source overrides on [[source]]
+// (freshness_window / freshness_future_skew) take precedence; a non-positive value
+// at either level falls back to the built-in default above.
+type FreshnessConfig struct {
+	Window     Duration `toml:"window"`      // max age of a signed ts (past tolerance, default 5m)
+	FutureSkew Duration `toml:"future_skew"` // max lead of a signed ts over server time (default 60s)
 }
 
 type ServerConfig struct {
@@ -301,6 +343,10 @@ func Default() Config {
 			MaxFileBytes:           protocol.DefaultMaxFileBytes,
 			MaxConcurrentTransfers: protocol.DefaultMaxConcurrentTransfers,
 		},
+		Ingest: IngestConfig{Freshness: FreshnessConfig{
+			Window:     Duration(DefaultFreshnessWindow),
+			FutureSkew: Duration(DefaultFreshnessFutureSkew),
+		}},
 		Persistence: PersistenceConfig{Enabled: false, History: 100},
 		Rooms:       map[string]RoomConfig{},
 	}
@@ -329,6 +375,9 @@ func Parse(b []byte) (Config, error) {
 		return cfg, err
 	}
 	cfg.normalize()
+	if err := cfg.validate(); err != nil {
+		return cfg, err
+	}
 	return cfg, nil
 }
 
@@ -352,9 +401,32 @@ func (c *Config) normalize() {
 	if (c.Persistence.Enabled || c.AnyDurableRoom()) && c.Persistence.History <= 0 {
 		c.Persistence.History = 100
 	}
+	// Repair the global freshness window the same way the limits above are repaired:
+	// a non-positive value (unset, or nonsensical) reverts to the built-in default.
+	if c.Ingest.Freshness.Window.Std() <= 0 {
+		c.Ingest.Freshness.Window = Duration(DefaultFreshnessWindow)
+	}
+	if c.Ingest.Freshness.FutureSkew.Std() <= 0 {
+		c.Ingest.Freshness.FutureSkew = Duration(DefaultFreshnessFutureSkew)
+	}
 	if c.Rooms == nil {
 		c.Rooms = map[string]RoomConfig{}
 	}
+}
+
+// validate enforces fail-closed invariants that normalize() cannot repair by
+// defaulting — configuration mistakes that must fail the operator's plan
+// (Load, and POST /api/v1/config/validate) rather than run as security theater.
+func (c *Config) validate() error {
+	for _, s := range c.Sources {
+		// A freshness mandate over an UNSIGNED timestamp is meaningless: a token-only
+		// source's `ts` is attacker-controllable, so require_fresh needs an
+		// hmac_secret to bind the timestamp into a signature.
+		if s.RequireFresh && s.HMACSecret == "" {
+			return fmt.Errorf("source %q: require_fresh needs hmac_secret (its timestamp is otherwise unsigned)", s.Name)
+		}
+	}
+	return nil
 }
 
 // Room returns the policy for a room (the zero value — fully open — if the room

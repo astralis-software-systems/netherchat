@@ -286,6 +286,19 @@ func (a *API) alert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Freshness gate (NC-1): the ts is inside the HMAC preimage that just verified, so
+	// a replayed alert carries an old, signed ts and is rejected here — after auth (we
+	// only trust a covered ts) and before route.Match (so EVERY replay is visible, not
+	// just route-matching ones). Inert for token-only sources; one-time WARN when an
+	// HMAC source sends no timestamp under the baseline.
+	if ok, reason, warn := a.guards.AllowFresh(src, al.TS, a.cfg.Ingest.Freshness); !ok {
+		a.log.Warn("alert rejected: "+reason, "source", al.Source, "ts", al.TS, "now", time.Now().Unix())
+		http.Error(w, "alert rejected: "+reason, http.StatusBadRequest)
+		return
+	} else if warn != "" {
+		a.log.Warn(warn, "source", al.Source)
+	}
+
 	// Route on metadata only. No match is a success (the alert was authenticated and
 	// accepted) that simply spawns nothing.
 	idx, rule, matched := route.Match(a.cfg.Routes, al.ToMatchMap())

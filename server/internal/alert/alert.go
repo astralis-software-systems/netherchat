@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/server/config"
@@ -169,14 +170,22 @@ func verifyHMAC(secret string, a AlertV1) error {
 // and built lazily from each [[source]]'s configured limits (or the defaults). It
 // is concurrency-safe.
 type Guards struct {
-	mu    sync.Mutex
-	rate  map[string]*rate.Limiter
-	spawn map[string]*rate.Limiter
+	mu     sync.Mutex
+	rate   map[string]*rate.Limiter
+	spawn  map[string]*rate.Limiter
+	warned map[string]bool  // per-source: ts==0 "freshness inactive" logged once
+	now    func() time.Time // nil ⇒ time.Now (injectable in tests)
 }
 
-// NewGuards returns an empty guard set.
+// NewGuards returns an empty guard set. Its signature is intentionally arg-less:
+// the freshness fields are zero-value-safe (a nil warned-set is lazily built; a nil
+// clock defaults to time.Now), so no call site changes when freshness is added.
 func NewGuards() *Guards {
-	return &Guards{rate: map[string]*rate.Limiter{}, spawn: map[string]*rate.Limiter{}}
+	return &Guards{
+		rate:   map[string]*rate.Limiter{},
+		spawn:  map[string]*rate.Limiter{},
+		warned: map[string]bool{},
+	}
 }
 
 // AllowRequest reports whether another inbound alert from src is within its rate
@@ -203,6 +212,94 @@ func (g *Guards) AllowSpawn(src config.SourceConfig) bool {
 		per = defaultSpawnPerHour
 	}
 	return g.limiter(g.spawn, src.Name, float64(per)/3600.0, per).Allow()
+}
+
+// AllowFresh reports whether an alert's already-HMAC-verified timestamp ts (unix
+// seconds) is within the source's acceptance window — the replay/freshness gate
+// (NC-1). The ts rides inside the signed preimage (protocol.AlertSigningBytes), so
+// a replayed alert carries an old, signed ts that this gate rejects; an attacker can
+// neither alter it (breaks the HMAC) nor forge a fresh one (no secret).
+//
+// It is meaningful ONLY for HMAC sources: a token-only source's ts is unsigned
+// (attacker-controllable), so the window is inert there and AllowFresh returns
+// (true, "", "").
+//
+// Policy (enforce-if-present baseline + optional strict). For an HMAC source:
+//   - ts == 0  → inactive under the baseline: (true, "", warn), where warn is a
+//     one-time-per-source "freshness inactive" message the caller logs; REJECTED as
+//     (false, "missing timestamp", "") when src.RequireFresh.
+//   - ts older than the window          → (false, "stale timestamp", "").
+//   - ts further ahead than future skew → (false, "future timestamp", "").
+//   - otherwise                         → (true, "", "").
+//
+// def is the resolved global default ([ingest.freshness]); per-source overrides
+// (FreshnessWindow / FreshnessFutureSkew, 0 = use def) win, falling back to the
+// built-in config defaults if both are unset. The window/skew arithmetic is pure;
+// the only mutable state touched is the warned-set used to log a ts==0 source once.
+// A nil receiver allows everything.
+func (g *Guards) AllowFresh(src config.SourceConfig, ts int64, def config.FreshnessConfig) (ok bool, reason, warn string) {
+	if g == nil {
+		return true, "", ""
+	}
+	// Token-only sources: the ts is not in any signed preimage, so a window over it
+	// would be theater. Enforcement is gated on a configured HMAC secret.
+	if src.HMACSecret == "" {
+		return true, "", ""
+	}
+	if ts == 0 {
+		// enforce-if-present: no signed timestamp → pass under the baseline (but say
+		// so once), reject under the per-source strict mandate.
+		if src.RequireFresh {
+			return false, "missing timestamp", ""
+		}
+		return true, "", g.warnOnce(src.Name)
+	}
+	window := resolveDuration(src.FreshnessWindow, def.Window, config.DefaultFreshnessWindow)
+	skew := resolveDuration(src.FreshnessFutureSkew, def.FutureSkew, config.DefaultFreshnessFutureSkew)
+	age := g.clock()().Unix() - ts // >0 = ts is in the past, <0 = ts leads the clock
+	if age > int64(window/time.Second) {
+		return false, "stale timestamp", ""
+	}
+	if -age > int64(skew/time.Second) {
+		return false, "future timestamp", ""
+	}
+	return true, "", ""
+}
+
+// resolveDuration applies the "0 = use the next level down" override precedent: a
+// positive per-source override wins, else the (normalized) global default, else the
+// built-in fallback so the gate is never accidentally disabled.
+func resolveDuration(override, global config.Duration, builtin time.Duration) time.Duration {
+	if d := override.Std(); d > 0 {
+		return d
+	}
+	if d := global.Std(); d > 0 {
+		return d
+	}
+	return builtin
+}
+
+// warnOnce returns the "freshness inactive" warning the first time a ts==0 HMAC
+// source is seen this process, then "" — so the caller logs it exactly once.
+func (g *Guards) warnOnce(name string) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.warned == nil {
+		g.warned = map[string]bool{}
+	}
+	if g.warned[name] {
+		return ""
+	}
+	g.warned[name] = true
+	return "freshness inactive: source sends no timestamp"
+}
+
+// clock returns the time source: the injected now (tests) or time.Now.
+func (g *Guards) clock() func() time.Time {
+	if g.now != nil {
+		return g.now
+	}
+	return time.Now
 }
 
 // limiter lazily builds (and caches) the named limiter with the given refill rate
