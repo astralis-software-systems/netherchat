@@ -214,6 +214,63 @@ func (g *Guards) AllowSpawn(src config.SourceConfig) bool {
 	return g.limiter(g.spawn, src.Name, float64(per)/3600.0, per).Allow()
 }
 
+// tokenKey hashes a webhook token to a stable, non-secret limiter key. The raw token
+// never becomes a map key, a log field, or an error string — only this digest does,
+// so a memory dump of the limiter maps cannot recover the secret.
+func tokenKey(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// AllowWebhookUnauth reports whether another REJECTED webhook request (a non-webhook
+// room, or a failed/empty token) is within the global pre-auth ceiling — the coarse
+// Tier-1 guard for POST /webhook/{room}. It is a single GLOBAL bucket (fixed key
+// "wh-unauth") that callers must consult ONLY on the rejection paths: an
+// authenticated request never calls it, so a flood of bad tokens can never lock out
+// a legitimate token-holder. perMin is the configured unauth_rate_per_minute (a
+// non-positive value falls back to the built-in). A nil receiver allows everything.
+func (g *Guards) AllowWebhookUnauth(perMin int) bool {
+	if g == nil {
+		return true
+	}
+	if perMin <= 0 {
+		perMin = config.DefaultWebhookUnauthRatePerMinute
+	}
+	return g.limiter(g.rate, "wh-unauth", float64(perMin)/60.0, perMin).Allow()
+}
+
+// AllowWebhookRequest reports whether another AUTHENTICATED webhook POST for this
+// token is within its per-token rate cap (Tier 2). The token is hashed into the
+// bucket key ("wh-rate:"+sha256hex) and never stored raw. This guard is the only
+// cover for the route-non-matching hub.Broadcast flood, so callers consult it on
+// every authenticated request, before the body read. perMin is the effective
+// per-room rate (override or global default), resolved by the caller; a non-positive
+// value falls back to the built-in. A nil receiver allows everything.
+func (g *Guards) AllowWebhookRequest(token string, perMin int) bool {
+	if g == nil {
+		return true
+	}
+	if perMin <= 0 {
+		perMin = config.DefaultWebhookRatePerMinute
+	}
+	return g.limiter(g.rate, "wh-rate:"+tokenKey(token), float64(perMin)/60.0, perMin).Allow()
+}
+
+// AllowWebhookSpawn reports whether this token may spawn another war room within its
+// per-token spawn cap (Tier 2), keyed "wh-spawn:"+sha256hex. It bounds the
+// room-spawn/invite/reply_url vector and is consulted only on a route match. perHour
+// is the effective per-room spawn cap; a non-positive value falls back to the
+// built-in. A nil receiver allows everything.
+func (g *Guards) AllowWebhookSpawn(token string, perHour int) bool {
+	if g == nil {
+		return true
+	}
+	if perHour <= 0 {
+		perHour = config.DefaultWebhookSpawnPerHour
+	}
+	return g.limiter(g.spawn, "wh-spawn:"+tokenKey(token), float64(perHour)/3600.0, perHour).Allow()
+}
+
 // AllowFresh reports whether an alert's already-HMAC-verified timestamp ts (unix
 // seconds) is within the source's acceptance window — the replay/freshness gate
 // (NC-1). The ts rides inside the signed preimage (protocol.AlertSigningBytes), so

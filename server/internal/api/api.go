@@ -7,6 +7,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -87,6 +88,14 @@ func (a *API) webhook(w http.ResponseWriter, r *http.Request) {
 	room := r.PathValue("room")
 	policy := a.cfg.Room(room)
 	if !policy.Webhook {
+		// Pre-auth tier (Tier 1): the global ceiling is consulted ONLY on this
+		// rejection path — never on the success path — so a flood of rejected
+		// requests can never lock out a legitimate token-holder.
+		if !a.guards.AllowWebhookUnauth(a.cfg.WebhookUnauthRate()) {
+			a.log.Warn("webhook rejected: flood (pre-auth)", "room", room)
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
 		http.Error(w, "webhooks are not enabled for this room", http.StatusNotFound)
 		return
 	}
@@ -94,8 +103,26 @@ func (a *API) webhook(w http.ResponseWriter, r *http.Request) {
 	if token == "" {
 		token = r.URL.Query().Get("token")
 	}
-	if policy.WebhookToken == "" || token != policy.WebhookToken {
+	// Constant-time compare (matching the alert path); a room with no token configured
+	// rejects all. The pre-auth ceiling is consumed only here, on the failed-auth path.
+	if policy.WebhookToken == "" ||
+		subtle.ConstantTimeCompare([]byte(token), []byte(policy.WebhookToken)) != 1 {
+		if !a.guards.AllowWebhookUnauth(a.cfg.WebhookUnauthRate()) {
+			a.log.Warn("webhook rejected: flood (pre-auth)", "room", room)
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
 		http.Error(w, "invalid or missing webhook token", http.StatusUnauthorized)
+		return
+	}
+	// Authenticated past here — the pre-auth ceiling is never consulted again.
+
+	// Per-token rate guard (Tier 2), keyed on sha256(token), BEFORE the body read so
+	// it covers the route-non-matching hub.Broadcast flood and shields the 64 KiB read
+	// under an authenticated storm.
+	if !a.guards.AllowWebhookRequest(token, a.cfg.WebhookRate(policy)) {
+		a.log.Warn("webhook rejected: rate limit (per-token)", "room", room)
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 
@@ -113,6 +140,13 @@ func (a *API) webhook(w http.ResponseWriter, r *http.Request) {
 	// Auto-war-room: first matching route wins. On match we spawn and return; the
 	// payload is NOT also delivered to the (intake) room.
 	if idx, rule, ok := route.Match(a.cfg.Routes, payload); ok {
+		// Per-token spawn guard (Tier 2): bounds the room-spawn/invite/reply_url
+		// vector. Reached only on a route match, so it meters spawns only.
+		if !a.guards.AllowWebhookSpawn(token, a.cfg.WebhookSpawn(policy)) {
+			a.log.Warn("webhook rejected: spawn cap (per-token)", "room", room)
+			http.Error(w, "spawn cap exceeded", http.StatusTooManyRequests)
+			return
+		}
 		a.fireRoute(w, r, room, idx, rule)
 		return
 	}

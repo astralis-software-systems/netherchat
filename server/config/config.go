@@ -134,6 +134,7 @@ const (
 // socket; it never involves message content (the relay stays blind).
 type IngestConfig struct {
 	Freshness FreshnessConfig `toml:"freshness"`
+	Webhook   WebhookConfig   `toml:"webhook"`
 }
 
 // FreshnessConfig is the global default timestamp-acceptance window for signed
@@ -145,6 +146,55 @@ type IngestConfig struct {
 type FreshnessConfig struct {
 	Window     Duration `toml:"window"`      // max age of a signed ts (past tolerance, default 5m)
 	FutureSkew Duration `toml:"future_skew"` // max lead of a signed ts over server time (default 60s)
+}
+
+// Default webhook guard caps for the per-room webhook socket (POST /webhook/{room}),
+// the token-authenticated ingress twin of [[source]] alerts. They are deliberately
+// MORE forgiving than the alert path's per-source 60/min + 20/hr because the webhook
+// is a designed fan-in (CI, monitoring, deploy bots under one token): throttling a
+// legitimate burst is worse than the bounded noise it prevents. The pre-auth ceiling
+// is a coarse, global last-resort that meters only REJECTED requests.
+const (
+	DefaultWebhookRatePerMinute       = 120 // per-token authenticated rate
+	DefaultWebhookSpawnPerHour        = 60  // per-token war-room spawn cap
+	DefaultWebhookUnauthRatePerMinute = 600 // global pre-auth ceiling (rejected requests only)
+)
+
+// WebhookConfig is the global default rate/spawn guard for the webhook socket.
+// RatePerMinute and SpawnPerHour are PER-TOKEN caps (overridable per room);
+// UnauthRatePerMinute is a single GLOBAL pre-auth ceiling — deliberately not
+// per-room, so it can never be a bucket an attacker targets to deny a specific
+// sender. A non-positive value at any level falls back to the built-in default.
+type WebhookConfig struct {
+	RatePerMinute       int `toml:"rate_per_minute"`        // per-token rate (default 120)
+	SpawnPerHour        int `toml:"spawn_per_hour"`         // per-token spawn (default 60)
+	UnauthRatePerMinute int `toml:"unauth_rate_per_minute"` // global pre-auth ceiling (default 600)
+}
+
+// WebhookRate / WebhookSpawn resolve the effective PER-TOKEN webhook caps for a
+// room: the per-room override if set (>0), else the global [ingest.webhook] default,
+// else the built-in. WebhookUnauthRate resolves the GLOBAL pre-auth ceiling. All
+// fall back to the built-in so the guard is never accidentally disabled by a zero.
+func (c Config) WebhookRate(room RoomConfig) int {
+	return resolveWebhookCap(room.WebhookRatePerMinute, c.Ingest.Webhook.RatePerMinute, DefaultWebhookRatePerMinute)
+}
+
+func (c Config) WebhookSpawn(room RoomConfig) int {
+	return resolveWebhookCap(room.WebhookSpawnPerHour, c.Ingest.Webhook.SpawnPerHour, DefaultWebhookSpawnPerHour)
+}
+
+func (c Config) WebhookUnauthRate() int {
+	return resolveWebhookCap(0, c.Ingest.Webhook.UnauthRatePerMinute, DefaultWebhookUnauthRatePerMinute)
+}
+
+func resolveWebhookCap(override, global, builtin int) int {
+	if override > 0 {
+		return override
+	}
+	if global > 0 {
+		return global
+	}
+	return builtin
 }
 
 type ServerConfig struct {
@@ -215,11 +265,18 @@ type PersistenceConfig struct {
 // edge concern handled by `netherchat agent` against its own local allowlist; a
 // blind relay must never run commands (FEATURE_ROADMAP_FREE.md §0.1).
 type RoomConfig struct {
-	InviteOnly   bool          `toml:"invite_only"`
-	Webhook      bool          `toml:"webhook"`
-	WebhookToken string        `toml:"webhook_token"`
-	TTL          Duration      `toml:"ttl"`
-	Scuttle      ScuttlePolicy `toml:"scuttle"`
+	InviteOnly   bool   `toml:"invite_only"`
+	Webhook      bool   `toml:"webhook"`
+	WebhookToken string `toml:"webhook_token"`
+
+	// Per-token webhook guard overrides (POST /webhook/{room}); 0/unset → the global
+	// [ingest.webhook] default. They cap an authenticated token's request rate and
+	// war-room spawns. The global pre-auth ceiling is not overridable per room.
+	WebhookRatePerMinute int `toml:"webhook_rate_per_minute"`
+	WebhookSpawnPerHour  int `toml:"webhook_spawn_per_hour"`
+
+	TTL     Duration      `toml:"ttl"`
+	Scuttle ScuttlePolicy `toml:"scuttle"`
 
 	// Durable opts this room into the "case room" profile: its (still E2E-encrypted)
 	// message history is persisted via the existing encrypted-SQLite store so it
@@ -343,10 +400,17 @@ func Default() Config {
 			MaxFileBytes:           protocol.DefaultMaxFileBytes,
 			MaxConcurrentTransfers: protocol.DefaultMaxConcurrentTransfers,
 		},
-		Ingest: IngestConfig{Freshness: FreshnessConfig{
-			Window:     Duration(DefaultFreshnessWindow),
-			FutureSkew: Duration(DefaultFreshnessFutureSkew),
-		}},
+		Ingest: IngestConfig{
+			Freshness: FreshnessConfig{
+				Window:     Duration(DefaultFreshnessWindow),
+				FutureSkew: Duration(DefaultFreshnessFutureSkew),
+			},
+			Webhook: WebhookConfig{
+				RatePerMinute:       DefaultWebhookRatePerMinute,
+				SpawnPerHour:        DefaultWebhookSpawnPerHour,
+				UnauthRatePerMinute: DefaultWebhookUnauthRatePerMinute,
+			},
+		},
 		Persistence: PersistenceConfig{Enabled: false, History: 100},
 		Rooms:       map[string]RoomConfig{},
 	}
@@ -408,6 +472,17 @@ func (c *Config) normalize() {
 	}
 	if c.Ingest.Freshness.FutureSkew.Std() <= 0 {
 		c.Ingest.Freshness.FutureSkew = Duration(DefaultFreshnessFutureSkew)
+	}
+	// Repair the webhook guard caps the same way: a non-positive global reverts to
+	// the built-in default. Per-room overrides are resolved at use-site (0 = global).
+	if c.Ingest.Webhook.RatePerMinute <= 0 {
+		c.Ingest.Webhook.RatePerMinute = DefaultWebhookRatePerMinute
+	}
+	if c.Ingest.Webhook.SpawnPerHour <= 0 {
+		c.Ingest.Webhook.SpawnPerHour = DefaultWebhookSpawnPerHour
+	}
+	if c.Ingest.Webhook.UnauthRatePerMinute <= 0 {
+		c.Ingest.Webhook.UnauthRatePerMinute = DefaultWebhookUnauthRatePerMinute
 	}
 	if c.Rooms == nil {
 		c.Rooms = map[string]RoomConfig{}
