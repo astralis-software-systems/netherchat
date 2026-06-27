@@ -51,6 +51,7 @@ func handlerWithStore(cfg config.Config, st store.Store, tap func([]byte), log *
 	}
 	h := hub.New(cfg, log)
 	invites := invite.New()
+	invites.Start() // reclaim expired invite tokens for the handler's lifetime
 	// Ephemeral (break-glass) war rooms: invite-only, hard TTL. The registry's
 	// janitor closes each room through the hub when its deadline passes.
 	eph := ephemeral.New(log)
