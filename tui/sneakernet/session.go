@@ -29,6 +29,12 @@ type Options struct {
 	Port         int    // direct listener port; 0 = a free port
 	LAN          bool   // advertise/discover on the LAN via mDNS
 	QR           bool   // render the offer blob as a scannable terminal QR (§2.4)
+	// ActionQuorum is the [action.<name>] two-person-rule policy (§1.3), installed on
+	// the session's client. Over a relay-less transport a scuttle with quorum >= 2
+	// cannot route an approval to a peer, so the client fails closed and refuses rather
+	// than burning unilaterally; quorum <= 1 keeps instant relay-less scuttle. nil =
+	// single-actor (the pair command surfaces this loudly at startup).
+	ActionQuorum map[string]int
 	In           io.Reader
 	Out          io.Writer
 	Log          *slog.Logger
@@ -77,6 +83,7 @@ func RunHost(opts Options) error {
 	if err != nil {
 		return err
 	}
+	c.SetActionQuorum(opts.ActionQuorum) // relay-less: a scuttle with quorum >= 2 fails closed (§3.2)
 	if err := c.ConnectWith(co.Loopback()); err != nil {
 		return err
 	}
@@ -142,6 +149,7 @@ func RunJoin(opts Options) error {
 	if err != nil {
 		return err
 	}
+	c.SetActionQuorum(opts.ActionQuorum) // relay-less: a scuttle with quorum >= 2 fails closed (§3.2)
 	dt, err := dialAny(offer.Addrs, id, offer.Fpr)
 	if err != nil {
 		return fmt.Errorf("connect to host (it must be reachable at one of %v): %w", offer.Addrs, err)
@@ -240,7 +248,9 @@ func handleCommand(c *client.Client, co *Coordinator, opts Options, line string)
 	case "seal":
 		report(opts.Out, c.Seal())
 	case "scuttle":
-		c.ScuttleNow()
+		// The client-owned gate refuses relay-less when [action.scuttle] quorum >= 2
+		// (no way to route an approval to a peer, §3.2); surface that refusal.
+		report(opts.Out, c.ScuttleNow())
 	default:
 		fmt.Fprintf(opts.Out, "! unknown command /%s (try /help)\n", cmd)
 	}

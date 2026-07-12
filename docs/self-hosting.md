@@ -195,6 +195,17 @@ it.
 > - **Teams on the same LAN or in the same room:** use `--lan`.
 > - **Teams with a shared VPN or direct reachability:** use `--manual`.
 
+> ### Honest scope: relay-less scuttle is single-actor
+>
+> The two-person rule (`[action.scuttle]` quorum, §1.3) requires the relay to route
+> a second party's approval. Relay-less mode has no such path, so a manual
+> `/scuttle` with a configured `quorum ≥ 2` is **refused** (fail-closed) rather than
+> destroying the room unilaterally — the client prints why. Relay-less scuttle is
+> therefore **single-actor only**: leave the quorum unset (or `1`) to allow the
+> instant emergency burn, or use the relay when you need a two-person-gated scuttle.
+> `netherchat pair --config <toml>` loads the policy so the refusal is enforced and
+> the active governance is announced at startup.
+
 Topology note: for two peers the connection is fully direct. For more than two, the
 peer that initiated (the offerer / LAN host) coordinates membership and relays
 between members — still no external infrastructure, and that peer is a full room

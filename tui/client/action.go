@@ -97,6 +97,67 @@ func actionParamsHash(params string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// gateAction applies this client's OWN two-person rule (§1.3) to a privileged action
+// before it fires, and is the single choke point every gated action (scuttle,
+// break-glass) routes through. It consults the client-owned quorum policy (quorumFor)
+// — never a caller-supplied value — so no caller can weaken the gate:
+//
+//   - quorum 0    → the action is disabled by policy; refuse.
+//   - quorum <= 1 → single-actor: run perform immediately (instant scuttle preserved).
+//   - quorum >= 2 over the relay → open a signed RequestAction; perform runs only once
+//     a second authorized member approves, else the request expires (room intact).
+//   - quorum >= 2 over a relay-less transport → FAIL CLOSED: there is no way to route
+//     an approval to a peer, so refuse rather than burn unilaterally (§3.2).
+//
+// params is the canonical, human-readable description bound into the approval hash;
+// building it here (not in each caller) keeps it byte-identical for every initiator,
+// so an approver's independently recomputed params_hash always matches.
+func (c *Client) gateAction(action, params string, perform func()) error {
+	switch q := c.quorumFor(action); {
+	case q == 0:
+		return fmt.Errorf("%s is disabled by policy ([action.%s] quorum = 0)", actionDisplay(action), action)
+	case q <= 1:
+		perform()
+		return nil
+	case !c.canGateQuorum():
+		return fmt.Errorf("relay-less mode cannot route approvals for [action.%s] quorum = %d; refusing to act unilaterally. "+
+			"Use the relay for a two-person-gated %s, or set quorum ≤ 1 for single-actor relay-less %s",
+			action, q, actionDisplay(action), actionDisplay(action))
+	default:
+		_, err := c.RequestAction(action, params, q, perform)
+		return err
+	}
+}
+
+// actionDisplay renders an action name for user-facing messages (break_glass →
+// break-glass); the raw name is still used for the [action.<name>] config stanza.
+func actionDisplay(action string) string {
+	if action == protocol.ActionBreakGlass {
+		return "break-glass"
+	}
+	return action
+}
+
+// scuttleNowParams / scuttleArmParams / breakGlassParams build the canonical params
+// string bound into a gated action's approval hash. Defined once here (not per caller)
+// so every initiator produces byte-identical params — the approver re-derives and
+// checks params_hash against them.
+func scuttleNowParams(room string) string {
+	return fmt.Sprintf("room=%s, reason=manual", room)
+}
+
+func scuttleArmParams(room string, seconds int) string {
+	return fmt.Sprintf("room=%s, reason=armed, after=%s", room, time.Duration(seconds)*time.Second)
+}
+
+func breakGlassParams(invitees []string, ttlSeconds int) string {
+	who := "no one"
+	if len(invitees) > 0 {
+		who = strings.Join(invitees, ",")
+	}
+	return fmt.Sprintf("invite=%s, ttl=%s", who, time.Duration(ttlSeconds)*time.Second)
+}
+
 // RequestAction initiates a quorum-gated privileged action (§1.3). It sends a
 // signed ActionRequest naming the action and a canonical, human-readable params
 // string, then collects approvals; when `quorum` distinct endorsers (the requester

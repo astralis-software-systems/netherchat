@@ -88,7 +88,7 @@ func connectCmd(args []string) {
 	notify := fs.String("notify", "", "shell command to run on each new message (env: NETHERCHAT_ROOM/FROM/TEXT)")
 	invite := fs.String("invite", "", "one-time invite token for an invite-only room")
 	webURL := fs.String("web-url", "", "base URL of the browser join client for /break-glass links (default: derived from the server URL)")
-	configPath := fs.String("config", "", "netherchat.toml for trust pinning (default: ./netherchat.toml if present)")
+	configPath := fs.String("config", "", "netherchat.toml for trust pinning and [action.*] quorum policy (default: ./netherchat.toml if present)")
 	useTor := fs.Bool("tor", false, "dial the relay through a local Tor SOCKS5 proxy (for ws://<addr>.onion relays)")
 	torProxy := fs.String("tor-proxy", client.DefaultTorProxy, "Tor SOCKS5 proxy address (Tor Browser uses 127.0.0.1:9150)")
 	fs.Usage = func() {
@@ -114,7 +114,11 @@ func connectCmd(args []string) {
 			torDial = client.DefaultTorProxy
 		}
 	}
-	cfg := clientConfig(*configPath)
+	cfg, source, cerr := loadClientConfig(*configPath)
+	if cerr != nil {
+		fatal(cerr) // fail closed: a requested/present config that will not load is an error
+	}
+	fmt.Fprintln(os.Stderr, configProvenanceLine(cfg, source))
 	if err := app.Run(url, *name, *identity, *room, *notify, *invite, *webURL, torDial, trustOf(cfg), actionQuorums(cfg), beaconTokens(cfg), cfg.Notify.On, cfg.Macros); err != nil {
 		fatal(err)
 	}
@@ -133,25 +137,72 @@ func beaconTokens(cfg config.Config) map[string]string {
 	return out
 }
 
-// clientConfig loads netherchat.toml for the CLIENT-side concerns it cares about —
-// [[trust]] pins (/whois) and [action.*] quorum policy (the Two-Person Rule, §1.3).
-// Both are evaluated client-side; the relay never reads them. A missing or
-// unreadable file is fine: it just means no pins and default (single-actor) quorums.
-func clientConfig(path string) config.Config {
+// loadClientConfig resolves the CLIENT-side config — [[trust]] pins (/whois) and
+// [action.*] quorum policy (the Two-Person Rule, §1.3) — with FAIL-CLOSED provenance
+// (§1.5/D5/D6). explicit is the --config flag value ("" if unset). It returns the
+// config, the source it came from ("" = built-in defaults, no file), and an error the
+// caller MUST treat as fatal.
+//
+// The old behavior — warn on a bad config, then silently fall back to single-actor
+// defaults — is exactly how a configured quorum silently disabled itself. So:
+//   - a config that is explicitly requested (--config) but cannot be read → error
+//     (fatal): the operator asked for it and it is broken.
+//   - ./netherchat.toml present but unparseable → error (fatal): a present-but-broken
+//     config is a mistake, not a reason to run security theater at quorum 1.
+//   - genuine absence (no --config and no ./netherchat.toml) → defaults, no error: a
+//     user who never configured a quorum is legitimately in single-actor mode. The
+//     caller surfaces this loudly (configProvenanceLine) instead of failing.
+func loadClientConfig(explicit string) (config.Config, string, error) {
+	path := explicit
 	if path == "" {
 		if _, err := os.Stat("netherchat.toml"); err == nil {
 			path = "netherchat.toml"
 		}
 	}
 	if path == "" {
-		return config.Default()
+		return config.Default(), "", nil
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "netherchat: warning: could not read %s: %v\n", path, err)
-		return config.Default()
+		return config.Default(), path, fmt.Errorf("could not read config %s: %w", path, err)
 	}
-	return cfg
+	return cfg, path, nil
+}
+
+// configProvenanceLine renders the startup line stating which config is active and
+// the governance policy it resolves, so a silent degradation to single-actor defaults
+// is visible rather than inferred (D6). source is loadClientConfig's second return
+// ("" = built-in defaults).
+func configProvenanceLine(cfg config.Config, source string) string {
+	if source == "" {
+		return "netherchat: config: none found — running single-actor defaults; [action.*] two-person rules are OFF"
+	}
+	return fmt.Sprintf("netherchat: config: loaded from %s — governance: %s", source, governanceSummary(cfg))
+}
+
+// governanceSummary lists the [action.*] two-person rules that are actually engaged
+// (quorum > 1) or disabled (quorum 0); "single-actor" when none is configured above 1.
+func governanceSummary(cfg config.Config) string {
+	var on []string
+	for _, a := range []struct {
+		label, key string
+	}{
+		{"scuttle", protocol.ActionScuttleAction},
+		{"break-glass", protocol.ActionBreakGlass},
+		{"runbook", protocol.ActionRunbook},
+		{"artifact", protocol.ActionArtifact},
+	} {
+		switch q := cfg.ActionQuorum(a.key); {
+		case q == 0:
+			on = append(on, a.label+" disabled")
+		case q > 1:
+			on = append(on, fmt.Sprintf("%s quorum %d", a.label, q))
+		}
+	}
+	if len(on) == 0 {
+		return "single-actor (no [action.*] quorum > 1 configured)"
+	}
+	return strings.Join(on, ", ")
 }
 
 // trustOf maps the config's [[trust]] pins into the app's TrustEntry type.

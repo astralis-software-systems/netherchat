@@ -118,6 +118,14 @@ type Client struct {
 	// enforced identically on every client from the frames it sees. See action.go.
 	actions map[string]*trackedAction
 
+	// actionQuorum is this client's OWN copy of the [action.<name>] quorum policy
+	// (§1.3), installed once before Connect via SetActionQuorum. The gate on a
+	// conditional privileged action (scuttle / break-glass) consults THIS — never a
+	// caller-supplied value — so no caller (TUI, headless, relay-less) can weaken or
+	// bypass it. This mirrors the artifact gate's core-side, self-counted enforcement.
+	// A nil/absent entry means single-actor (quorum 1). See gateAction in action.go.
+	actionQuorum map[string]int
+
 	// Agent-Decision Attestation (NC-W1): every artifact proposal this client
 	// observes, keyed by proposal_id. Approvals are counted identically on every
 	// client (the proposer is never an approver); on quorum the approver that
@@ -323,6 +331,46 @@ func (c *Client) sealAndSend(op protocol.Op, plaintext []byte) error {
 // invite-only room. Call before Connect.
 func (c *Client) UseInviteToken(token string) { c.inviteToken = token }
 
+// SetActionQuorum installs this client's [action.<name>] quorum policy (§1.3),
+// consulted by the client-owned gate on scuttle / break-glass (gateAction). Call
+// before Connect, like UseInviteToken; the map is copied. An absent entry means
+// single-actor (quorum 1). The caller resolves the policy from netherchat.toml (the
+// cmd layer's actionQuorums). Owning the policy here — rather than taking it as a
+// per-call parameter — is what makes the conditional (quorum > 1) gate unbypassable.
+func (c *Client) SetActionQuorum(policy map[string]int) {
+	if len(policy) == 0 {
+		c.actionQuorum = nil
+		return
+	}
+	m := make(map[string]int, len(policy))
+	for k, v := range policy {
+		m[k] = v
+	}
+	c.actionQuorum = m
+}
+
+// quorumFor returns the client-owned quorum for an action: the configured value when
+// present (including 0, which disables it), else 1 (single-actor). This is the gate's
+// authority — deliberately not a per-call argument, so no caller can weaken it.
+func (c *Client) quorumFor(action string) int {
+	if q, ok := c.actionQuorum[action]; ok {
+		return q
+	}
+	return 1
+}
+
+// canGateQuorum reports whether this client can actually run a quorum-approval round
+// for a privileged action: true over the relay (which fans OpActionRequest/Approval
+// out to the whole room), false over a relay-less/direct transport, where there is no
+// approval path a second party could answer through (§3.2 — the relay-less REPL has no
+// approve command, so a gated request could never be met). A nil transport (not yet
+// connected) is treated as not gateable. gateAction uses this to fail closed —
+// refusing — rather than burning unilaterally when a quorum >= 2 was configured.
+func (c *Client) canGateQuorum() bool {
+	t := c.transport
+	return t != nil && t.PeerID() == ""
+}
+
 // Vanish rotates the room key forward (HKDF ratchet, deleting the old key) and
 // asks every other member to do the same and clear local history. Forward
 // secrecy: messages from before the vanish can no longer be decrypted by anyone
@@ -342,15 +390,30 @@ func (c *Client) SetTTL(seconds int) {
 	c.emit(EvControl{Action: protocol.ActionTTL, ByName: c.name, Self: true, TTLSeconds: seconds})
 }
 
-// ScuttleNow scuttles the room immediately (§1.6 — /scuttle now). Before asking
-// the server to burn it, we collect co-signatures for the scuttle receipt (§1.5)
-// while the room is still alive — the server tears a scuttled room down within a
-// short grace window, so there is no time to collect them afterward. When the
-// receipt finalizes we trigger the actual (server-orchestrated) burn; the
-// ActionScuttle broadcast then comes back to everyone and the ratchet happens
-// uniformly via onControl. If we cannot produce a receipt (no key yet), we just
-// burn.
-func (c *Client) ScuttleNow() {
+// ScuttleNow scuttles the room immediately (§1.6 — /scuttle now), subject to this
+// client's own two-person rule (§1.3). When [action.scuttle] quorum > 1 the burn is
+// GATED: it opens a signed ActionRequest and fires only once a second authorized
+// member independently approves (via the shared RequestAction engine); an unapproved
+// request expires after 60s with the room intact. quorum <= 1 (or unset) keeps the
+// instant, single-actor emergency behavior; quorum 0 disables the command; a relay-
+// less quorum >= 2 fails closed (see gateAction). The gate lives HERE, in the core, so
+// EVERY caller — TUI, headless, relay-less — inherits it, and the raw burn
+// (scuttleBurn) is unexported and unreachable un-gated. Returns an error to surface
+// "disabled" / "refused" / "could not open the request"; a nil error means the burn
+// fired (quorum <= 1) or an approval gate was opened (quorum > 1).
+func (c *Client) ScuttleNow() error {
+	return c.gateAction(protocol.ActionScuttleAction, scuttleNowParams(c.room), c.scuttleBurn)
+}
+
+// scuttleBurn performs the actual destruction with NO quorum check — the raw
+// primitive the gate runs once quorum is met (and directly at quorum <= 1). Before
+// asking the server to burn the room it collects co-signatures for the scuttle
+// receipt (§1.5) while the room is still alive — the server tears a scuttled room down
+// within a short grace window, so there is no time to collect them afterward. When the
+// receipt finalizes we trigger the actual (server-orchestrated) burn; the ActionScuttle
+// broadcast then comes back to everyone and the ratchet happens uniformly via
+// onControl. If we cannot produce a receipt (no key yet), we just burn.
+func (c *Client) scuttleBurn() {
 	triggerBurn := func() {
 		c.enqueue(protocol.OpControl, protocol.Control{Action: protocol.ActionScuttle, ByName: c.name})
 	}
@@ -359,10 +422,18 @@ func (c *Client) ScuttleNow() {
 	}
 }
 
-// ScuttleArm asks the server to arm a visible countdown (§1.6 — /scuttle arm
-// <dur>) after which the room auto-scuttles. The server broadcasts the countdown
-// notice to all participants and owns the authoritative timer.
-func (c *Client) ScuttleArm(seconds int) {
+// ScuttleArm arms a visible countdown (§1.6 — /scuttle arm <dur>) after which the
+// room auto-scuttles, subject to the same client-owned two-person rule as ScuttleNow.
+// The gate is on the request to ARM; the countdown's own elapse burns server-side and
+// is not re-gated (it is a server-originated scuttle by then, D4). Returns an error on
+// disabled / refused / could-not-open, exactly like ScuttleNow.
+func (c *Client) ScuttleArm(seconds int) error {
+	return c.gateAction(protocol.ActionScuttleAction, scuttleArmParams(c.room, seconds), func() { c.armCountdown(seconds) })
+}
+
+// armCountdown is the raw arm primitive (no quorum check): it asks the server to
+// broadcast the countdown notice to all participants and own the authoritative timer.
+func (c *Client) armCountdown(seconds int) {
 	c.enqueue(protocol.OpControl, protocol.Control{Action: protocol.ActionScuttleArm, ByName: c.name, TTLSeconds: seconds})
 }
 
@@ -381,10 +452,20 @@ func (c *Client) Epoch() uint64 {
 // RequestInvite asks the server to mint a one-time invite token for this room.
 func (c *Client) RequestInvite() { c.enqueue(protocol.OpInviteRequest, protocol.InviteRequest{}) }
 
-// BreakGlass asks the server to stand up an ephemeral, invite-only war room with
-// a hard TTL and one-time invite links for each named person. The reply arrives
-// as EvBreakGlass. The server clamps the TTL and caps the invitee count.
-func (c *Client) BreakGlass(invitees []string, ttlSeconds int) {
+// BreakGlass stands up an ephemeral, invite-only war room (§1.3), subject to the same
+// client-owned two-person rule as scuttle: [action.break_glass] quorum > 1 gates the
+// stand-up behind a second authorized approval; quorum <= 1 creates it immediately;
+// quorum 0 disables it. break-glass is a relay-only feature, so the relay-less fail-
+// closed branch is inert here in practice. Returns an error on disabled / refused /
+// could-not-open; the war room's reply arrives as EvBreakGlass.
+func (c *Client) BreakGlass(invitees []string, ttlSeconds int) error {
+	return c.gateAction(protocol.ActionBreakGlass, breakGlassParams(invitees, ttlSeconds), func() { c.breakGlassSend(invitees, ttlSeconds) })
+}
+
+// breakGlassSend is the raw break-glass primitive (no quorum check): it asks the
+// server to stand up the war room. The server clamps the TTL and caps the invitee
+// count; the reply arrives as EvBreakGlass.
+func (c *Client) breakGlassSend(invitees []string, ttlSeconds int) {
 	c.enqueue(protocol.OpBreakGlass, protocol.BreakGlass{Invitees: invitees, TTLSeconds: ttlSeconds})
 }
 

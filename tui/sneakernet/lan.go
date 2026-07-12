@@ -95,6 +95,7 @@ func hostHere(co *Coordinator, id *crypto.Identity, opts Options) error {
 	if err != nil {
 		return err
 	}
+	c.SetActionQuorum(opts.ActionQuorum) // relay-less: a scuttle with quorum >= 2 fails closed (§3.2)
 	if err := c.ConnectWith(co.Loopback()); err != nil {
 		return err
 	}
@@ -120,6 +121,7 @@ func joinPeer(p Peer, id *crypto.Identity, opts Options) error {
 	if err != nil {
 		return err
 	}
+	c.SetActionQuorum(opts.ActionQuorum) // relay-less: a scuttle with quorum >= 2 fails closed (§3.2)
 	if err := c.ConnectWith(dt); err != nil {
 		return err
 	}

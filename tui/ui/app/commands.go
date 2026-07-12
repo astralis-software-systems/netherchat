@@ -433,17 +433,13 @@ func (m *Model) runTTL(r *room, arg string) {
 // control. "/scuttle now" burns the room immediately; "/scuttle arm <dur>" shows
 // a visible countdown to everyone and auto-burns when it reaches zero.
 //
-// When [action.scuttle] quorum > 1 (the Two-Person Rule, §1.3) the burn is gated:
-// the command opens an ActionRequest and the scuttle only fires once a second
-// authorized member independently approves. quorum <= 1 keeps the existing
-// single-actor behavior; quorum 0 disables the command.
+// The two-person rule (§1.3) is enforced in the client CORE (ScuttleNow/ScuttleArm
+// consult [action.scuttle] quorum): quorum > 1 opens an approval gate, quorum <= 1
+// acts instantly, quorum 0 (or a relay-less quorum >= 2) refuses with a message. This
+// handler only parses the sub-command and surfaces the client's error; the burn/gate
+// feedback arrives as events (the action request, the receipt, the scuttle control).
 func (m *Model) runScuttle(r *room, arg string) {
 	if !m.connected(r) {
-		return
-	}
-	q := m.quorumFor(protocol.ActionScuttleAction)
-	if q == 0 {
-		m.addError("scuttle is disabled by policy ([action.scuttle] quorum = 0)")
 		return
 	}
 	fields := strings.Fields(arg)
@@ -453,15 +449,9 @@ func (m *Model) runScuttle(r *room, arg string) {
 	}
 	switch sub {
 	case "now":
-		if q > 1 {
-			params := fmt.Sprintf("room=%s, reason=manual", r.name)
-			if _, err := r.client.RequestAction(protocol.ActionScuttleAction, params, q, r.client.ScuttleNow); err != nil {
-				m.addError(err.Error())
-			}
-			return
+		if err := r.client.ScuttleNow(); err != nil {
+			m.addError(err.Error())
 		}
-		r.client.ScuttleNow()
-		m.addSystem("scuttling the room now — keys will be destroyed")
 	case "arm":
 		if len(fields) < 2 {
 			m.addError("usage: /scuttle arm <dur>   (e.g. 10m)")
@@ -472,30 +462,21 @@ func (m *Model) runScuttle(r *room, arg string) {
 			m.addError("bad duration " + fields[1] + "  (e.g. 30s, 10m, 1h)")
 			return
 		}
-		secs := int(d.Seconds())
-		if q > 1 {
-			params := fmt.Sprintf("room=%s, reason=armed, after=%s", r.name, d)
-			if _, err := r.client.RequestAction(protocol.ActionScuttleAction, params, q, func() { r.client.ScuttleArm(secs) }); err != nil {
-				m.addError(err.Error())
-			}
-			return
+		if err := r.client.ScuttleArm(int(d.Seconds())); err != nil {
+			m.addError(err.Error())
 		}
-		r.client.ScuttleArm(secs)
 	default:
 		m.addError("usage: /scuttle [now|arm <dur>]")
 	}
 }
 
-// runBreakGlass implements /break-glass with Two-Person Rule gating (§1.3). When
-// [action.break_glass] quorum > 1 the war room is not created until a second
-// authorized member approves the request.
+// runBreakGlass implements /break-glass. The Two-Person Rule (§1.3) is enforced in
+// the client CORE (BreakGlass consults [action.break_glass] quorum): quorum > 1 gates
+// the stand-up behind a second approval, quorum <= 1 creates it immediately, quorum 0
+// refuses. This handler parses the args and surfaces the client's error; the war-room
+// banner (or the pending action request) arrives as an event.
 func (m *Model) runBreakGlass(r *room, arg string) {
 	if !m.connected(r) {
-		return
-	}
-	q := m.quorumFor(protocol.ActionBreakGlass)
-	if q == 0 {
-		m.addError("break-glass is disabled by policy ([action.break_glass] quorum = 0)")
 		return
 	}
 	invitees, ttl, err := parseBreakGlass(arg)
@@ -503,24 +484,9 @@ func (m *Model) runBreakGlass(r *room, arg string) {
 		m.addError(err.Error())
 		return
 	}
-	secs := int(ttl.Seconds())
-	if q > 1 {
-		who := "no one"
-		if len(invitees) > 0 {
-			who = strings.Join(invitees, ",")
-		}
-		params := fmt.Sprintf("invite=%s, ttl=%s", who, ttl)
-		if _, err := r.client.RequestAction(protocol.ActionBreakGlass, params, q, func() { r.client.BreakGlass(invitees, secs) }); err != nil {
-			m.addError(err.Error())
-		}
-		return
+	if err := r.client.BreakGlass(invitees, int(ttl.Seconds())); err != nil {
+		m.addError(err.Error())
 	}
-	r.client.BreakGlass(invitees, secs)
-	who := "no one yet"
-	if len(invitees) > 0 {
-		who = strings.Join(invitees, ", ")
-	}
-	m.addSystem(fmt.Sprintf("break-glass: standing up a war room (ttl %s) for %s …", ttl, who))
 }
 
 // runApprove implements /approve <id> [confirm] (§1.3). Without "confirm" it shows
@@ -1126,12 +1092,36 @@ func (m *Model) runPeers(r *room) {
 	m.addSystem(strings.TrimRight(b.String(), "\n"))
 }
 
+// governanceSummary describes the active two-person-rule policy (§1.3) for /whoami,
+// so a silent degradation to single-actor defaults (e.g. no config loaded) is visible
+// rather than inferred (D6). It reports the manual, client-gated actions; runbook is
+// enforced by the agent and artifact is always gated, so neither is listed here.
+func (m *Model) governanceSummary() string {
+	var on []string
+	for _, a := range []struct{ label, key string }{
+		{"scuttle", protocol.ActionScuttleAction},
+		{"break-glass", protocol.ActionBreakGlass},
+	} {
+		switch q := m.quorumFor(a.key); {
+		case q == 0:
+			on = append(on, a.label+" disabled")
+		case q > 1:
+			on = append(on, fmt.Sprintf("%s quorum %d", a.label, q))
+		}
+	}
+	if len(on) == 0 {
+		return "single-actor (no [action.*] quorum > 1)"
+	}
+	return strings.Join(on, ", ")
+}
+
 func (m *Model) whoamiText(r *room) string {
 	var b strings.Builder
 	b.WriteString("fingerprint: " + m.fingerprint + "\n")
 	b.WriteString("identity:    " + m.sourceLabel() + "\n")
 	b.WriteString("name:        " + m.name + "\n")
 	b.WriteString("transport:   " + m.transportLabel(r) + "\n")
+	b.WriteString("governance:  " + m.governanceSummary() + "\n")
 	b.WriteString("notifications: " + m.notifier.Summary() + "\n")
 	b.WriteString("mouse:       " + mouseState(m.mouseOn) + "\n")
 	if r != nil {

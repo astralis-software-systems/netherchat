@@ -173,7 +173,7 @@ type roomEventMsg struct {
 type roomGoneMsg struct{ name string }
 type tickMsg time.Time
 
-func connectRoom(url, room, name, idPath, token, torProxy string) tea.Cmd {
+func connectRoom(url, room, name, idPath, token, torProxy string, actionQuorum map[string]int) tea.Cmd {
 	return func() tea.Msg {
 		c, err := client.New(url, room, name, idPath)
 		if err != nil {
@@ -187,6 +187,10 @@ func connectRoom(url, room, name, idPath, token, torProxy string) tea.Cmd {
 		if token != "" {
 			c.UseInviteToken(token)
 		}
+		// Install the client-owned two-person-rule policy BEFORE connecting, so the
+		// core gate on /scuttle and /break-glass consults it (§1.3). This is what makes
+		// the gate unbypassable — the client, not the TUI handler, owns the quorum.
+		c.SetActionQuorum(actionQuorum)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := c.Connect(ctx); err != nil {
@@ -212,7 +216,7 @@ func tickEvery() tea.Cmd {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, connectRoom(m.url, m.active, m.name, m.identityPath, m.initialInvite, m.torProxy), tickEvery())
+	return tea.Batch(textinput.Blink, connectRoom(m.url, m.active, m.name, m.identityPath, m.initialInvite, m.torProxy, m.actionQuorum), tickEvery())
 }
 
 // --- Update -----------------------------------------------------------------
@@ -868,7 +872,7 @@ func (m *Model) joinRoomOpts(name, token string, activate bool) tea.Cmd {
 		m.active = name
 	}
 	m.syncViewport()
-	return connectRoom(m.url, name, m.name, m.identityPath, token, m.torProxy)
+	return connectRoom(m.url, name, m.name, m.identityPath, token, m.torProxy, m.actionQuorum)
 }
 
 func (m *Model) leaveRoom(name string) tea.Cmd {
