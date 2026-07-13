@@ -656,7 +656,10 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 
 	case client.EvSealAck:
 		if e.Self {
-			r.appendSystem("✓ you co-signed the seal")
+			// Honest about what this client knows: our co-signature has been SENT, not
+			// yet confirmed recorded. The sealer records it when the round closes (and
+			// amends the record if it already finalized).
+			r.appendSystem("✓ co-signature sent — the sealer records it when the seal round closes")
 		} else {
 			r.appendSystem(fmt.Sprintf("✓ %s co-signed the seal  (%d/%d)", e.ByName, e.Count, e.Total))
 		}
@@ -664,6 +667,10 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 	case client.EvSealComplete:
 		if err := writeSealedRecord(e.Record); err != nil {
 			r.appendError("seal complete but writing files failed: " + err.Error())
+		} else if e.Amended {
+			// A late co-signature landed after the record was first written: the file
+			// was rewritten in place with one more signature. Make it observable.
+			r.appendSystem(fmt.Sprintf("🔏 record updated — a late co-signature was added; record.json + minutes.md rewritten (now %d signature(s)). Verify: netherchat verify record.json", e.Signers))
 		} else {
 			r.appendSystem(fmt.Sprintf("🔏 sealed — record.json + minutes.md written (%d entries, %d signature(s)). Verify: netherchat verify record.json", e.Entries, e.Signers))
 		}

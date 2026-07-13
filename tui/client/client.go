@@ -86,6 +86,15 @@ type Client struct {
 	pendingSealHead []byte                        // head of the most recent incoming SEAL_REQUEST
 	pendingSealName string                        // display name of who proposed it
 
+	// lastSeal retains the most recently finalized seal so a verified co-signature
+	// that arrives AFTER finalization is amended into the record instead of being
+	// lost (§1.4 HYBRID fix). The eager finalize still fires (a solo sealer never
+	// hangs); the racy completion denominator is thereby demoted to a "when to do
+	// the first write" hint, and late acks for this head re-persist. Held under
+	// c.mu; superseded when a new seal round begins and cleared on /vanish
+	// (clearSealLocked). See onSealAck / finalizeSeal in record.go.
+	lastSeal *sealSnapshot
+
 	// Roster attestation (§1.4): the in-progress co-sign round when we are the
 	// attester, plus the membership snapshot it finalizes from.
 	roster     *cosignRound
@@ -153,8 +162,25 @@ type Client struct {
 }
 
 // sealTimeout bounds how long a sealer waits for co-signatures before finalizing
-// with whatever it has collected (§1.4).
-const sealTimeout = 30 * time.Second
+// with whatever it has collected (§1.4). A var, not a const, so white-box tests
+// can shorten the 30s window to exercise the post-timeout amend path (mirrors
+// actionRequestTTL). Production never reassigns it.
+var sealTimeout = 30 * time.Second
+
+// sealSnapshot is a finalized seal retained so a late verified co-signature can be
+// amended into it rather than lost (§1.4 HYBRID). It holds exactly what re-assembly
+// needs: the sealed head, the entry snapshot, and the collected
+// signature/key/endorsement maps. Artifact-approval proofs are re-attached from
+// c.artifactProofs at assembly time (assembleSealedLocked), so they are not
+// duplicated here. endorse is always non-nil (seeded at seal initiation), so the
+// amend path writes to it without a nil check.
+type sealSnapshot struct {
+	head    []byte
+	entries []record.Entry
+	sigs    map[string][]byte
+	keys    map[string][]byte
+	endorse map[string]record.Endorsement
+}
 
 // lastMessage is the most recent chat message seen in the room, remembered so
 // /mark can promote it into the record.

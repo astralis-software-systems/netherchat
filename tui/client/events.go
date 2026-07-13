@@ -193,10 +193,15 @@ type EvSealAck struct {
 // EvSealComplete is emitted to the sealer (the participant who initiated and
 // collected signatures) when the record is finalized — all present members
 // co-signed, or the 30s window elapsed. Record is ready to write to disk.
+//
+// Amended marks a RE-emission after a co-signature arrived once the seal had
+// already finalized (§1.4 HYBRID): the same record now carries one more verified
+// signature and must be rewritten in place. It is false on the initial finalize.
 type EvSealComplete struct {
 	Record  *record.SealedRecord
 	Entries int
 	Signers int
+	Amended bool
 }
 
 // EvRosterRequest is emitted when a signed roster attestation is proposed (§1.4):

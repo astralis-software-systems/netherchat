@@ -191,6 +191,11 @@ func (c *Client) sealWith(meaning string) error {
 	c.sealSigs = map[string][]byte{fpr: sig}
 	c.sealKeys = map[string][]byte{fpr: append([]byte(nil), c.id.SignPub...)}
 	c.sealEndorse = endorse
+	// A new seal round supersedes any previously finalized seal: its amend window
+	// closes now, so a late ack for the old head is surfaced as stale rather than
+	// rewriting a record this fresh round is about to replace (retention is bounded
+	// by supersession; the rest is bounded by /vanish in clearSealLocked).
+	c.lastSeal = nil
 	c.sealTimer = time.AfterFunc(sealTimeout, c.finalizeSeal)
 	c.mu.Unlock()
 
@@ -250,40 +255,87 @@ func (c *Client) onSealRequest(fromName string, head []byte) {
 	c.emit(EvSealRequest{ByName: fromName, Matches: matches, NumEntries: n, Self: false})
 }
 
-// onSealAck handles a decrypted SEAL_ACK. If we are the sealer and the head
-// matches ours, the co-signature is verified against the sender's identity key
-// and counted; reaching every present member finalizes early.
+// onSealAck handles a decrypted SEAL_ACK. A co-signature for the seal we are
+// actively collecting is verified against the sender's identity key and counted
+// (reaching every present member finalizes early). A co-signature that arrives
+// AFTER we finalized this same head is not dropped: it is verified and AMENDED into
+// the retained record, which is re-persisted (§1.4 HYBRID — no verified signature
+// is ever lost). A co-signature we can place onto neither (stale/divergent head, or
+// a superseded seal) is surfaced as a diagnostic, never dropped in silence — silent
+// drops are exactly what hid the loss.
 func (c *Client) onSealAck(fromID, fromName string, fromPub ed25519.PublicKey, head, sig []byte, meaning, signerName, signedAt string) {
 	c.mu.Lock()
-	if !c.sealing || !bytes.Equal(head, c.sealHead) {
+	active := c.sealing && bytes.Equal(head, c.sealHead)
+	amend := !active && c.lastSeal != nil && bytes.Equal(head, c.lastSeal.head)
+	if !active && !amend {
 		c.mu.Unlock()
+		c.emit(EvError{Err: fmt.Errorf("ignoring a seal co-signature from %s: no open or recent seal for that head (chain diverged or superseded)", fromName)})
 		return
 	}
-	// A meaning-bearing ack co-signed the v2 preimage (its meaning/name/time are
-	// reproduced here and bound into what we verify); a bare ack co-signed v1.
-	preimage := protocol.SealSigningBytes(c.room, c.sealHead)
-	if meaning != "" {
-		preimage = protocol.SealSigningBytesV2(c.room, meaning, signerName, signedAt, c.sealHead)
+
+	if active {
+		recorded, valid := c.recordCosignatureLocked(c.sealHead, c.sealSigs, c.sealKeys, c.sealEndorse, fromPub, sig, meaning, signerName, signedAt)
+		if !valid {
+			c.mu.Unlock()
+			c.emit(EvError{Err: fmt.Errorf("ignoring an invalid seal co-signature from %s", fromName)})
+			return
+		}
+		count, total := len(c.sealSigs), len(c.order)
+		c.mu.Unlock()
+		if recorded {
+			c.emit(EvSealAck{ByName: fromName, Count: count, Total: total, Self: false})
+		}
+		c.maybeFinalize()
+		return
 	}
-	if len(fromPub) != ed25519.PublicKeySize || !ed25519.Verify(fromPub, preimage, sig) {
+
+	// Amend: a verified co-signature for a head we already finalized. Add it to the
+	// retained snapshot and re-persist — the signature is never lost (INV-2), and the
+	// update is loud: a fresh EvSealComplete{Amended} rewrites the record in place.
+	snap := c.lastSeal
+	recorded, valid := c.recordCosignatureLocked(snap.head, snap.sigs, snap.keys, snap.endorse, fromPub, sig, meaning, signerName, signedAt)
+	if !valid {
 		c.mu.Unlock()
 		c.emit(EvError{Err: fmt.Errorf("ignoring an invalid seal co-signature from %s", fromName)})
 		return
 	}
-	fpr := crypto.Fingerprint(fromPub)
-	c.sealSigs[fpr] = append([]byte(nil), sig...)
-	c.sealKeys[fpr] = append([]byte(nil), fromPub...)
-	if meaning != "" {
-		if c.sealEndorse == nil {
-			c.sealEndorse = map[string]record.Endorsement{}
-		}
-		c.sealEndorse[fpr] = record.Endorsement{Meaning: meaning, Name: signerName, SignedAt: signedAt}
+	if !recorded {
+		c.mu.Unlock() // idempotent: this signer is already in the record (INV-6)
+		return
 	}
-	count, total := len(c.sealSigs), len(c.order)
+	rec := c.assembleSealedLocked(snap)
+	entries, signers := len(snap.entries), len(snap.sigs)
 	c.mu.Unlock()
 
-	c.emit(EvSealAck{ByName: fromName, Count: count, Total: total, Self: false})
-	c.maybeFinalize()
+	c.emit(EvSealComplete{Record: rec, Entries: entries, Signers: signers, Amended: true})
+}
+
+// recordCosignatureLocked verifies a co-signature against the seal head (the bare
+// v1 preimage, or the meaning-bearing v2 preimage when meaning != "") and, if valid
+// and not already held, records it into the given signature/key/endorsement maps.
+// The caller holds c.mu and owns the maps — either the active round's fields or a
+// retained snapshot's. It returns (recorded, valid): valid is false only when the
+// signature does not verify; recorded is false for a valid duplicate — an
+// idempotent no-op (INV-6). endorse must be non-nil (it always is: seeded at seal
+// initiation and carried into the snapshot at finalize).
+func (c *Client) recordCosignatureLocked(head []byte, sigs, keys map[string][]byte, endorse map[string]record.Endorsement, pub ed25519.PublicKey, sig []byte, meaning, signerName, signedAt string) (recorded, valid bool) {
+	preimage := protocol.SealSigningBytes(c.room, head)
+	if meaning != "" {
+		preimage = protocol.SealSigningBytesV2(c.room, meaning, signerName, signedAt, head)
+	}
+	if len(pub) != ed25519.PublicKeySize || !ed25519.Verify(pub, preimage, sig) {
+		return false, false
+	}
+	fpr := crypto.Fingerprint(pub)
+	if _, have := sigs[fpr]; have {
+		return false, true
+	}
+	sigs[fpr] = append([]byte(nil), sig...)
+	keys[fpr] = append([]byte(nil), pub...)
+	if meaning != "" {
+		endorse[fpr] = record.Endorsement{Meaning: meaning, Name: signerName, SignedAt: signedAt}
+	}
+	return true, true
 }
 
 // maybeFinalize finalizes the seal once every present member has co-signed.
@@ -298,7 +350,10 @@ func (c *Client) maybeFinalize() {
 
 // finalizeSeal assembles the sealed record from the snapshot taken at seal time
 // and the collected signatures, then emits EvSealComplete. It is idempotent: the
-// first caller (early completion or the 30s timer) wins; the other is a no-op.
+// first caller (early completion or the 30s timer) wins; the other is a no-op
+// (INV-3). The finalized seal is RETAINED (c.lastSeal) so a co-signature that
+// arrives after this point is amended into the record rather than lost (§1.4
+// HYBRID); see onSealAck.
 func (c *Client) finalizeSeal() {
 	c.mu.Lock()
 	if !c.sealing {
@@ -309,13 +364,42 @@ func (c *Client) finalizeSeal() {
 		c.sealTimer.Stop()
 		c.sealTimer = nil
 	}
-	// Assemble through the public Sealer so the collected signatures — bare and
-	// meaning-bearing alike — and their endorsements are recorded uniformly (item
-	// 2). The co-signatures were already verified on receipt; Sealer re-checks them.
-	sealer := record.NewSealer(c.room, c.id.Fingerprint(), c.sealEntries)
-	for fpr, sig := range c.sealSigs {
-		key := c.sealKeys[fpr]
-		if end, ok := c.sealEndorse[fpr]; ok {
+	// Transition the active round into a retained amendable snapshot: the maps pass
+	// to lastSeal and the active-round fields are cleared. A late verified
+	// co-signature for this head amends lastSeal (INV-2), it is never dropped.
+	snap := &sealSnapshot{
+		head:    c.sealHead,
+		entries: c.sealEntries,
+		sigs:    c.sealSigs,
+		keys:    c.sealKeys,
+		endorse: c.sealEndorse,
+	}
+	rec := c.assembleSealedLocked(snap)
+	entries, signers := len(snap.entries), len(snap.sigs)
+	c.lastSeal = snap
+	c.sealing = false
+	c.sealHead = nil
+	c.sealEntries = nil
+	c.sealSigs = nil
+	c.sealKeys = nil
+	c.sealEndorse = nil
+	c.mu.Unlock()
+
+	c.emit(EvSealComplete{Record: rec, Entries: entries, Signers: signers})
+}
+
+// assembleSealedLocked builds a SealedRecord from a seal snapshot plus the retained
+// artifact-approval proofs. The caller holds c.mu (it reads c.artifactProofs). The
+// collected co-signatures — bare and meaning-bearing alike — are re-added through
+// the public Sealer, which re-verifies each; a snapshot with no usable signature
+// falls back to a direct assembly so a record is always produced. Used by BOTH the
+// initial finalize and the amend path, so artifact-proof attachment is identical on
+// both (INV-7).
+func (c *Client) assembleSealedLocked(snap *sealSnapshot) *record.SealedRecord {
+	sealer := record.NewSealer(c.room, c.id.Fingerprint(), snap.entries)
+	for fpr, sig := range snap.sigs {
+		key := snap.keys[fpr]
+		if end, ok := snap.endorse[fpr]; ok {
 			_, _ = sealer.AddEndorsement(key, sig, end.Meaning, end.Name, end.SignedAt)
 		} else {
 			_, _ = sealer.AddCosignature(key, sig)
@@ -325,7 +409,7 @@ func (c *Client) finalizeSeal() {
 	// offline-provable (GAP-1/GAP-2). Add only those whose proposal id matches an
 	// artifact entry in this seal (avoiding an unanchored proof set, which the
 	// verifier rejects); the Sealer re-verifies each proof against the entry's body.
-	for _, e := range c.sealEntries {
+	for _, e := range snap.entries {
 		if e.Kind != record.KindArtifact {
 			continue
 		}
@@ -339,18 +423,9 @@ func (c *Client) finalizeSeal() {
 	}
 	rec, err := sealer.Finalize()
 	if err != nil || rec == nil {
-		rec = record.NewSealedRecord(c.room, c.id.Fingerprint(), c.sealEntries, c.sealHead, c.sealSigs, c.sealKeys)
+		rec = record.NewSealedRecord(c.room, c.id.Fingerprint(), snap.entries, snap.head, snap.sigs, snap.keys)
 	}
-	entries, signers := len(c.sealEntries), len(c.sealSigs)
-	c.sealing = false
-	c.sealHead = nil
-	c.sealEntries = nil
-	c.sealSigs = nil
-	c.sealKeys = nil
-	c.sealEndorse = nil
-	c.mu.Unlock()
-
-	c.emit(EvSealComplete{Record: rec, Entries: entries, Signers: signers})
+	return rec
 }
 
 // Replay streams the entries of a previously sealed record into the current room
@@ -384,7 +459,9 @@ func (c *Client) Replay(entries []record.Entry) (int, error) {
 	return len(entries), nil
 }
 
-// clearSealLocked drops any in-progress or pending seal. Caller holds c.mu.
+// clearSealLocked drops any in-progress or pending seal — and closes the amend
+// window on any finalized seal (lastSeal), so /vanish and epoch rotation bound how
+// long a late co-signature can still rewrite the record. Caller holds c.mu.
 func (c *Client) clearSealLocked() {
 	if c.sealTimer != nil {
 		c.sealTimer.Stop()
@@ -396,6 +473,7 @@ func (c *Client) clearSealLocked() {
 	c.sealSigs = nil
 	c.sealKeys = nil
 	c.sealEndorse = nil
+	c.lastSeal = nil
 	c.pendingSealHead = nil
 	c.pendingSealName = ""
 }
