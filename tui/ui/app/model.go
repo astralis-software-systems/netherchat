@@ -387,6 +387,13 @@ func (m *Model) onRoomConnected(msg roomConnectedMsg) tea.Cmd {
 	if msg.err != nil {
 		r.failed = true
 		r.appendError("connection failed: " + msg.err.Error())
+		// Self-explaining hint at the point of need: no relay was reached, so point
+		// to self-hosting AND the relay-less fallback (Sneakernet, §1.1) — which is
+		// otherwise invisible at failure time. Advisory strings only; no retry, no
+		// new state, no error classification.
+		r.appendSystem("no relay reachable at " + m.url)
+		r.appendSystem("→ self-host a relay:  see docs/self-hosting.md   (netherchat-server — native binary or Docker)")
+		r.appendSystem("→ or go relay-less:   netherchat pair --lan       (Sneakernet war room, no server — §1.1)")
 		if msg.name == m.active {
 			m.syncViewport()
 		}

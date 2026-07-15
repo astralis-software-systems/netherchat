@@ -1,13 +1,44 @@
 # Self-hosting Netherchat
 
-Netherchat is a single static server binary (or a ~7 MB `FROM scratch` Docker
-image). It is a **blind relay**: it routes end-to-end-encrypted frames between
-clients, holds no keys, decrypts nothing, and — by default — writes nothing to
-disk and makes no outbound network calls.
+**Netherchat ships as two artifacts, by design.** The endpoint **client**
+(`netherchat`) is where all encryption happens; it is what you install on every
+participant's machine, and it stays featherweight — a single static binary with no
+runtime dependencies. The **relay** (`netherchat-server`) is a separate artifact you
+provision only where you choose to host: a *blind* router that moves ciphertext
+between clients and holds no keys. Keeping them separate is deliberate. The machine
+that relays traffic and the machine that reads messages are never required to be the
+same, and the client never carries server code it doesn't need — a property the
+build graph enforces, not a promise. You install the client to talk; you provision
+the relay to host.
+
+The relay is a single static server binary (or a ~7 MB `FROM scratch` Docker
+image). As a **blind relay** it routes end-to-end-encrypted frames between clients,
+holds no keys, decrypts nothing, and — by default — writes nothing to disk and makes
+no outbound network calls.
+
+## Getting the relay
+
+Every release archive contains **both** binaries. The client installers pull
+`netherchat_<os>_<arch>.{tar.gz,zip}` from the release, which already includes
+`netherchat-server` next to `netherchat` (plus `README`, `PROTOCOL`, `LICENSE`). You
+can obtain the relay four ways, all producing the same checksum-verified binary:
+
+1. **Installer, native (recommended for self-hosters)** — re-run the client installer
+   with `-WithServer` (Windows) / `--with-server` (Linux/macOS). It installs the
+   `netherchat-server` binary that already came down in the release archive — no
+   second download.
+2. **Container** — `docker run -p 3000:3000 salkreiner/netherchat` (server-only image;
+   on Windows this needs Docker Desktop).
+3. **By hand from a release archive** — download `netherchat_<os>_<arch>.{tar.gz,zip}`
+   and extract `netherchat-server[.exe]`.
+4. **From source** — `go build -o bin/ ./cmd/netherchat-server` (Go 1.26+).
+
+On macOS the Homebrew cask installs from the same archive, so the relay binary lands
+alongside the client there too.
 
 ## Run it
 
-### Docker (recommended)
+### Docker (containers & teams)
 
 ```bash
 docker run -p 3000:3000 salkreiner/netherchat

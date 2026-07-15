@@ -252,11 +252,16 @@ func dialErr(url, room, name, identity, invite string, timeout time.Duration) (*
 	return c, nil
 }
 
-// dial is the plain-text wrapper: it exits on error.
+// dial is the plain-text wrapper: it exits on error. On failure it also prints a
+// self-explaining hint (self-host, or go relay-less) to stderr. The hint lives here,
+// in the plain-text path only — dialErr stays clean so --json/machine-readable
+// callers are unaffected. Same error line and exit code as fatal(), plus the hint.
 func dial(url, room, name, identity, invite string, timeout time.Duration) *client.Client {
 	c, err := dialErr(url, room, name, identity, invite, timeout)
 	if err != nil {
-		fatal(err)
+		fmt.Fprintln(os.Stderr, "netherchat: "+err.Error())
+		fmt.Fprintln(os.Stderr, "netherchat: no relay reachable — self-host one (docs/self-hosting.md) or go relay-less: netherchat pair --lan")
+		os.Exit(1)
 	}
 	return c
 }
@@ -301,7 +306,12 @@ examples:
   netherchat connect ws://localhost:3000 --room ops --name alice
   netherchat connect --tor ws://abc123…onion:80 --room ops --name alice
   echo "build failed on main" | netherchat send ops --server ws://localhost:3000
-  netherchat tail alerts | grep CRITICAL`)
+  netherchat tail alerts | grep CRITICAL
+
+self-hosting:
+  the relay is a separate artifact — netherchat-server. install it via the installer's
+  -WithServer/--with-server flag or from a release archive, or run it in a container;
+  see docs/self-hosting.md. no relay? netherchat pair forms a relay-less war room (§1.1).`)
 }
 
 func fatal(err error) {

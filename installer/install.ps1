@@ -5,12 +5,15 @@
 .DESCRIPTION
     Downloads the netherchat client for your architecture from GitHub releases,
     verifies its SHA-256, installs it to %LOCALAPPDATA%\Programs\netherchat, and
-    adds that directory to your user PATH. The server is run via Docker
-    (salkreiner/netherchat), so this installs the client only.
+    adds that directory to your user PATH. Installs the endpoint client only by
+    default; pass -WithServer to also install the netherchat-server relay binary,
+    which already ships in the same release archive (no extra download).
 .EXAMPLE
     irm https://netherchat.com/install.ps1 | iex
 .EXAMPLE
     & ([scriptblock]::Create((irm https://netherchat.com/install.ps1))) -Version 1.2.0
+.EXAMPLE
+    & ([scriptblock]::Create((irm https://netherchat.com/install.ps1))) -WithServer
 .EXAMPLE
     & ([scriptblock]::Create((irm https://netherchat.com/install.ps1))) -Uninstall
 #>
@@ -18,12 +21,14 @@
 param(
     [string]$Version = $env:NETHERCHAT_VERSION,
     [string]$BinDir = $env:NETHERCHAT_BIN_DIR,
+    [switch]$WithServer,
     [switch]$Uninstall
 )
 
 $ErrorActionPreference = 'Stop'
 $Repo = 'salehkreiner/netherchat'
 $Binary = 'netherchat.exe'
+$ServerBinary = 'netherchat-server.exe'
 
 function Step($m) { Write-Host "> $m" -ForegroundColor Magenta }
 function Ok($m) { Write-Host "  + $m" -ForegroundColor Green }
@@ -50,6 +55,11 @@ if ($Uninstall) {
     }
     else {
         Warn "no $Binary found in $BinDir"
+    }
+    $serverTarget = Join-Path $BinDir $ServerBinary
+    if (Test-Path $serverTarget) {
+        Remove-Item $serverTarget -Force
+        Ok "removed $serverTarget"
     }
     Remove-FromUserPath $BinDir
     exit 0
@@ -112,6 +122,20 @@ try {
     New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
     Copy-Item $src (Join-Path $BinDir $Binary) -Force
     Ok "installed to $(Join-Path $BinDir $Binary)"
+
+    # Opt-in relay: the server binary already rode down inside this same archive, so
+    # -WithServer installs it with zero extra download. If it is absent (an older
+    # release), warn and continue - the client install must always succeed.
+    if ($WithServer) {
+        $serverSrc = Join-Path $tmp $ServerBinary
+        if (Test-Path $serverSrc) {
+            Copy-Item $serverSrc (Join-Path $BinDir $ServerBinary) -Force
+            Ok "installed to $(Join-Path $BinDir $ServerBinary)"
+        }
+        else {
+            Warn "this release has no $ServerBinary - the relay was not installed (the client is fine); get it via Docker or 'go build ./cmd/netherchat-server' - see docs/self-hosting.md"
+        }
+    }
 }
 finally {
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
@@ -127,8 +151,19 @@ if ($userPath -notlike "*$BinDir*") {
 }
 
 Write-Host ''
-Write-Host "Netherchat $ver installed." -ForegroundColor Magenta -NoNewline
-Write-Host '  Messaging that lives below the surface.'
-Write-Host "  Connect:      netherchat connect ws://localhost:3000 --name $env:USERNAME"
-Write-Host '  Run a server: docker run -p 3000:3000 salkreiner/netherchat'
+if ($WithServer) {
+    Write-Host "Netherchat $ver installed - client + relay." -ForegroundColor Magenta -NoNewline
+    Write-Host '  Messaging that lives below the surface.'
+    Write-Host "  Connect:     netherchat connect ws://localhost:3000 --name $env:USERNAME"
+    Write-Host '  Run a relay: netherchat-server --addr :3000   (or: docker run -p 3000:3000 salkreiner/netherchat)'
+    Write-Host '               Full guide: docs/self-hosting.md'
+}
+else {
+    Write-Host "Netherchat $ver installed - the endpoint client." -ForegroundColor Magenta -NoNewline
+    Write-Host '  Messaging that lives below the surface.'
+    Write-Host "  Connect:    netherchat connect ws://localhost:3000 --name $env:USERNAME"
+    Write-Host '  Self-host:  re-run with -WithServer for the native relay (netherchat-server - already in'
+    Write-Host '              this release, no extra download), or: docker run -p 3000:3000 salkreiner/netherchat'
+    Write-Host '              Full guide: docs/self-hosting.md'
+}
 Write-Host ''

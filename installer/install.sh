@@ -3,15 +3,18 @@
 #
 #   curl -fsSL https://netherchat.com/install | bash
 #   curl -fsSL https://netherchat.com/install | bash -s -- --version 1.2.0
+#   curl -fsSL https://netherchat.com/install | bash -s -- --with-server
 #
-# The server is distributed as a Docker image (salkreiner/netherchat); this script
-# installs the client only. POSIX sh — no bashisms — so it runs under sh, bash,
-# ash (Alpine) and zsh alike.
+# Netherchat is two artifacts: the endpoint client (installed by default) and the
+# netherchat-server relay. --with-server also installs the relay binary, which
+# already ships in the same release archive. POSIX sh — no bashisms — so it runs
+# under sh, bash, ash (Alpine) and zsh alike.
 #
 # Options:
 #   --version <v>     install a specific version (default: latest release)
 #   --bin-dir <dir>   install into <dir> (default: ~/.local/bin)
-#   --uninstall       remove the installed client
+#   --with-server     also install the netherchat-server relay binary
+#   --uninstall       remove the installed client (and relay, if present)
 #   -h, --help        show this help
 #
 # Honored env vars: NETHERCHAT_VERSION, NETHERCHAT_BIN_DIR, NO_COLOR.
@@ -20,9 +23,11 @@ set -eu
 
 REPO="salehkreiner/netherchat"
 BINARY="netherchat"
+SERVER_BINARY="netherchat-server"
 VERSION="${NETHERCHAT_VERSION:-latest}"
 BIN_DIR="${NETHERCHAT_BIN_DIR:-}"
 DO_UNINSTALL=0
+DO_SERVER=0
 
 # ---- pretty output ----------------------------------------------------------
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -38,7 +43,7 @@ warn() { printf '  %s!%s %s\n' "$C_YEL" "$C_RST" "$1" >&2; }
 die()  { printf '%serror:%s %s\n' "$C_RED" "$C_RST" "$1" >&2; exit 1; }
 
 usage() {
-  sed -n '2,16p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//' || true
+  sed -n '2,19p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//' || true
 }
 
 # ---- args -------------------------------------------------------------------
@@ -48,6 +53,7 @@ while [ $# -gt 0 ]; do
     --version=*) VERSION="${1#*=}"; shift ;;
     --bin-dir)   [ $# -ge 2 ] || die "--bin-dir needs a value"; BIN_DIR="$2"; shift 2 ;;
     --bin-dir=*) BIN_DIR="${1#*=}"; shift ;;
+    --with-server) DO_SERVER=1; shift ;;
     --uninstall) DO_UNINSTALL=1; shift ;;
     -h|--help)   usage; exit 0 ;;
     *)           die "unknown option: $1 (try --help)" ;;
@@ -88,6 +94,10 @@ if [ "$DO_UNINSTALL" -eq 1 ]; then
     rm -f "$target" && ok "removed $target"
   else
     warn "no $BINARY found in $BIN_DIR — nothing to do"
+  fi
+  server_target="$BIN_DIR/$SERVER_BINARY"
+  if [ -e "$server_target" ]; then
+    rm -f "$server_target" && ok "removed $server_target"
   fi
   exit 0
 fi
@@ -161,6 +171,22 @@ fi
 chmod 0755 "$BIN_DIR/$BINARY"
 ok "installed to $BIN_DIR/$BINARY"
 
+# Opt-in relay: the server binary already rode down inside this same archive, so
+# --with-server installs it with zero extra download. If it is absent (an older
+# release), warn and continue — the client install must always succeed.
+if [ "$DO_SERVER" -eq 1 ]; then
+  if [ -f "$tmp/$SERVER_BINARY" ]; then
+    if cp "$tmp/$SERVER_BINARY" "$BIN_DIR/$SERVER_BINARY" 2>/dev/null; then
+      chmod 0755 "$BIN_DIR/$SERVER_BINARY"
+      ok "installed to $BIN_DIR/$SERVER_BINARY"
+    else
+      warn "cannot write $SERVER_BINARY to $BIN_DIR — relay not installed (the client is fine)"
+    fi
+  else
+    warn "this release has no $SERVER_BINARY — relay not installed (the client is fine); get it via Docker or 'go build ./cmd/netherchat-server' — see docs/self-hosting.md"
+  fi
+fi
+
 # ---- PATH hint + next steps -------------------------------------------------
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
@@ -170,7 +196,15 @@ case ":$PATH:" in
     ;;
 esac
 
-printf '\n%sNetherchat %s installed.%s  Messaging that lives below the surface.\n' "$C_VIO" "$ver" "$C_RST"
-printf '  %sConnect:%s   netherchat connect ws://localhost:3000 --name "$USER"\n' "$C_DIM" "$C_RST"
-printf '  %sRun a server:%s docker run -p 3000:3000 salkreiner/netherchat\n' "$C_DIM" "$C_RST"
-printf '  %sUninstall:%s curl -fsSL https://netherchat.com/install | bash -s -- --uninstall\n\n' "$C_DIM" "$C_RST"
+if [ "$DO_SERVER" -eq 1 ]; then
+  printf '\n%sNetherchat %s installed — client + relay.%s  Messaging that lives below the surface.\n' "$C_VIO" "$ver" "$C_RST"
+  printf '  %sConnect:%s     netherchat connect ws://localhost:3000 --name "$USER"\n' "$C_DIM" "$C_RST"
+  printf '  %sRun a relay:%s netherchat-server --addr :3000   (or: docker run -p 3000:3000 salkreiner/netherchat)\n' "$C_DIM" "$C_RST"
+  printf '  %sUninstall:%s   curl -fsSL https://netherchat.com/install | bash -s -- --uninstall\n\n' "$C_DIM" "$C_RST"
+else
+  printf '\n%sNetherchat %s installed — the endpoint client.%s  Messaging that lives below the surface.\n' "$C_VIO" "$ver" "$C_RST"
+  printf '  %sConnect:%s    netherchat connect ws://localhost:3000 --name "$USER"\n' "$C_DIM" "$C_RST"
+  printf '  %sSelf-host:%s  re-run with --with-server for the native relay (netherchat-server — already in\n' "$C_DIM" "$C_RST"
+  printf '              this release, no extra download), or: docker run -p 3000:3000 salkreiner/netherchat\n'
+  printf '  %sUninstall:%s  curl -fsSL https://netherchat.com/install | bash -s -- --uninstall\n\n' "$C_DIM" "$C_RST"
+fi

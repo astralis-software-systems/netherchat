@@ -46,7 +46,15 @@ is therefore a property of the build graph, verified in CI — not a marketing l
 
 ## Install
 
-**Client — macOS / Linux:**
+Netherchat is **two artifacts, by design**: the endpoint **client** (`netherchat`)
+you install everywhere, and the **relay** (`netherchat-server`) you provision only
+where you self-host. The client is where all encryption happens and stays
+featherweight; the relay is a blind router that holds no keys. Install the client to
+talk; add the relay to host.
+
+### The client
+
+**macOS / Linux:**
 
 ```bash
 curl -fsSL https://netherchat.com/install | bash
@@ -54,19 +62,30 @@ curl -fsSL https://netherchat.com/install | bash
 curl -fsSL https://netherchat.com/install | bash -s -- --version 0.2.0
 ```
 
-**Client — Windows (PowerShell):**
+**Windows (PowerShell):**
 
 ```powershell
 irm https://netherchat.com/install.ps1 | iex
 ```
 
-**Server — Docker:**
+### The relay (self-hosting)
+
+The relay binary (`netherchat-server`) ships in the **same release archive** as the
+client. Provision it whichever way fits your deployment:
 
 ```bash
-docker run -p 3000:3000 salkreiner/netherchat
-# or, for a team:
-docker compose up -d
+# Native, via the installer — installs netherchat-server from the archive already
+# downloaded, no second fetch:
+curl -fsSL https://netherchat.com/install | bash -s -- --with-server   # Linux / macOS
+#   irm ... | iex   →   add -WithServer on Windows
+# Container:
+docker run -p 3000:3000 salkreiner/netherchat        # or, for a team: docker compose up -d
+# From source:
+go build -o bin/ ./cmd/netherchat-server
 ```
+
+See [`docs/self-hosting.md`](docs/self-hosting.md) for the full deployment guide
+(TLS, Tor, config-as-code).
 
 > The installers pull pre-built binaries from GitHub Releases, so they work once
 > the first version is tagged. Until then (or any time), build from source below.
