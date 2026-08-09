@@ -56,6 +56,10 @@ func New(h *hub.Hub, cfg config.Config, invites *invite.Store, eph *ephemeral.Re
 func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", a.health)
 	mux.HandleFunc("GET /version", a.version)
+	// AGPL-3.0 §13: a network-interactive user must be offered the Corresponding
+	// Source of the running build. /source redirects to it; operators of a
+	// modified relay point buildinfo.SourceURL at their own source.
+	mux.HandleFunc("GET /source", a.source)
 	mux.HandleFunc("GET /rooms", a.rooms)
 	// Config-as-code validation (B1): the Terraform provider POSTs a proposed
 	// netherchat.toml here to fail a plan early. Read-only — nothing is applied.
@@ -407,7 +411,18 @@ func (a *API) version(w http.ResponseWriter, _ *http.Request) {
 		"version":  buildinfo.Version,
 		"protocol": protocol.Version,
 		"product":  "netherchat",
+		// AGPL-3.0 §13: the source offer travels with the version an operator is
+		// actually running, so a user can always reach the matching source.
+		"source":  buildinfo.SourceURL,
+		"license": buildinfo.License,
 	})
+}
+
+// source is the AGPL-3.0 §13 source offer: a redirect to the Corresponding
+// Source for this build. Like /version it exposes no message content — only
+// where the code running the relay came from.
+func (a *API) source(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, buildinfo.SourceURL, http.StatusFound)
 }
 
 func (a *API) rooms(w http.ResponseWriter, _ *http.Request) {
