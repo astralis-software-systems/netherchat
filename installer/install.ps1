@@ -8,10 +8,14 @@
     adds that directory to your user PATH. Installs the endpoint client only by
     default; pass -WithServer to also install the netherchat-server relay binary,
     which already ships in the same release archive (no extra download).
+
+    The unpinned form installs the latest release; pass -Version to pin one.
+.PARAMETER Version
+    Install a specific release instead of the latest one. Accepts either form,
+    with or without the leading v (X.Y.Z and vX.Y.Z are equivalent). Defaults
+    to the NETHERCHAT_VERSION environment variable, then to the latest release.
 .EXAMPLE
     irm https://netherchat.com/install.ps1 | iex
-.EXAMPLE
-    & ([scriptblock]::Create((irm https://netherchat.com/install.ps1))) -Version 1.2.0
 .EXAMPLE
     & ([scriptblock]::Create((irm https://netherchat.com/install.ps1))) -WithServer
 .EXAMPLE
