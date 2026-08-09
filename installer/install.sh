@@ -2,8 +2,10 @@
 # Netherchat installer — installs the `netherchat` terminal client.
 #
 #   curl -fsSL https://netherchat.com/install | bash
-#   curl -fsSL https://netherchat.com/install | bash -s -- --version 1.2.0
 #   curl -fsSL https://netherchat.com/install | bash -s -- --with-server
+#
+# The unpinned form installs the latest release; pass --version to pin one, and
+# --with-server to also install the relay. See Options below.
 #
 # Netherchat is two artifacts: the endpoint client (installed by default) and the
 # netherchat-server relay. --with-server also installs the relay binary, which

@@ -275,7 +275,7 @@ cloud.)
 
 ## Publishing your own builds
 
-Tag a release (`git tag v0.2.0 && git push origin v0.2.0`) to trigger the release
+Tag a release (`git tag vX.Y.Z && git push origin vX.Y.Z`) to trigger the release
 workflow. It needs these repository secrets:
 
 - `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` — to push `salkreiner/netherchat`

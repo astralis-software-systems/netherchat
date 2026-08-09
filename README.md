@@ -2,11 +2,9 @@
 
 # Netherchat
 
-**Messaging that lives below the surface**
+**Tamper-evident records and encrypted coordination**
 
-Self-hostable, end-to-end encrypted, real-time messaging — built for developers first.
-A blind-relay server that *cannot read your messages*, and a terminal client that
-doesn't look like it's from 1998.
+Two capabilities over one cryptographic core.
 
 *by [Astralis Software Systems](https://github.com/salehkreiner)*
 
@@ -14,35 +12,58 @@ doesn't look like it's from 1998.
 
 ---
 
-> **Status: M3.** A full terminal client: a multi-room sidebar with unread
-> counts, a member list, 8 instantly-switchable themes, slash commands with
+## Sealed records
+
+Ed25519 signatures over SHA-256 hash chains — append-only, content-addressed, and
+**verifiable offline**: no relay, no network, and no trust in whoever is doing the
+verifying. Importable on its own:
+
+```go
+import "github.com/salehkreiner/netherchat/sealedrecord"
+```
+
+Records carry multi-party approval proofs. Each approval is an Ed25519 signature over a
+preimage binding the proposal id, the artifact hash, the approver's fingerprint, and — in
+v2 — the role the approver signed as. Because the fingerprint is inside the signed bytes,
+one device cannot forge another person's approval.
+
+Verification returns the set of **distinct, cryptographically verified approvers**,
+excluding both the entry author and the recorded proposer — so a proposer cannot approve
+their own artifact. The library surfaces that verified set as evidence and imposes no
+quorum minimum; required roles, thresholds, and distinctness are the consumer's policy.
+
+See [`docs/sealed-record-library.md`](docs/sealed-record-library.md) to produce and verify
+records from your own program with no relay running.
+
+## Encrypted messaging
+
+A self-hostable blind relay and a terminal client. The relay routes opaque ciphertext and
+sealed key blobs; it holds no keys, decrypts nothing, and makes zero outbound calls.
+
+**The relay cannot read your messages, and that is a property of the build graph.** The
+encryption lives in `tui/internal/crypto`, which Go's internal-package rule makes
+unreachable from the server binary, and CI fails if that ever changes
+(`TestServerBinaryDoesNotLinkClientCrypto`). It is checkable by anyone who clones this
+repo — not a marketing line.
+
+Primitives: X25519, XChaCha20-Poly1305, Ed25519, HKDF. Pure Go, no cgo.
+See [`docs/encryption.md`](docs/encryption.md) for the honest crypto story, including
+what it does *not* claim.
+
+> **Messaging client — milestone M3.** A full terminal client: a multi-room sidebar with
+> unread counts, a member list, 8 instantly-switchable themes, slash commands with
 > autocomplete, inline code rendering, and invite QR codes. The server adds
 > config-as-code (`netherchat.toml`), inbound webhooks, one-time invite tokens,
 > ephemeral room TTLs, `/vanish` key rotation, bring-your-own-key identity
 > (SSH / age / ssh-agent) with `/whois` verification, edge-executed `/exec` via
-> `netherchat agent`, per-connection rate limiting, and optional local
-> persistence. Plus Unix-friendly
-> `send`/`tail` for pipelines. The web client is the next milestone. See
+> `netherchat agent`, per-connection rate limiting, and optional local persistence.
+> Plus Unix-friendly `send`/`tail` for pipelines. The web client is the next
+> milestone. See
 > [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md) for the founding design,
 > [`PROTOCOL.md`](PROTOCOL.md) for the wire format,
 > [`docs/commands.md`](docs/commands.md) for commands/keys,
-> [`docs/encryption.md`](docs/encryption.md) for the honest crypto story,
-> [`docs/self-hosting.md`](docs/self-hosting.md) to run a server, and
-> [`docs/sealed-record-library.md`](docs/sealed-record-library.md) to create and
-> verify sealed records from your own program (no relay, no network).
-
-## What's here
-
-- **`cmd/netherchat-server`** — a WebSocket relay. It routes opaque ciphertext and
-  sealed key blobs between clients. It holds no keys, decrypts nothing, persists
-  nothing by default, and makes zero outbound calls.
-- **`cmd/netherchat`** — the terminal client. All encryption happens here.
-- **End-to-end encryption** built from pure-Go, audited primitives (X25519,
-  XChaCha20-Poly1305, Ed25519, HKDF) — no cgo, so it cross-compiles trivially.
-
-The encryption code lives under `tui/internal/crypto`, which Go's internal-package
-rule makes **unreachable from the server**. "The server cannot read your messages"
-is therefore a property of the build graph, verified in CI — not a marketing line.
+> [`docs/encryption.md`](docs/encryption.md) for the honest crypto story, and
+> [`docs/self-hosting.md`](docs/self-hosting.md) to run a server.
 
 ## Install
 
@@ -58,9 +79,11 @@ talk; add the relay to host.
 
 ```bash
 curl -fsSL https://netherchat.com/install | bash
-# pin a version:
-curl -fsSL https://netherchat.com/install | bash -s -- --version 0.2.0
 ```
+
+The unpinned form installs the latest release. Pass `--version <v>` to pin a specific
+one, or `--with-server` to install the relay alongside the client (see below);
+`--help` lists the rest.
 
 **Windows (PowerShell):**
 
