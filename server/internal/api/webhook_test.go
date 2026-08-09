@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/salehkreiner/netherchat/buildinfo"
+	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/server/internal/alert"
 	"github.com/salehkreiner/netherchat/server/internal/beacon"
@@ -248,5 +250,73 @@ func TestWebhookAuthBehavior(t *testing.T) {
 	}
 	if code, _ := postHook(t, ts.URL, "general", "secretA", plainBody); code != http.StatusNotFound {
 		t.Errorf("non-webhook room should be 404, got %d", code)
+	}
+}
+
+// TestVersionCarriesSourceOffer: /version keeps every field it has always served
+// (the Docker CI smoke test curls it) and additionally carries the AGPL-3.0 §13
+// source offer, so a user can find the code the relay is actually running.
+func TestVersionCarriesSourceOffer(t *testing.T) {
+	ts, _ := webhookServer(t, config.Default())
+
+	resp, err := http.Get(ts.URL + "/version")
+	if err != nil {
+		t.Fatalf("get /version: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/version should be 200, got %d", resp.StatusCode)
+	}
+	var got struct {
+		Version  string `json:"version"`
+		Protocol int    `json:"protocol"`
+		Product  string `json:"product"`
+		Source   string `json:"source"`
+		License  string `json:"license"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode /version: %v", err)
+	}
+
+	// Pre-existing fields — removing or renaming any of these breaks the smoke test.
+	if got.Version != buildinfo.Version {
+		t.Errorf("version = %q, want %q", got.Version, buildinfo.Version)
+	}
+	if got.Protocol != protocol.Version {
+		t.Errorf("protocol = %d, want %d", got.Protocol, protocol.Version)
+	}
+	if got.Product != "netherchat" {
+		t.Errorf("product = %q, want %q", got.Product, "netherchat")
+	}
+	// The §13 addition.
+	if got.Source != buildinfo.SourceURL {
+		t.Errorf("source = %q, want %q", got.Source, buildinfo.SourceURL)
+	}
+	if got.License != buildinfo.License {
+		t.Errorf("license = %q, want %q", got.License, buildinfo.License)
+	}
+}
+
+// TestSourceRedirects: GET /source is the AGPL-3.0 §13 source offer — a 302 to
+// buildinfo.SourceURL, which an operator of a modified relay overrides at link
+// time. The client must not follow the redirect: the target is off-host and this
+// test makes no outbound request.
+func TestSourceRedirects(t *testing.T) {
+	ts, _ := webhookServer(t, config.Default())
+
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Get(ts.URL + "/source")
+	if err != nil {
+		t.Fatalf("get /source: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusFound {
+		t.Errorf("/source should be %d, got %d", http.StatusFound, resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != buildinfo.SourceURL {
+		t.Errorf("Location = %q, want %q", loc, buildinfo.SourceURL)
 	}
 }

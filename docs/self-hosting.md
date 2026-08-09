@@ -256,7 +256,8 @@ lan_discovery = true # advertise on the LAN via mDNS
 | Endpoint    | Returns                                            |
 |-------------|----------------------------------------------------|
 | `/health`   | `{"status":"ok"}`                                  |
-| `/version`  | version + protocol number                          |
+| `/version`  | version + protocol number + source URL + license   |
+| `/source`   | 302 redirect to the source for this build          |
 | `/rooms`    | room names and member counts — **never** content   |
 
 ## What the operator can and cannot see
@@ -272,6 +273,36 @@ lan_discovery = true # advertise on the LAN via mDNS
 Off by default — the server is purely in-memory and rooms evaporate when empty.
 (Opt-in local SQLite persistence is a later milestone; it will never write to the
 cloud.)
+
+## License and source
+
+Netherchat is licensed **AGPL-3.0-or-later**. Running an unmodified build for
+your own team costs you nothing beyond that licence: `/source` and the `source`
+field of `/version` already point at the upstream repository.
+
+If you **modify** Netherchat and run it for other people over a network, AGPL-3.0
+§13 requires you to offer those users the Corresponding Source of the version
+they are actually talking to. Publish your modified source somewhere your users
+can reach, then point the build at it — the supported way is a linker override,
+exactly like `Version`:
+
+```bash
+go build -ldflags "\
+  -X github.com/salehkreiner/netherchat/buildinfo.Version=X.Y.Z \
+  -X github.com/salehkreiner/netherchat/buildinfo.SourceURL=https://example.com/our-netherchat" \
+  -o bin/ ./cmd/netherchat-server
+```
+
+That single symbol feeds both the source offer and the startup log line, so a
+correctly stamped build satisfies §13 wherever a user looks:
+
+```
+# netherchat server listening   addr=:3000 version=X.Y.Z source=https://example.com/our-netherchat
+```
+
+Leaving `SourceURL` pointing at upstream while running modified code is a
+licence violation — upstream does not carry your changes. If AGPL-3.0 does not
+suit your deployment, commercial licensing is available; see the README.
 
 ## Publishing your own builds
 

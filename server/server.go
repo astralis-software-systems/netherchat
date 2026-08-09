@@ -204,7 +204,8 @@ func Run(ctx context.Context, cfg config.Config, tor TorOptions, log *slog.Logge
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("netherchat server listening", "addr", cfg.Server.Addr, "version", buildinfo.Version)
+		log.Info("netherchat server listening", "addr", cfg.Server.Addr, "version", buildinfo.Version,
+			"source", buildinfo.SourceURL)
 		errCh <- srv.ListenAndServe()
 	}()
 
