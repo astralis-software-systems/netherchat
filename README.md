@@ -149,4 +149,10 @@ just vet
 
 ## License
 
-TBD.
+GNU Affero General Public License v3.0 or later — see [LICENSE](LICENSE).
+Copyright 2026 Astralis Software Systems.
+
+**Commercial licensing available.** If AGPL doesn't fit — embedding Netherchat
+in a proprietary product or a closed deliverable — contact
+[Astralis Software Systems](https://astralis-systems.com). Alternative terms
+are available.
