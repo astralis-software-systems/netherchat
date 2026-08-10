@@ -54,9 +54,9 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        main: resolve(__dirname, "index.html"),
-        join: resolve(__dirname, "join.html"),
-        beacon: resolve(__dirname, "beacon.html"),
+        main: resolve(import.meta.dirname, "index.html"),
+        join: resolve(import.meta.dirname, "join.html"),
+        beacon: resolve(import.meta.dirname, "beacon.html"),
       },
     },
   },

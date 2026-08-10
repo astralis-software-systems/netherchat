@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
-    "test:node": "vite-node scripts/interop-check.ts"
+    "test:node": "tsx scripts/interop-check.ts"
   },
   "dependencies": {
     "@noble/ciphers": "^1.2.1",
@@ -19,8 +19,9 @@
   },
   "devDependencies": {
     "@types/node": "^20.19.42",
+    "tsx": "^4.23.12",
     "typescript": "~5.6.3",
-    "vite": "^5.4.11",
-    "vitest": "^2.1.8"
+    "vite": "^8.2.1",
+    "vitest": "^4.1.10"
   }
 }
