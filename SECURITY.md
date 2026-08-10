@@ -5,7 +5,7 @@ XChaCha20-Poly1305, HKDF. Cryptographic review is actively welcome.
 
 ## Supported versions
 
-Only the latest release gets security fixes — **v1.11.0** today. There is no
+Only the latest release gets security fixes — **v1.12.0** today. There is no
 support branch and no backporting to older tags; if you are running something
 older, the fix is to upgrade.
 
