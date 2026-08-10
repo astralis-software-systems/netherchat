@@ -16,7 +16,7 @@ keep the copyright in your work; this grant is non-exclusive, so you remain free
 to use your own contribution however you like.
 
 This exists for one reason: Netherchat is dual-licensed. Astralis offers
-commercial licences to users for whom the AGPL does not fit, and that is only
+commercial licenses to users for whom the AGPL does not fit, and that is only
 possible if every line in the tree can be shipped under those terms too. Opening
 a pull request is your agreement to the above — there is no separate CLA to sign.
 

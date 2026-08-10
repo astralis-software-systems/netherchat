@@ -274,7 +274,7 @@ Off by default — the server is purely in-memory and rooms evaporate when empty
 (Opt-in local SQLite persistence is a later milestone; it will never write to the
 cloud.)
 
-## Licence and source
+## License and source
 
 Netherchat is licensed **AGPL-3.0-or-later** ([LICENSE](../LICENSE)). What that
 means in practice, by what you're doing:
@@ -300,12 +300,16 @@ One symbol feeds the redirect, the `/version` field, and the startup log, so a
 correctly stamped build carries the offer wherever a user looks. A build that
 still points at upstream is offering source that does not contain your changes.
 
+```
+netherchat server listening  addr=:3000 version=X.Y.Z source=https://example.com/our-netherchat
+```
+
 **Building Netherchat into something you distribute.** This is the clause most
 people mean when they ask about AGPL, and it is not §13. Importing
 `sealedrecord`, linking the client, or shipping a product that contains
 Netherchat generally makes that product a derivative work, which AGPL requires
 you to license under the same terms. If your product is proprietary, or your
-contract prohibits copyleft in deliverables — common in government and defence
+contract prohibits copyleft in deliverables — common in government and defense
 work — the AGPL is not the right instrument.
 
 **Commercial licensing.** Astralis Software Systems holds the copyright in
@@ -317,7 +321,7 @@ cleanly — there is no fragmented-copyright problem to diligence around.
 Contact [Astralis Software Systems](https://astralis-systems.com).
 
 *This is a plain-language summary, not legal advice. The
-[licence text](../LICENSE) governs.*
+[license text](../LICENSE) governs.*
 
 ## Publishing your own builds
 
