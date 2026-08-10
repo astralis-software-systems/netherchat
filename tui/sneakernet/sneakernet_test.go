@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -305,7 +306,15 @@ func TestTransportLabel(t *testing.T) {
 // TestMDNSAdvertiseBrowse exercises the LAN discovery path on loopback. mDNS needs
 // working multicast, which many CI/sandbox networks lack — so this skips (does not
 // fail) when nothing is discovered.
+//
+// It is opt-in because the advertise is a real side effect on the local network,
+// and the skips below happen only AFTER that side effect. Not testing.Short():
+// `-short` means slow, and this test is not slow, it is side-effecting.
 func TestMDNSAdvertiseBrowse(t *testing.T) {
+	if os.Getenv("NETHERCHAT_TEST_MDNS") == "" {
+		t.Skip("mDNS LAN discovery is opt-in: it binds UDP 5353 and advertises " +
+			"_netherchat._tcp on the local network. Set NETHERCHAT_TEST_MDNS=1 to run it.")
+	}
 	id := mustID(t)
 	adv, err := Advertise(id, "ops", 7777)
 	if err != nil {
