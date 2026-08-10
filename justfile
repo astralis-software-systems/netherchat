@@ -55,3 +55,11 @@ test-mdns:
 [unix]
 test-mdns:
     NETHERCHAT_TEST_MDNS=1 go test ./tui/sneakernet/ -run TestMDNS -v
+
+# Scan for known vulnerabilities — BOTH modules. govulncheck only walks the current
+# module, so the provider needs its own scan (-C) or its findings stay invisible.
+# Same two scans CI runs. No shell-specific syntax, so one recipe covers both.
+govulncheck:
+    go install golang.org/x/vuln/cmd/govulncheck@latest
+    govulncheck ./...
+    govulncheck -C terraform-provider-netherchat ./...
