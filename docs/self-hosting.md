@@ -274,17 +274,20 @@ Off by default — the server is purely in-memory and rooms evaporate when empty
 (Opt-in local SQLite persistence is a later milestone; it will never write to the
 cloud.)
 
-## License and source
+## Licence and source
 
-Netherchat is licensed **AGPL-3.0-or-later**. Running an unmodified build for
-your own team costs you nothing beyond that licence: `/source` and the `source`
-field of `/version` already point at the upstream repository.
+Netherchat is licensed **AGPL-3.0-or-later** ([LICENSE](../LICENSE)). What that
+means in practice, by what you're doing:
 
-If you **modify** Netherchat and run it for other people over a network, AGPL-3.0
-§13 requires you to offer those users the Corresponding Source of the version
-they are actually talking to. Publish your modified source somewhere your users
-can reach, then point the build at it — the supported way is a linker override,
-exactly like `Version`:
+**Running an unmodified build — for yourself, your team, or your users.** Nothing
+is required of you. AGPL-3.0 §13 conditions its source-offer obligation on your
+having *modified* the Program; an unmodified relay carries no such obligation.
+`/source` and the `source` field of `/version` already point at upstream.
+
+**Running a modified build over a network.** §13 asks that users interacting with
+your version remotely be offered its Corresponding Source. Publish your modified
+source where those users can reach it, then stamp the build so the offer points
+there — the supported way is a linker override, exactly like `Version`:
 
 ```bash
 go build -ldflags "\
@@ -293,16 +296,28 @@ go build -ldflags "\
   -o bin/ ./cmd/netherchat-server
 ```
 
-That single symbol feeds both the source offer and the startup log line, so a
-correctly stamped build satisfies §13 wherever a user looks:
+One symbol feeds the redirect, the `/version` field, and the startup log, so a
+correctly stamped build carries the offer wherever a user looks. A build that
+still points at upstream is offering source that does not contain your changes.
 
-```
-# netherchat server listening   addr=:3000 version=X.Y.Z source=https://example.com/our-netherchat
-```
+**Building Netherchat into something you distribute.** This is the clause most
+people mean when they ask about AGPL, and it is not §13. Importing
+`sealedrecord`, linking the client, or shipping a product that contains
+Netherchat generally makes that product a derivative work, which AGPL requires
+you to license under the same terms. If your product is proprietary, or your
+contract prohibits copyleft in deliverables — common in government and defence
+work — the AGPL is not the right instrument.
 
-Leaving `SourceURL` pointing at upstream while running modified code is a
-licence violation — upstream does not carry your changes. If AGPL-3.0 does not
-suit your deployment, commercial licensing is available; see the README.
+**Commercial licensing.** Astralis Software Systems holds the copyright in
+Netherchat and offers alternative terms for exactly these cases: proprietary
+embedding, closed deliverables, and hosted services that cannot publish their
+modifications. Contributors grant a relicensing right
+([CONTRIBUTING.md](../CONTRIBUTING.md)), so the whole tree can be licensed
+cleanly — there is no fragmented-copyright problem to diligence around.
+Contact [Astralis Software Systems](https://astralis-systems.com).
+
+*This is a plain-language summary, not legal advice. The
+[licence text](../LICENSE) governs.*
 
 ## Publishing your own builds
 
