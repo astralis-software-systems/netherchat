@@ -38,6 +38,16 @@ jobs:
       - name: blind-relay boundary guard
         run: go test ./tui/e2e/ -run TestServerBinaryDoesNotLinkClientCrypto -v
 
+      # Both modules, explicitly: govulncheck only walks the CURRENT module, so a
+      # root-only scan reports clean while the provider module carries reachable
+      # vulnerabilities. No continue-on-error — a reachable vuln fails the build.
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+          cd terraform-provider-netherchat
+          govulncheck ./...
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:
