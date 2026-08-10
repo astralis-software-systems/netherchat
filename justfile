@@ -42,3 +42,16 @@ tidy:
 # Prove the blind-relay boundary: the server must not link the client crypto package.
 check-boundary:
     go test ./tui/e2e/ -run TestServerBinaryDoesNotLinkClientCrypto -v
+
+# Run the mDNS LAN discovery test, which `just test` skips by default. This one
+# ADVERTISES `_netherchat._tcp` on your local network and binds UDP 5353 — Windows
+# will prompt for firewall permission the first time (grant Private, not Public).
+# Two recipes because the shells differ: PowerShell on Windows (see windows-shell
+# above), sh elsewhere.
+[windows]
+test-mdns:
+    $env:NETHERCHAT_TEST_MDNS = "1"; go test ./tui/sneakernet/ -run TestMDNS -v
+
+[unix]
+test-mdns:
+    NETHERCHAT_TEST_MDNS=1 go test ./tui/sneakernet/ -run TestMDNS -v

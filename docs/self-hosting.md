@@ -201,6 +201,11 @@ netherchat pair --manual --room ops --name alice          # prints a signed offe
 netherchat pair --manual --join --room ops --name bob     # paste alice's offer
 ```
 
+> `pair --lan` advertises this peer via mDNS on UDP 5353 so others in the room can
+> discover it. Windows will ask for firewall permission the first time — grant
+> Private, not Public. Discovery is not trust: verify the fingerprint out of band
+> before pairing.
+
 `--lan` advertises via mDNS (`_netherchat._tcp`) and lists discovered peers with
 their fingerprints. **Discovery is never trust:** mDNS tells you someone is there;
 your keys tell you who they are. A discovered peer is only a *candidate* — you

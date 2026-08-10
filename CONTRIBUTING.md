@@ -36,6 +36,11 @@ go test -race ./...
 just check-boundary   # the blind-relay import-graph guard
 ```
 
+On Windows, `-race` needs a C toolchain that most machines do not have — run the
+suite under WSL, or drop `-race` locally and let CI cover it. One test is opt-in
+and skipped by default: `NETHERCHAT_TEST_MDNS=1` (or `just test-mdns`) enables the
+mDNS LAN discovery test, which advertises on your local network.
+
 For the web client, run `npm run typecheck` and `npm run test` from `web/`.
 
 - Branch off `main`, one logical change per branch, and open the pull request
