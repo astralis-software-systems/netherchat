@@ -345,7 +345,8 @@ func printDoctorHuman(r *doctorReport, paranoid bool) {
 	if paranoid && r.Paranoid != nil {
 		p := r.Paranoid
 		output.WriteHuman("%s sent canary message: %s\n", mark(true), p.canary)
-		output.WriteHuman("%s relay-visible frames: %d (all ciphertext)\n", mark(true), p.FramesCaptured)
+		output.WriteHuman("%s relay-visible frames: %d (message bodies sealed; routing fields plaintext)\n",
+			mark(true), p.FramesCaptured)
 		output.WriteHuman("%s canary %s in any relay frame  ← this is the proof\n",
 			mark(!p.CanaryFound), foundWord(p.CanaryFound))
 		output.WriteHuman("%s frame entropy: %.2f bits/byte (consistent with random ciphertext)\n",

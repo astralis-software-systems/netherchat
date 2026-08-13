@@ -38,7 +38,13 @@ records from your own program with no relay running.
 ## Encrypted messaging
 
 A self-hostable blind relay and a terminal client. The relay routes opaque ciphertext and
-sealed key blobs; it holds no keys, decrypts nothing, and makes zero outbound calls.
+sealed key blobs: it holds no room key and no identity private key, and it cannot decrypt
+message content. There is no telemetry, no analytics and no phone-home, and out of the box
+it makes no outbound network calls at all. Two opt-in features add egress once an operator
+configures them: a `[[route]]` with a `reply_url` POSTs the spawned war room's join links to
+that URL, and `--tor` runs a local `tor` daemon to publish an onion service. The one key the
+relay can hold is its own — optional SQLite persistence (off by default) takes an
+operator-supplied at-rest key, and the rows it protects are still end-to-end ciphertext.
 
 **The relay cannot read your messages, and that is a property of the build graph.** The
 encryption lives in `tui/internal/crypto`, which Go's internal-package rule makes

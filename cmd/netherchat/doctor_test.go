@@ -74,7 +74,9 @@ func TestDoctorUnreachable(t *testing.T) {
 }
 
 // TestDoctorParanoid is the §3.1 proof end to end: a canary round-trips through a
-// real tapped relay and the relay-visible bytes are ciphertext only.
+// real tapped relay, appears in none of the relay-visible frames, and the message
+// bodies in those frames are high-entropy ciphertext. The routing fields around
+// them are plaintext — metadata confidentiality is not what this proves.
 func TestDoctorParanoid(t *testing.T) {
 	rep, err := runParanoid("", 20*time.Second)
 	if err != nil {
