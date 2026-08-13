@@ -5,10 +5,12 @@
 
 [server]
 addr = ":3000"
-# For wss:// you usually terminate TLS at a reverse proxy. To serve TLS directly,
-# set both of these (PEM files):
-# tls_cert = "/etc/netherchat/cert.pem"
-# tls_key  = "/etc/netherchat/key.pem"
+# The relay speaks PLAIN WebSocket and does not terminate TLS. For wss:// over the
+# public internet, terminate TLS at a reverse proxy (Caddy, nginx, Traefik) in
+# front of it — see docs/self-hosting.md, "TLS / wss://". There is deliberately no
+# tls_cert/tls_key here: setting either one is now a fatal config error rather than
+# a setting that quietly does nothing while you believe you are on wss://.
+# web_url = "https://chat.example.com"   # base URL of the browser join client (§1.3)
 
 [limits]
 # Per-connection inbound message rate limit (token bucket).
