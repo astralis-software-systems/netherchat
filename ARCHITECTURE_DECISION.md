@@ -252,9 +252,11 @@ crypto **without** the CGO penalty that libsignal/OpenMLS would impose.
   24-byte nonce per message (XChaCha's extended nonce makes random nonces safe
   without a counter). The plaintext is signed with the sender's Ed25519 key.
 - On the wire: `{ room, epoch, sender_pubkey, nonce, ciphertext, sig }`. The
-  server routes this opaque envelope. Recipients verify the signature, then
-  decrypt with `RK_e`. **A Wireshark capture shows ciphertext only — this is the
-  M1 acceptance test.**
+  server routes on the plaintext fields; only `ciphertext` is sealed. Recipients
+  verify the signature, then decrypt with `RK_e`. **A capture shows every message
+  body as ciphertext and nothing else — the routing fields around it are
+  plaintext. "No message plaintext on the wire" is the M1 acceptance test;
+  metadata confidentiality is explicitly not claimed (see `docs/encryption.md`).**
 
 ### Properties — stated honestly
 

@@ -109,13 +109,17 @@
             <div class="lp-card-ico">📡</div>
             <h3>Zero telemetry, zero persistence</h3>
             <p>
-              No analytics, no phone-home, ever. By default nothing is written to disk — rooms evaporate when empty.
-              A Wireshark capture shows ciphertext only.
+              No analytics, no phone-home, ever. By default nothing is written to disk — rooms evaporate when empty —
+              and the relay makes no outbound calls at all; a route's <code>reply_url</code> and <code>--tor</code> are
+              opt-in. Message bodies cross the wire as ciphertext it has no key to open.
             </p>
           </article>
         </div>
         <p class="lp-honest">
-          Honest about limits: forward secrecy is per-epoch (not per-message), and the group key-distribution layer is
+          Honest about limits: metadata is not hidden — the relay sees who is in which room, message sizes and timing,
+          and over a plain <code>ws://</code> hop so does the network, because the routing fields around the ciphertext
+          are plaintext JSON (terminate TLS at a reverse proxy in front of the relay).
+          Forward secrecy is per-epoch (not per-message), and the group key-distribution layer is
           custom over audited primitives — slated for external review before any paid tier, with MLS (RFC 9420) as the
           migration target. See <a href="https://github.com/salehkreiner/netherchat/blob/main/docs/encryption.md" rel="noreferrer">encryption.md</a>.
         </p>
@@ -151,8 +155,8 @@
             <p><code>/vanish</code> rotates the room key and clears history. Room TTLs, one-time invite tokens, invite-only rooms.</p>
           </article>
           <article class="lp-feature">
-            <h3>Proven by a capture you run</h3>
-            <p><code>netherchat doctor --paranoid</code> runs a live packet capture against the relay and proves it routes only ciphertext — no plaintext, ever. Not a claim. A test you run yourself.</p>
+            <h3>Proven by a check you run</h3>
+            <p><code>netherchat doctor --paranoid</code> stands up a frame-tapped relay running the production relay code, round-trips a canary between two real clients, and shows the canary in none of the frames the relay saw — with the ciphertext at 7.5+ bits/byte of entropy. Not a claim. A test you run yourself.</p>
           </article>
           <article class="lp-feature">
             <h3>Incident timeline, two audiences</h3>

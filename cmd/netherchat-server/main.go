@@ -1,7 +1,10 @@
 // Command netherchat-server is the Netherchat relay server: a WebSocket hub that
 // routes end-to-end-encrypted messages between clients. It is a blind relay — it
-// never sees plaintext and, by default, writes nothing to disk (R4). Zero
-// telemetry: it makes no outbound network calls.
+// never sees plaintext and, by default, writes nothing to disk (R4) and makes no
+// outbound network calls. Zero telemetry: no analytics, no phone-home. Every call
+// it can make is opt-in and operator-configured — a [[route]] with a reply_url
+// (server/internal/api.postReply) and --tor, which runs a local tor daemon to
+// publish an onion service.
 package main
 
 import (
