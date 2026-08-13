@@ -38,7 +38,7 @@ func TestPreservesUnmanaged(t *testing.T) {
 	src := `
 [server]
 addr = ":8443"
-tls_cert = "/etc/nc/cert.pem"
+web_url = "https://chat.example.com"
 
 [limits]
 messages_per_second = 5.0
@@ -66,7 +66,7 @@ fpr = "SHA256:abc"
 	}
 	s := string(out)
 	for _, want := range []string{
-		`addr = ':8443'`, `tls_cert`, `messages_per_second`, `burst`,
+		`addr = ':8443'`, `web_url`, `messages_per_second`, `burst`,
 		`[persistence]`, `path = '/var/lib/nc.db'`,
 	} {
 		if !strings.Contains(s, want) {

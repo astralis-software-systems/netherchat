@@ -67,3 +67,31 @@ quorum = 2
 		t.Fatal("invalid config should carry an error message")
 	}
 }
+
+// TestConfigValidateRejectsTLSKeys: the fail-closed tls_cert/tls_key check surfaces
+// through POST /api/v1/config/validate as valid:false, so a `terraform plan` that
+// would have deployed a relay serving plaintext ws:// under a TLS-shaped config
+// fails at plan time rather than at a restart nobody watches.
+func TestConfigValidateRejectsTLSKeys(t *testing.T) {
+	ts := httptest.NewServer(Handler(config.Default(), discardLog()))
+	defer ts.Close()
+
+	for _, toml := range []string{
+		"[server]\ntls_cert = \"/etc/nc/cert.pem\"\ntls_key = \"/etc/nc/key.pem\"\n",
+		"[server]\ntls_cert = \"/etc/nc/cert.pem\"\n",
+		"[server]\ntls_key = \"/etc/nc/key.pem\"\n",
+	} {
+		valid, errMsg := postValidate(t, ts.URL, toml)
+		if valid {
+			t.Fatalf("TLS-configured relay should validate as false:\n%s", toml)
+		}
+		if !strings.Contains(errMsg, "does not terminate TLS") {
+			t.Errorf("error should explain the relay terminates no TLS, got: %q", errMsg)
+		}
+	}
+
+	// The documented deployment — TLS upstream, relay on plain HTTP — stays valid.
+	if valid, errMsg := postValidate(t, ts.URL, "[server]\naddr = \":3000\"\n"); !valid {
+		t.Fatalf("a config without TLS keys must validate: %s", errMsg)
+	}
+}

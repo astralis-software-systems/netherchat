@@ -129,6 +129,13 @@ chat.example.com {
 
 Clients then connect with `netherchat connect wss://chat.example.com`.
 
+There is no in-relay TLS option. `[server]` accepts no `tls_cert`/`tls_key`, and
+setting either is a fatal config error (it fails `netherchat-server --config` and
+returns `valid:false` from `POST /api/v1/config/validate`) rather than a setting
+the relay silently ignores while you believe you are serving `wss://`. If you are
+upgrading from a config that carried those keys, delete them — they were never
+read, so removing them changes nothing about how your relay serves traffic.
+
 ## Reachability without infra: Tor onion service (`--tor`)
 
 When you have nothing to host *on* — no public IP, behind CGNAT, VPN down, the

@@ -7,6 +7,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -198,9 +199,21 @@ func resolveWebhookCap(override, global, builtin int) int {
 }
 
 type ServerConfig struct {
-	Addr    string `toml:"addr"`
+	Addr string `toml:"addr"`
+
+	// TLSCert/TLSKey exist ONLY so that a config which sets them can be REJECTED.
+	// The relay does not terminate TLS: server.Run serves plain HTTP, and the
+	// documented route to wss:// is a reverse proxy in front of it
+	// (docs/self-hosting.md). These fields were once accepted and read by nothing,
+	// so an operator who set them got plaintext ws:// with no error and no warning
+	// while believing TLS was on — a security control the config offered and did
+	// not honor. validate() now makes either one fatal. Deleting the fields would
+	// be worse, not better: go-toml ignores unknown keys, so the setting would go
+	// back to being silently swallowed. Do not wire them to a listener — adding
+	// TLS termination is a feature, not a fix for the silent downgrade.
 	TLSCert string `toml:"tls_cert"`
 	TLSKey  string `toml:"tls_key"`
+
 	// WebURL is the base URL of the browser join client. Auto-war-room (§1.3)
 	// uses it to build the one-time /join links it hands back to invitees. When
 	// empty the server falls back to the inbound request's own host.
@@ -493,6 +506,23 @@ func (c *Config) normalize() {
 // defaulting — configuration mistakes that must fail the operator's plan
 // (Load, and POST /api/v1/config/validate) rather than run as security theater.
 func (c *Config) validate() error {
+	// A TLS mandate the relay cannot honor is the same class of mistake: the relay
+	// terminates no TLS at all, so tls_cert/tls_key bought an operator plaintext
+	// ws:// plus a false belief they were on wss://. Fail the config rather than
+	// accept a security setting that does nothing.
+	var tlsKeys []string
+	if c.Server.TLSCert != "" {
+		tlsKeys = append(tlsKeys, "tls_cert")
+	}
+	if c.Server.TLSKey != "" {
+		tlsKeys = append(tlsKeys, "tls_key")
+	}
+	if len(tlsKeys) > 0 {
+		return fmt.Errorf("[server]: tls_cert/tls_key are not honored — the relay does not terminate TLS, "+
+			"it speaks plain WebSocket, and setting %s would have served plaintext ws:// with no warning. "+
+			"Terminate TLS at a reverse proxy (Caddy, nginx, Traefik) in front of the relay instead; "+
+			"see docs/self-hosting.md, \"TLS / wss://\"", strings.Join(tlsKeys, " and "))
+	}
 	for _, s := range c.Sources {
 		// A freshness mandate over an UNSIGNED timestamp is meaningless: a token-only
 		// source's `ts` is attacker-controllable, so require_fresh needs an
