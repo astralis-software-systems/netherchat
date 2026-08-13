@@ -16,7 +16,7 @@ var Version = "dev"
 // as AGPL-3.0 §13 requires for network-interactive use. Operators running a
 // MODIFIED Netherchat must override this to point at their own source, the
 // same way Version is overridden.
-var SourceURL = "https://github.com/salehkreiner/netherchat"
+var SourceURL = "https://github.com/astralis-software-systems/netherchat"
 
 // License is the SPDX identifier this build is distributed under.
 var License = "AGPL-3.0-or-later"

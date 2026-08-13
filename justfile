@@ -43,6 +43,11 @@ tidy:
 check-boundary:
     go test ./tui/e2e/ -run TestServerBinaryDoesNotLinkClientCrypto -v
 
+# Prove the egress claim: no outbound call site, and no new third-party module, may
+# enter the relay binary without an allowlist edit in tui/e2e/egress_test.go.
+check-egress:
+    go test ./tui/e2e/ -run TestServerEgress -v
+
 # Run the mDNS LAN discovery test, which `just test` skips by default. This one
 # ADVERTISES `_netherchat._tcp` on your local network and binds UDP 5353 — Windows
 # will prompt for firewall permission the first time (grant Private, not Public).

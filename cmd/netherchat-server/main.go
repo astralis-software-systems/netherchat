@@ -5,6 +5,16 @@
 // it can make is opt-in and operator-configured — a [[route]] with a reply_url
 // (server/internal/api.postReply) and --tor, which runs a local tor daemon to
 // publish an onion service.
+//
+// One further call is smaller than either and never leaves the host: --healthcheck
+// runs this binary as a one-shot probe that GETs /health on 127.0.0.1 and exits
+// (runHealthcheck, below), so the FROM-scratch image can declare a Docker
+// HEALTHCHECK without a shell or curl. It serves nothing and reaches no network.
+//
+// That set is closed structurally rather than by promise:
+// tui/e2e.TestServerEgressCallSitesAllowlisted parses every first-party package
+// this binary links and fails CI on any outbound call site not on its allowlist —
+// so a new one cannot land without this doc and README.md changing with it.
 package main
 
 import (

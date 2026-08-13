@@ -42,9 +42,16 @@ sealed key blobs: it holds no room key and no identity private key, and it canno
 message content. There is no telemetry, no analytics and no phone-home, and out of the box
 it makes no outbound network calls at all. Two opt-in features add egress once an operator
 configures them: a `[[route]]` with a `reply_url` POSTs the spawned war room's join links to
-that URL, and `--tor` runs a local `tor` daemon to publish an onion service. The one key the
-relay can hold is its own — optional SQLite persistence (off by default) takes an
-operator-supplied at-rest key, and the rows it protects are still end-to-end ciphertext.
+that URL, and `--tor` runs a local `tor` daemon to publish an onion service. One further
+call never leaves the host: `--healthcheck` runs the binary as a one-shot probe that GETs
+`/health` on `127.0.0.1` and exits, so the `FROM scratch` image can declare a Docker
+`HEALTHCHECK` without a shell or `curl`. That set is closed by a build-graph guard — a new
+outbound call site anywhere in the relay's dependency graph fails CI until it is
+allowlisted and this paragraph is updated (`TestServerEgressCallSitesAllowlisted`).
+
+The one key the relay can hold is its own — optional SQLite persistence (off by default)
+takes an operator-supplied at-rest key, and the rows it protects are still end-to-end
+ciphertext.
 
 **The relay cannot read your messages, and that is a property of the build graph.** The
 encryption lives in `tui/internal/crypto`, which Go's internal-package rule makes
