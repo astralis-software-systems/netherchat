@@ -23,7 +23,7 @@
 
 set -eu
 
-REPO="salehkreiner/netherchat"
+REPO="astralis-software-systems/netherchat"
 BINARY="netherchat"
 SERVER_BINARY="netherchat-server"
 VERSION="${NETHERCHAT_VERSION:-latest}"

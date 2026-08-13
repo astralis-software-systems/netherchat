@@ -30,7 +30,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Repo = 'salehkreiner/netherchat'
+$Repo = 'astralis-software-systems/netherchat'
 $Binary = 'netherchat.exe'
 $ServerBinary = 'netherchat-server.exe'
 

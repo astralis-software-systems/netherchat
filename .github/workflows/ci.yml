@@ -38,6 +38,12 @@ jobs:
       - name: blind-relay boundary guard
         run: go test ./tui/e2e/ -run TestServerBinaryDoesNotLinkClientCrypto -v
 
+      # Keeps README.md's "no outbound network calls out of the box" claim true: a new
+      # outbound call site, or a new third-party module, in the relay's dependency
+      # graph fails here until it is allowlisted and the claim is updated to match.
+      - name: relay egress guard
+        run: go test ./tui/e2e/ -run TestServerEgress -v
+
       # Both modules, explicitly: govulncheck only walks the CURRENT module, so a
       # root-only scan reports clean while the provider module carries reachable
       # vulnerabilities. No continue-on-error — a reachable vuln fails the build.
