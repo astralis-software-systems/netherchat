@@ -6,7 +6,7 @@
 
 Two capabilities over one cryptographic core.
 
-*by [Astralis Software Systems](https://github.com/salehkreiner)*
+*by [Astralis Software Systems](https://github.com/astralis-software-systems)*
 
 </div>
 
