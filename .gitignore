@@ -33,3 +33,5 @@ Thumbs.db
 # Web client (v2) dependencies
 web/node_modules/
 web/dist/
+
+qa-read-report.md
