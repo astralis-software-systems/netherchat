@@ -104,6 +104,6 @@ homebrew_casks:
 
 release:
   github:
-    owner: salehkreiner
+    owner: astralis-software-systems
     name: netherchat
   prerelease: auto
