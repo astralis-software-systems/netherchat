@@ -24,7 +24,7 @@ import (
 // joins a room as an ordinary E2E member, watches for signed EXEC_REQUEST
 // messages, matches each against its OWN local allowlist, runs the mapped command
 // on THIS host, and posts a signed EXEC_RESULT back into the room. The relay only
-// ever sees ciphertext and never runs anything (FEATURE_ROADMAP_FREE.md §0.1).
+// ever sees ciphertext and never runs anything.
 func agentCmd(args []string) {
 	fs := flag.NewFlagSet("agent", flag.ExitOnError)
 	url := fs.String("server", "ws://localhost:3000", "server URL")

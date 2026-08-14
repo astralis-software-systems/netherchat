@@ -5,8 +5,7 @@
 // falls back to the terminal bell when none is available.
 //
 // This is the honest version of "notifications": local-only costs nothing and
-// needs no infrastructure, which is exactly why APNs/FCM were rejected
-// (FEATURE_ROADMAP_V2.md §2.1, §4).
+// needs no infrastructure, which is exactly why APNs/FCM were rejected.
 package notify
 
 import (

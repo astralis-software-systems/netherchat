@@ -17,7 +17,7 @@ import (
 // Config is the full server configuration. The [[trust]] table is the one
 // exception to "server config": it is read only by CLIENTS for identity pinning
 // (/whois). The relay never reads, forwards, or participates in trust decisions —
-// trust is evaluated entirely client-side (FEATURE_ROADMAP_FREE.md §1.1).
+// trust is evaluated entirely client-side.
 type Config struct {
 	Server      ServerConfig            `toml:"server"`
 	Limits      LimitsConfig            `toml:"limits"`
@@ -49,12 +49,12 @@ type DirectConfig struct {
 	LANDiscovery bool `toml:"lan_discovery"` // advertise/discover on the LAN via mDNS
 }
 
-// ActionPolicy is a per-action quorum policy: the Two-Person Rule
-// (FEATURE_ROADMAP_V2.md §1.3). The table key is the action name, e.g.
-// [action.runbook]. Enforcement is CLIENT-SIDE and cryptographic: a privileged
-// action does not fire until `quorum` distinct authorized members (the requester
-// counts as one, via their signed request) co-sign the same request hash. quorum 1
-// (or an absent entry) is single-actor behavior; quorum 0 disables the action.
+// ActionPolicy is a per-action quorum policy: the Two-Person Rule. The table key
+// is the action name, e.g. [action.runbook]. Enforcement is CLIENT-SIDE and
+// cryptographic: a privileged action does not fire until `quorum` distinct
+// authorized members (the requester counts as one, via their signed request)
+// co-sign the same request hash. quorum 1 (or an absent entry) is single-actor
+// behavior; quorum 0 disables the action.
 //
 // This is a CLIENT-evaluated policy, like [[trust]]: the connecting client and the
 // edge agent read it from netherchat.toml and gate the action over Ed25519
@@ -276,7 +276,7 @@ type PersistenceConfig struct {
 //
 // Note: there is deliberately NO server-side exec policy. Command execution is an
 // edge concern handled by `netherchat agent` against its own local allowlist; a
-// blind relay must never run commands (FEATURE_ROADMAP_FREE.md §0.1).
+// blind relay must never run commands.
 type RoomConfig struct {
 	InviteOnly   bool   `toml:"invite_only"`
 	Webhook      bool   `toml:"webhook"`

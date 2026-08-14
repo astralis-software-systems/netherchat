@@ -59,7 +59,7 @@ type ServerMessage struct {
 // under the room key, Ed25519-signed); the relay only ever sees ciphertext and
 // never runs anything. Execution happens at the edge: a `netherchat agent` on the
 // operator's own host matches the request against its own allowlist, runs it, and
-// posts a signed result back (FEATURE_ROADMAP_FREE.md §0.1 / §2.1).
+// posts a signed result back.
 
 // ExecRequestBody names an action a room member is asking an agent to run. The
 // agent maps Cmd to a concrete command via its local runbook — callers never
@@ -133,9 +133,8 @@ type RouteFired struct {
 // AckBody is the END-TO-END-ENCRYPTED plaintext of an OpAck Message (§2.2). An
 // /ack is a typed coordination primitive — it carries a tag that the room counts
 // into a quorum (one ack per identity fingerprint per tag). It is deliberately
-// NOT a reaction emoji: free-form reactions are a rejected feature
-// (FEATURE_ROADMAP_FREE.md §4). The acting identity is the signed Message's
-// sender, so the body needs only the tag.
+// NOT a reaction emoji: free-form reactions are a rejected feature. The acting
+// identity is the signed Message's sender, so the body needs only the tag.
 type AckBody struct {
 	Tag string `json:"tag"`
 }

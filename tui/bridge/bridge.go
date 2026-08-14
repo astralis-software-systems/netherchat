@@ -13,9 +13,9 @@
 // EPHEMERALITY GUARD: callbacks are fire-and-forget with IN-MEMORY retry only
 // (bounded exponential backoff). If the bridge process dies, undelivered
 // callbacks die with it. This is intentional — a durable on-disk queue would
-// re-introduce persistence and violate the product's zero-persistence constraint
-// (FEATURE_ROADMAP_V2.md §1.6, §4). For reliable delivery, run the bridge on
-// stable infrastructure and make the receiver idempotent.
+// re-introduce persistence and violate the product's zero-persistence constraint.
+// For reliable delivery, run the bridge on stable infrastructure and make the
+// receiver idempotent.
 package bridge
 
 import (

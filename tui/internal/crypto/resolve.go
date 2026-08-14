@@ -7,8 +7,7 @@ import (
 	"path/filepath"
 )
 
-// ResolveIdentity loads the operator's identity following the BYO-key precedence
-// (FEATURE_ROADMAP_FREE.md §1.1):
+// ResolveIdentity loads the operator's identity following the BYO-key precedence:
 //
 //	a. explicitPath (--identity)            any supported key file
 //	b. SSH_AUTH_SOCK                         ssh-agent, first Ed25519 key

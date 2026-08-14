@@ -67,8 +67,8 @@ const (
 	// Coordination primitives (§2.2, additive). Both carry a Message envelope
 	// (sealed under the room key, Ed25519-signed) exactly like OpExecRequest — the
 	// relay only ever sees ciphertext. These are TYPED coordination state, not
-	// social reactions (free-form emoji reactions are explicitly rejected,
-	// FEATURE_ROADMAP_FREE.md §4). See PROTOCOL.md §13.
+	// social reactions (free-form emoji reactions are explicitly rejected). See
+	// PROTOCOL.md §13.
 	OpAck     Op = "ack"     // member -> room: a typed, countable ack of a tag
 	OpHandoff Op = "handoff" // member -> room: transfer the incident-commander token
 
