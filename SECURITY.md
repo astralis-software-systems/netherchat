@@ -52,8 +52,6 @@ bug bounty — nothing is paid for a report.
   device, they have the keys.
 - Denial of service against a self-hosted relay you control.
 - Missing hardening headers on the local API.
-- Anything under `docs/plans/` — that describes historical work, not shipped
-  behavior.
 
 ## What we do not claim
 
