@@ -18,10 +18,10 @@ import (
 // end-to-end-encrypted message between two clients that dial it over Tor (§1.5):
 // no public IP, no DNS, no TLS — the .onion address IS the relay's key.
 //
-// It SKIPS when tor is not installed so CI never fails for tor's absence
-// (FEATURE_ROADMAP_FREE.md §6: the Tor integration is the highest-variance
-// dependency and must not block the core). When tor IS present it is a real
-// round trip: tor bootstraps, the descriptor publishes, and the clients rendezvous.
+// It SKIPS when tor is not installed so CI never fails for tor's absence (the Tor
+// integration is the highest-variance dependency and must not block the core).
+// When tor IS present it is a real round trip: tor bootstraps, the descriptor
+// publishes, and the clients rendezvous.
 func TestTorOnionRoundTrip(t *testing.T) {
 	if !server.TorInstalled() {
 		t.Skip("tor not in PATH; skipping onion-service integration test")

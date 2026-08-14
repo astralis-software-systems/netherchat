@@ -14,7 +14,7 @@ import (
 
 // TrustEntry mirrors a [[trust]] block from netherchat.toml. It is evaluated
 // entirely client-side; the relay never sees it or participates in any trust
-// decision (FEATURE_ROADMAP_FREE.md §1.1).
+// decision.
 type TrustEntry struct {
 	Handle  string
 	Fpr     string // optional pinned "SHA256:…" fingerprint

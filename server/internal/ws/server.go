@@ -325,8 +325,7 @@ func (s *Server) relay(room, fromID string, env protocol.Envelope) {
 		// the gated action and its parameters, and never runs, counts, chains, signs,
 		// or gates anything; the record chain, quorum, IC token, roster attestation,
 		// and the privileged-action quorum are all computed client-side from the
-		// signed payloads — the relay cannot bypass or be coerced to bypass the gate
-		// (FEATURE_ROADMAP_FREE.md §0.1, §1.4, §2.2; FEATURE_ROADMAP_V2.md §1.3, §1.4).
+		// signed payloads — the relay cannot bypass or be coerced to bypass the gate.
 		var m protocol.Message
 		if err := env.Decode(&m); err != nil {
 			return
