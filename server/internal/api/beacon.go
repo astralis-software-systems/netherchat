@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -31,8 +32,8 @@ func (a *API) beaconPut(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "beacon is not enabled for this room", http.StatusNotFound)
 		return
 	}
-	if beaconToken(r) != want {
-		http.Error(w, "invalid or missing beacon token", http.StatusUnauthorized)
+	if !beaconAuthorized(r, want) {
+		a.rejectBeaconWrite(w, r, room)
 		return
 	}
 
@@ -90,13 +91,42 @@ func (a *API) beaconDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "beacon is not enabled for this room", http.StatusNotFound)
 		return
 	}
-	if beaconToken(r) != want {
-		http.Error(w, "invalid or missing beacon token", http.StatusUnauthorized)
+	if !beaconAuthorized(r, want) {
+		a.rejectBeaconWrite(w, r, room)
 		return
 	}
 	a.beacons.Delete(room)
 	a.log.Info("beacon cleared", "room", room)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// rejectBeaconWrite refuses an unauthorized PUT/DELETE and records the attempt,
+// following the "<endpoint> rejected: <reason>" convention the webhook receiver
+// and the alert socket use for theirs. Without it a run of guesses against a
+// room's beacon token leaves no trace at all in the relay's logs.
+//
+// METADATA ONLY: the room and the method, never the presented token or any part
+// of it. A log line that echoed a guess back would put candidate secrets — and,
+// on a near miss, most of a real one — into a file with none of the protections
+// the token itself gets, which is also why the reason is fixed text rather than
+// anything derived from what the caller sent.
+func (a *API) rejectBeaconWrite(w http.ResponseWriter, r *http.Request, room string) {
+	a.log.Warn("beacon rejected: invalid or missing token", "room", room, "method", r.Method)
+	http.Error(w, "invalid or missing beacon token", http.StatusUnauthorized)
+}
+
+// beaconAuthorized reports whether r carries the token that authorizes beacon
+// writes for the room. The compare is constant-time, matching the webhook
+// receiver above and the alert socket (internal/alert): BeaconAuth deliberately
+// lets a room reuse its webhook_token for the beacon, so the very same secret is
+// checked by both endpoints and must not be checked two different ways depending
+// on which one the caller reaches for.
+//
+// An empty want never authorizes. BeaconAuth reports enabled only when a token is
+// configured, so want is non-empty at both call sites today; not leaning on that
+// is what keeps a missing header from ever comparing equal to an unset token.
+func beaconAuthorized(r *http.Request, want string) bool {
+	return want != "" && subtle.ConstantTimeCompare([]byte(beaconToken(r)), []byte(want)) == 1
 }
 
 // beaconToken extracts the auth token from the X-Netherchat-Token header or the

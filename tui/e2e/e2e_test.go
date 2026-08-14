@@ -14,7 +14,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http/httptest"
-	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -225,15 +225,53 @@ func (e *eavesdropper) waitForMessages(t *testing.T, n int, timeout time.Duratio
 	return frames
 }
 
+// cryptoPkg is the import path of the client crypto package, taken from the
+// package itself rather than written out as a string literal. The guard below
+// asserts an ABSENCE, and an absence is vacuously true the moment you look for a
+// name that no longer exists: rename or move the package and a hardcoded path
+// would keep passing forever while checking nothing at all. Derived this way the
+// path follows the package, and a path that stopped resolving would not compile.
+var cryptoPkg = reflect.TypeOf(crypto.Identity{}).PkgPath()
+
 // TestServerBinaryDoesNotLinkClientCrypto proves the blind-relay boundary at the
 // build-graph level: the server binary's transitive dependencies must not
 // include the client crypto package. The server literally cannot decrypt.
+//
+// Like the egress guard next door, this does not skip when the toolchain
+// misbehaves: a guard that can silently not run is not a guard, and `go test`
+// running at all means `go list` is there. README.md sells this check as "CI
+// fails if that ever changes ... not a marketing line", and a Skip would make
+// that sentence true only on the days nothing went wrong — a module-cache blip
+// or a transient download failure would turn the boundary check into a green
+// tick. serverLinkedPackages fails loudly on a go list error or an empty graph,
+// so the only way to reach the comparison below is holding the real graph.
 func TestServerBinaryDoesNotLinkClientCrypto(t *testing.T) {
-	out, err := exec.Command("go", "list", "-deps", "github.com/salehkreiner/netherchat/cmd/netherchat-server").CombinedOutput()
-	if err != nil {
-		t.Skipf("go list unavailable: %v\n%s", err, out)
+	pkgs := serverLinkedPackages(t)
+
+	linked := make(map[string]bool, len(pkgs))
+	for _, p := range pkgs {
+		linked[p.ImportPath] = true
 	}
-	if strings.Contains(string(out), "tui/internal/crypto") {
-		t.Fatalf("server binary transitively imports tui/internal/crypto — blind-relay boundary violated")
+
+	// Positive control: packages the relay must link, matched exactly the way the
+	// crypto path is matched below. If these are missing, the comparison is not
+	// finding packages that ARE in the graph, and the absence proved afterwards
+	// would mean nothing.
+	for _, must := range []string{serverMainPkg, netherchatModule + "/protocol"} {
+		if !linked[must] {
+			t.Fatalf("%s is absent from the %d-package %s dependency graph; the guard is not inspecting the relay", must, len(linked), serverMainPkg)
+		}
+	}
+
+	for _, p := range pkgs {
+		if p.ImportPath != cryptoPkg && !strings.HasPrefix(p.ImportPath, cryptoPkg+"/") {
+			continue
+		}
+		t.Fatalf(`the server binary transitively imports %s — the blind-relay boundary is violated.
+
+Only packages under tui/ may reach the client crypto package; that Go visibility rule is
+what makes "the server cannot read message content" a property of the build graph rather
+than a promise. To share a type across the boundary, put a crypto-free one in protocol/ —
+do not import %s from a server-side package.`, p.ImportPath, cryptoPkg)
 	}
 }
