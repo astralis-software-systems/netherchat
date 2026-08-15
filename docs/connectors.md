@@ -18,6 +18,22 @@ They are **arms-length**: an adapter is a small standalone binary that depends o
 on the relay's public HTTP contract. Removing an adapter removes no core
 functionality, and the relay has no adapter-specific code.
 
+### Getting the binaries
+
+Connectors are **built from source** — releases and the Docker image ship only
+`netherchat` and `netherchat-server`. With Go 1.26+:
+
+```bash
+go build -o bin/ ./cmd/netherchat-findings-adapter
+go build -o bin/ ./cmd/netherchat-egress-adapter
+go build -o bin/ ./cmd/netherchat-siem-adapter
+```
+
+`go build -o bin/ ./cmd/...` (or `just build`) builds every binary in the repo at
+once. The connectors named later in this page — `netherchat-teams-notify`,
+`netherchat-teams-bot`, `netherchat-itsm`, and the [NC-5 tier-2
+set](nc5-connectors.md) — build the same way from their own `./cmd/` directory.
+
 ---
 
 ## The boundary law (what crosses, what never does)

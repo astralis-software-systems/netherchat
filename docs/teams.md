@@ -9,6 +9,16 @@ SDK**:
 - **Inbound initiate** (`netherchat-teams-bot`) — lets a Teams user open a war room
   with a chat command and get back a one-time join link.
 
+Both are built from source — releases and the Docker image ship only `netherchat`
+and `netherchat-server`. With Go 1.26+:
+
+```sh
+go build -o bin/ ./cmd/netherchat-teams-notify
+go build -o bin/ ./cmd/netherchat-teams-bot
+```
+
+(`go build -o bin/ ./cmd/...`, or `just build`, builds every binary in the repo.)
+
 ## The boundary — read this first
 
 > **Teams sees:** who opened the room, the severity, a one-time join link, and (on

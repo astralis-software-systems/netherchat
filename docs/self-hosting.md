@@ -255,13 +255,23 @@ between members — still no external infrastructure, and that peer is a full ro
 member who holds the key anyway, not a separate server. It works well for small
 groups; for larger groups use the relay.
 
-Configure defaults in `netherchat.toml`:
+Configure defaults in `netherchat.toml` (read client-side by `netherchat pair` —
+the relay never sees this table):
 
 ```toml
 [direct]
 port = 7777          # listening port for direct connections (0 = a free port)
-lan_discovery = true # advertise on the LAN via mDNS
+lan_discovery = true # advertise on the LAN via mDNS, even without --lan
 ```
+
+Flags take precedence over both: `--port` overrides `port`, and `lan_discovery`
+is OR-ed with `--lan` rather than gating it — setting it to `false` never switches
+off a `--lan` you asked for. Its practical effect is on `pair --manual`, which
+otherwise only prints an offer blob: with `lan_discovery = true` that host also
+advertises itself on the LAN so peers can discover and `/pair` it. Advertising
+binds UDP 5353 and announces your fingerprint and port to the local network, so it
+stays opt-in; if multicast is unavailable the command says so and the manual offer
+still works.
 
 ## REST endpoints
 
@@ -283,8 +293,11 @@ lan_discovery = true # advertise on the LAN via mDNS
 ## Persistence
 
 Off by default — the server is purely in-memory and rooms evaporate when empty.
-(Opt-in local SQLite persistence is a later milestone; it will never write to the
-cloud.)
+Opt-in local SQLite persistence is available via [`[persistence]`](#configuration-netherchattoml)
+and is strictly local: it never writes to the cloud. What it does and does not buy
+you — replay to an active room, nothing recoverable after the room empties or the
+server restarts, and how the at-rest key is resolved — is in
+[`encryption.md`](encryption.md).
 
 ## License and source
 

@@ -54,12 +54,17 @@ func pairCmd(args []string) {
 	}
 	fmt.Fprintln(os.Stderr, configProvenanceLine(cfg, source))
 
+	// [direct] supplies the CLIENT-side Sneakernet defaults (§1.1) the flags do not
+	// carry. LAN is OR-ed, never AND-ed: --lan selects the discovery mode outright, so
+	// lan_discovery only ADDS mDNS advertising to a --manual host that would otherwise
+	// only print an offer blob. A config value must never switch off a mode the
+	// operator asked for on the command line.
 	opts := sneakernet.Options{
 		Room:         strings.TrimPrefix(*room, "#"),
 		Name:         *name,
 		IdentityPath: *identity,
-		Port:         *port,
-		LAN:          *lan,
+		Port:         directPort(*port, cfg.Direct.Port),
+		LAN:          directLAN(*lan, cfg.Direct.LANDiscovery),
 		QR:           *qrFlag,
 		ActionQuorum: actionQuorums(cfg),
 		In:           os.Stdin,
@@ -81,4 +86,26 @@ func pairCmd(args []string) {
 	if err != nil {
 		fatal(err)
 	}
+}
+
+// directPort resolves the direct-listener port from the --port flag and the
+// [direct] port default in netherchat.toml. The flag wins when given; 0 (the flag
+// default) falls through to the config, and 0 at both levels means "a free port".
+//
+// Flag-over-config, not config-over-flag: a value the operator typed on this
+// invocation is always more specific than a file default.
+func directPort(flagPort, cfgPort int) int {
+	if flagPort != 0 {
+		return flagPort
+	}
+	return cfgPort
+}
+
+// directLAN resolves mDNS advertising from the --lan flag and the [direct]
+// lan_discovery default. It is a UNION, deliberately: --lan selects the discovery
+// mode outright, while lan_discovery only adds an advertisement to a --manual host
+// that would otherwise just print an offer blob. Config can turn advertising on; it
+// can never turn off what the operator asked for on the command line.
+func directLAN(flagLAN, cfgLAN bool) bool {
+	return flagLAN || cfgLAN
 }
