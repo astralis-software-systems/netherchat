@@ -122,6 +122,8 @@ interface ChatUI {
   statusText: HTMLElement;
   count: HTMLElement;
   members: number;
+  /** Whether the one-time "what unsigned means" note has been shown. */
+  explainedUnsigned: boolean;
 }
 
 function renderChat(roomName: string): ChatUI {
@@ -163,7 +165,7 @@ function renderChat(roomName: string): ChatUI {
 
   app.appendChild(chat);
 
-  return { form, input, messages, status, statusText, count, members: 0 };
+  return { form, input, messages, status, statusText, count, members: 0, explainedUnsigned: false };
 }
 
 // --- event handling ---------------------------------------------------------
@@ -180,7 +182,7 @@ function onEvent(ui: ChatUI, e: ClientEvent): void {
       ui.input.focus();
       break;
     case "message":
-      addMessage(ui, e.self ? "you" : e.fromName, e.text, e.self, e.at);
+      addMessage(ui, e.self ? "you" : e.fromName, e.text, e.self, e.signed, e.at);
       break;
     case "serverMessage":
       addPlain(ui, e.from, e.text);
@@ -232,18 +234,60 @@ function friendlyError(message: string): string {
 
 // --- message rendering (all user text via textContent — no innerHTML) -------
 
-function addMessage(ui: ChatUI, name: string, text: string, self: boolean, atMs: number): void {
+// The signed baseline is deliberately unmarked (a chip on every line would be
+// noise), so the unsigned case must carry the whole signal on its own: a word
+// rather than a symbol, warn colour, a tinted row with a left rule, a hover/focus
+// explanation, and a one-time note the first time it happens that also states
+// what the *absence* of a mark means. Someone who has never heard of message
+// signing should still read "unsigned … not verified" and understand it.
+const UNSIGNED_TITLE =
+  "Unsigned: this message carried no signature, so it is attributed to the sender " +
+  "by the relay's routing alone — not proven. It is still end-to-end encrypted; " +
+  "the relay cannot read or alter the text, but it can strip a signature.";
+
+const UNSIGNED_NOTE =
+  "⚠ the message below arrived unsigned — its sender is claimed, not proven. " +
+  "A relay can strip a signature, and older clients never send one. Messages " +
+  "without this mark were signature-verified.";
+
+function addMessage(
+  ui: ChatUI,
+  name: string,
+  text: string,
+  self: boolean,
+  signed: boolean,
+  atMs: number,
+): void {
+  if (!signed && !ui.explainedUnsigned) {
+    ui.explainedUnsigned = true;
+    addLine(ui, "nc-unsigned-note", UNSIGNED_NOTE);
+  }
+
   const row = div("nc-row");
   if (self) row.classList.add("nc-self");
+  if (!signed) row.classList.add("nc-unsigned-row");
   row.appendChild(span("nc-ts", fmtTime(atMs)));
   const nameEl = span("nc-name", name);
   if (!self) nameEl.style.color = nameColor(name);
   row.appendChild(nameEl);
+  if (!signed) row.appendChild(unsignedBadge());
   row.append(": ");
   const textEl = span("nc-text", "");
   appendRichText(textEl, text);
   row.appendChild(textEl);
   push(ui, row);
+}
+
+/** The badge drawn after an unsigned sender's name. Text only — no innerHTML. */
+function unsignedBadge(): HTMLElement {
+  const badge = span("nc-unsigned", "⚠ unsigned");
+  badge.title = UNSIGNED_TITLE;
+  // Reachable without a pointer: keyboard focus and screen readers both get the
+  // long explanation, which a hover-only tooltip would hide on touch devices.
+  badge.tabIndex = 0;
+  badge.setAttribute("role", "note");
+  badge.setAttribute("aria-label", UNSIGNED_TITLE);
+  return badge;
 }
 
 function addPlain(ui: ChatUI, from: string, text: string): void {
