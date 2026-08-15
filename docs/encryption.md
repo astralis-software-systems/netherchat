@@ -158,18 +158,51 @@ It is a deviation from "the relay stores nothing", so it is fenced in tightly:
   messages, which use `room_key` directly.
 - **The relay still cannot read it.** Only ciphertext is PUT to the relay; the
   beacon key is never sent to the server. A `GET /beacon/<room>` returns opaque
-  bytes — useless without the key.
+  bytes — useless without the key. This holds because the reader's link carries the
+  key in the **URL fragment** — see below; it is a property of the link shape, not
+  of operator discipline.
 - **Opt-in per room.** A room can have a beacon only if it sets `beacon_token` (or
   reuses its `webhook_token`). It is never default-on.
 - **Explicitly TTL'd and auto-purged.** Each beacon has a lifetime (capped by
   `beacon_ttl`, hard max 24h) after which it auto-expires, and it is purged the
   moment the room scuttles or otherwise closes.
 
-The reader's link, `…/beacon?room=<room>&key=<base64 beacon_key>`, carries the
-beacon key (not the room key) and confers **no membership**: it is a read-only view
-of one mutable line. The status and the room therefore have **different
-cryptographic visibility boundaries** derived from the same session — the whole
-point of the feature.
+The reader's link, `…/beacon?room=<room>&ttl=<seconds>#key=<base64 beacon_key>`,
+carries the beacon key (not the room key) and confers **no membership**: it is a
+read-only view of one mutable line. The status and the room therefore have
+**different cryptographic visibility boundaries** derived from the same session —
+the whole point of the feature.
+
+### Why the key is after the `#`
+
+The key is in the **fragment**, and that placement is what makes "never sent to the
+server" true rather than aspirational:
+
+- A fragment is client-side only (RFC 3986 §3.5). The browser strips it before
+  building the request, so it is not in the page's request line and reaches no
+  access log.
+- The Referrer Policy algorithm drops the fragment **unconditionally, under every
+  policy**. This matters because the reader page polls a *same-origin*
+  `/beacon/<room>` every 30 seconds, and the browser default
+  (`strict-origin-when-cross-origin`) sends the **full URL, query string included**,
+  on same-origin requests. A `?key=` would therefore hand the relay the key every
+  30 seconds, for a ciphertext it already stores. `beacon.html` additionally sends
+  `Referrer-Policy: no-referrer` so not even the room name rides along.
+
+Two honest consequences:
+
+- **A `?key=` link is refused, not honoured.** The reader page will not open an
+  old-format link; it says so and tells you to mint a new one. Reading the key at
+  that point would change nothing — the page load already sent it — so any beacon
+  key that was ever handed out in a query string should be treated as **exposed to
+  the relay**. Re-mint the link; and because the beacon key is derived
+  (`HKDF(room_key, …)`, deterministic), the exposure lasts for the life of that room
+  key, so rotate the room if it matters. `ttl` bounds how long the relay *stores the
+  blob*, not how long the key works.
+- **The fragment is still on the reader's own machine** — in their history, in a
+  bookmark, in session restore. That is inherent to every fragment-key link and is
+  deliberately not scrubbed (it would break reload). The threat this closes is the
+  **relay** learning the key, not the reader's own device.
 
 ## Persistence and history (important caveat)
 

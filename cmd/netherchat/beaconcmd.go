@@ -94,9 +94,23 @@ func webBaseFor(serverURL, webURL string) string {
 	return u.Scheme + "://" + u.Host
 }
 
-// beaconLinkURL builds the read-only beacon URL.
+// beaconLinkURL builds the read-only beacon URL:
+//
+//	https://host/beacon?room=<room>&ttl=<seconds>#key=<base64 beacon key>
+//
+// The key goes in the FRAGMENT, never the query. A fragment is client-side only
+// (RFC 3986 §3.5) — the browser strips it before sending, and the Referrer Policy
+// spec drops it from `Referer` under every policy. In the query it would instead be
+// sent to the relay twice over: in the page's own request line, and in the `Referer`
+// of the reader page's same-origin status poll every 30 seconds. The relay already
+// stores the ciphertext; it must not also be handed the key (docs/encryption.md).
+// Only the room and the stated lifetime — neither secret, and the room is in the
+// poll's path regardless — stay in the query.
 func beaconLinkURL(base, room, keyB64 string, ttlSeconds int) string {
 	base = strings.TrimRight(base, "/")
-	q := url.Values{"room": {room}, "key": {keyB64}, "ttl": {strconv.Itoa(ttlSeconds)}}
-	return base + "/beacon?" + q.Encode()
+	q := url.Values{"room": {room}, "ttl": {strconv.Itoa(ttlSeconds)}}
+	// Encode() percent-escapes the key's "+/=" so the browser's URLSearchParams,
+	// which form-decodes the fragment, reads back the exact base64 bytes.
+	frag := url.Values{"key": {keyB64}}
+	return base + "/beacon?" + q.Encode() + "#" + frag.Encode()
 }

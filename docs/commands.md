@@ -246,10 +246,16 @@ Then, from the TUI:
 
 `netherchat beacon-link <room> --ttl 2h` does the same from the shell (it joins the
 room briefly to derive the beacon key, prints the URL, and exits). The URL looks
-like `https://chat.example.com/beacon?room=ops&key=<base64>&ttl=7200`: paste it into
+like `https://chat.example.com/beacon?room=ops&ttl=7200#key=<base64>`: paste it into
 your (untrusted, persisted) corporate chat and stakeholders watch a live status
 line. The `key` is the **beacon key only** — it cannot decrypt messages and confers
 no membership.
+
+Note the `#`. The key is in the URL **fragment**, which browsers never send to a
+server — not in the request line, and not in the `Referer` of the reader page's 30s
+status poll. Copy the link whole; a link that puts the key in the query string
+(`?key=`) leaks it to the relay and the reader page **refuses to open it**. See
+[encryption.md](encryption.md) for the full reasoning.
 
 How it stays honest: the status is sealed with
 `beacon_key = HKDF-SHA256(room_key, "netherchat/beacon/v1")`, distinct from the

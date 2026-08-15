@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <meta name="robots" content="noindex" />
+    <!-- The beacon key rides in the fragment, which is never sent to a server. This
+         is belt and braces for what is left: it stops the room name and any future
+         query parameter from reaching the relay in the `Referer` of the 30s poll. -->
+    <meta name="referrer" content="no-referrer" />
     <title>Netherchat — status beacon</title>
     <meta name="description" content="A read-only Netherchat status beacon. Live incident status, decrypted in your browser. No room access, nothing saved." />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
