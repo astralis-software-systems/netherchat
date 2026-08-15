@@ -695,11 +695,20 @@ func (m *Model) runBeaconLink(r *room, arg string) {
 }
 
 // beaconLink builds the browser read URL for a room beacon: the web /beacon page
-// with the room, the base64 beacon key, and the link's stated lifetime.
+// with the room and the link's stated lifetime in the query, and the base64 beacon
+// key in the FRAGMENT:
+//
+//	https://host/beacon?room=<room>&ttl=<seconds>#key=<base64 beacon key>
+//
+// The fragment placement is the security-relevant part: a fragment is client-side
+// only (RFC 3986 §3.5), so the key reaches neither the relay's request line nor the
+// `Referer` of the reader page's 30s status poll. Keep this in step with
+// beaconLinkURL in cmd/netherchat — the web reader parses one shape.
 func (m *Model) beaconLink(room, keyB64 string, ttlSeconds int) string {
 	base := strings.TrimRight(m.webBase(), "/")
-	q := url.Values{"room": {room}, "key": {keyB64}, "ttl": {strconv.Itoa(ttlSeconds)}}
-	return base + "/beacon?" + q.Encode()
+	q := url.Values{"room": {room}, "ttl": {strconv.Itoa(ttlSeconds)}}
+	frag := url.Values{"key": {keyB64}}
+	return base + "/beacon?" + q.Encode() + "#" + frag.Encode()
 }
 
 // parseBeaconLinkTTL parses an optional "--ttl <dur>" (default 1h, max 24h).

@@ -6,6 +6,7 @@ import { newRoomKey, ratchet, wrapRoomKey, unwrapRoomKey, sealMessage, openMessa
 import { newEphemeralIdentity, fingerprint } from "../src/crypto/identity";
 import { signingBytes } from "../src/crypto/signing";
 import { deriveBeaconKey, openBeacon } from "../src/crypto/beacon";
+import { parseBeaconLink } from "../src/beacon/link";
 
 // Protocol v3 vector (room-bound signature) from protocol's TestGenInteropVector.
 const VECTOR = {
@@ -128,6 +129,29 @@ const BEACON = {
     threw = true;
   }
   check("room key cannot read beacon", threw);
+}
+
+// 10. Beacon LINK shape (§1.2): the exact string Go's beaconLinkURL emits parses
+// here, with the key recovered from the FRAGMENT and absent from the query. Held
+// byte-for-byte on the Go side by TestBeaconLinkURLMatchesWebVector
+// (cmd/netherchat/beaconcmd_test.go) — if either side changes shape, one fails.
+{
+  const GO_LINK = "https://chat.example.com/beacon?room=ops&ttl=7200#key=o4qq5R8jF5zoXjiPj3reJsRFk%2F3Iok9ZFyJR0PJSAQQ%3D";
+  const u = new URL(GO_LINK);
+  check("Go beacon link keeps the key out of the query", !u.search.includes("key"));
+
+  const link = parseBeaconLink(u.search, u.hash);
+  check("browser reads the beacon key from the Go link's fragment", link.ok && toB64(link.key) === BEACON.beaconKeyB64 && link.room === "ops");
+
+  // And the key recovered from the link decrypts the Go-sealed blob end to end.
+  check(
+    "key from the link decrypts the Go-sealed beacon",
+    link.ok && openBeacon(link.key, fromB64(BEACON.blobB64)) === BEACON.status,
+  );
+
+  // A query-string key is refused, not silently honoured.
+  const legacy = parseBeaconLink("?room=ops&key=" + encodeURIComponent(BEACON.beaconKeyB64), "");
+  check("query-string key is refused", !legacy.ok && legacy.problem === "key-in-query");
 }
 
 console.log(failures === 0 ? "\nALL INTEROP CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);
