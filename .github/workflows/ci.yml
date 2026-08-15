@@ -58,7 +58,7 @@ jobs:
   # cannot link tui/internal/crypto, so the signing bytes, the room-key ratchet, and
   # the sealed-message and beacon formats each exist twice - once in Go, once in
   # TypeScript. Only the interop vectors prove the two still agree, which makes
-  # test:node the reason this job exists: 13 Go-generated vectors replayed against the
+  # test:node the reason this job exists: Go-generated vectors replayed against the
   # browser crypto, failing the build on the first byte of divergence.
   web:
     runs-on: ubuntu-latest
@@ -80,6 +80,14 @@ jobs:
 
       - name: install (from lockfile)
         run: npm ci
+
+      # Correctness only - the JS analogue of `go vet`, with no formatting opinions
+      # (see web/eslint.config.js for why). The rule that earns this step is the ban
+      # on innerHTML/outerHTML/insertAdjacentHTML/document.write/eval: the join client
+      # renders message bodies and display names straight off the wire, and "all user
+      # text goes through textContent" was a property nothing enforced until here.
+      - name: lint (eslint)
+        run: npm run lint
 
       - name: typecheck
         run: npm run typecheck

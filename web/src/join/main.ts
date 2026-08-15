@@ -372,7 +372,11 @@ function p(className: string, text: string): HTMLElement {
 
 function brand(): HTMLElement {
   const wrap = div("nc-glyph");
-  // Static markup (no user data) — safe to set as innerHTML.
+  // Static markup (no user data) — safe to set as innerHTML. The literal below is
+  // fixed at build time: no interpolation, no argument, nothing off the wire reaches
+  // it. Every string that IS attacker-influenced goes through textContent instead,
+  // which is what the rule is here to keep true.
+  // eslint-disable-next-line no-restricted-syntax
   wrap.innerHTML =
     `<svg width="22" height="22" viewBox="0 0 32 32" fill="none" aria-hidden="true">` +
     `<g stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">` +
