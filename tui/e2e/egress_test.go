@@ -149,43 +149,149 @@ var allowedEgress = []egressAllowance{
 	},
 }
 
+// platformScope renders where a call site was found, and deliberately says nothing
+// when the answer is "everywhere".
+//
+// A site compiled on all six targets has no meaningful platform: naming one would
+// imply the other five were clean, which is false, and a guard that reports
+// misleading precision is a guard people stop reading. Only a genuinely
+// build-constrained site names its platforms.
+//
+// Both arches of a GOOS collapse to the GOOS alone, because that is how build
+// constraints are almost always written and "only on linux" is the sentence a reader
+// needs. A site that really is arch-specific keeps its full goos/arch label.
+func platformScope(platforms map[string]bool) string {
+	if len(platforms) == len(serverBuildTargets) {
+		return ""
+	}
+
+	var out []string
+	done := map[string]bool{}
+	for _, tgt := range serverBuildTargets {
+		if done[tgt.GOOS] {
+			continue
+		}
+		done[tgt.GOOS] = true
+
+		var on, all []string
+		for _, o := range serverBuildTargets {
+			if o.GOOS != tgt.GOOS {
+				continue
+			}
+			p := o.GOOS + "/" + o.GOARCH
+			all = append(all, p)
+			if platforms[p] {
+				on = append(on, p)
+			}
+		}
+		if len(on) == 0 {
+			continue
+		}
+		if len(on) == len(all) {
+			out = append(out, tgt.GOOS)
+		} else {
+			out = append(out, on...)
+		}
+	}
+	return " (only on " + strings.Join(out, ", ") + ")"
+}
+
 // TestServerEgressCallSitesAllowlisted parses every first-party package the relay
 // binary links and fails when it finds an outbound-network call site that is not
 // on allowedEgress — or an allowlist entry that no longer corresponds to real
 // code, which would mean the documented claim has drifted the other way.
+//
+// Like the two guards next door it resolves the graph for every released platform
+// rather than the host: a server/internal/foo_linux.go calling http.Post is not in
+// GoFiles on Windows, so a host-only scan would never open the file.
+//
+// The FILE is the unit of work, not the package. The same first-party package is
+// linked on all six targets and mostly compiles the same sources, so scanning per
+// platform would parse identical files six times and report each finding six times.
+// go list has already applied build constraints to GoFiles, so a constrained file
+// simply shows up under fewer platforms than its neighbours — which is also where
+// the platform attribution on a finding comes from.
+//
+// The stale-entry check below reads the UNION, and that makes it strictly more
+// correct than it was. A host-only scan would not find an allowed call site living
+// in a _linux.go file when run on Windows, and would report that entry as stale — a
+// false failure caused by the platform, not by drift. Against the union an entry is
+// stale only when it matches nothing on any released platform, so the platform can no
+// longer split the verdict: there is one answer, not one per target. The residue is
+// the same one the module allowlist carries — a call site live only on a platform
+// outside serverBuildTargets would still look stale — and it is left to review rather
+// than turned into a red build.
 func TestServerEgressCallSitesAllowlisted(t *testing.T) {
-	pkgs := serverLinkedPackages(t)
+	// One entry per distinct file, recording every platform that compiles it.
+	type fileEntry struct {
+		pkg       string
+		platforms map[string]bool
+	}
+	files := map[string]*fileEntry{} // absolute path -> package and platforms
+	var order []string               // deterministic parse order: go list order, first platform wins
+	counts := make([]string, 0, len(serverBuildTargets))
 
-	firstParty := 0
-	found := map[string]token.Position{} // "pkg\x00ref" -> where we first saw it
+	for _, tgt := range serverBuildTargets {
+		platform := tgt.GOOS + "/" + tgt.GOARCH
+
+		firstParty := 0
+		for _, p := range serverLinkedPackagesFor(t, tgt.GOOS, tgt.GOARCH) {
+			if p.Module == nil || p.Module.Path != netherchatModule {
+				continue // third-party: covered by the module allowlist instead
+			}
+			firstParty++
+			for _, name := range p.GoFiles { // GoFiles is what the binary compiles: no _test.go
+				file := filepath.Join(p.Dir, name)
+				e, ok := files[file]
+				if !ok {
+					e = &fileEntry{pkg: p.ImportPath, platforms: map[string]bool{}}
+					files[file] = e
+					order = append(order, file)
+				}
+				e.platforms[platform] = true
+			}
+		}
+
+		// A graph this small means go list matched nothing useful; failing loudly beats
+		// a green test that inspected an empty set. Per platform, for the same reason
+		// the boundary guard checks its positive control per platform: a target that
+		// resolved to nothing would contribute no files and hide behind the targets
+		// that resolved properly.
+		if firstParty < 5 {
+			t.Fatalf("only %d first-party packages found in the %s dependency graph for %s; the guard is not inspecting anything", firstParty, serverMainPkg, platform)
+		}
+		counts = append(counts, fmt.Sprintf("%s=%d", platform, firstParty))
+	}
+
+	// finding is one watched identifier in one package, plus every platform whose
+	// build includes a file that references it.
+	type finding struct {
+		pos       token.Position
+		platforms map[string]bool
+	}
+	found := map[string]*finding{} // "pkg\x00ref" -> first sighting and its platforms
 	fset := token.NewFileSet()
 
-	for _, p := range pkgs {
-		if p.Module == nil || p.Module.Path != netherchatModule {
-			continue // third-party: covered by the module allowlist instead
+	for _, file := range order {
+		e := files[file]
+		refs, err := scanFileForEgress(fset, file)
+		if err != nil {
+			t.Fatalf("scanning %s: %v", file, err)
 		}
-		firstParty++
-		for _, name := range p.GoFiles { // GoFiles is what the binary compiles: no _test.go
-			file := filepath.Join(p.Dir, name)
-			refs, err := scanFileForEgress(fset, file)
-			if err != nil {
-				t.Fatalf("scanning %s: %v", file, err)
+		for _, r := range refs {
+			key := e.pkg + "\x00" + r.Ref
+			f, ok := found[key]
+			if !ok {
+				f = &finding{pos: r.Pos, platforms: map[string]bool{}}
+				found[key] = f
 			}
-			for _, r := range refs {
-				key := p.ImportPath + "\x00" + r.Ref
-				if _, seen := found[key]; !seen {
-					found[key] = r.Pos
-				}
+			for platform := range e.platforms {
+				f.platforms[platform] = true
 			}
 		}
 	}
 
-	// A graph this small means go list matched nothing useful; failing loudly beats
-	// a green test that inspected an empty set.
-	if firstParty < 5 {
-		t.Fatalf("only %d first-party packages found in the %s dependency graph; the guard is not inspecting anything", firstParty, serverMainPkg)
-	}
-	t.Logf("scanned %d first-party packages linked by %s", firstParty, serverMainPkg)
+	t.Logf("scanned %d distinct first-party files linked by %s across %d platforms (%s)", len(order), serverMainPkg, len(serverBuildTargets), strings.Join(counts, " "))
 
 	allowed := map[string]egressAllowance{}
 	for _, a := range allowedEgress {
@@ -195,12 +301,12 @@ func TestServerEgressCallSitesAllowlisted(t *testing.T) {
 	}
 
 	var unexpected []string
-	for key, pos := range found {
+	for key, f := range found {
 		if _, ok := allowed[key]; ok {
 			continue
 		}
 		pkg, ref, _ := strings.Cut(key, "\x00")
-		unexpected = append(unexpected, fmt.Sprintf("  %s\n      in package %s\n      at %s", ref, pkg, pos))
+		unexpected = append(unexpected, fmt.Sprintf("  %s%s\n      in package %s\n      at %s", ref, platformScope(f.platforms), pkg, f.pos))
 	}
 	sort.Strings(unexpected)
 
@@ -212,13 +318,16 @@ func TestServerEgressCallSitesAllowlisted(t *testing.T) {
 netherchat-server is documented as making NO outbound network calls out of the box, with
 a named, closed set of opt-in exceptions. A new call site makes that claim false.
 
+A site marked "only on ..." sits behind a build constraint and will not appear in a build
+on every machine; an unmarked one is present on all %d released platforms.
+
 If the call is INTENTIONAL, three things change together:
   1. add it to allowedEgress in %s, with the operator switch that gates it
   2. update the egress sentence in README.md ("Encrypted messaging" section)
   3. update the package doc of cmd/netherchat-server/main.go
 
 If it is NOT intentional, remove the call — do not widen the allowlist to make the
-build green.`, len(unexpected), strings.Join(unexpected, "\n\n"), egressGuardFile)
+build green.`, len(unexpected), strings.Join(unexpected, "\n\n"), len(serverBuildTargets), egressGuardFile)
 	}
 
 	var stale []string
@@ -238,7 +347,11 @@ build green.`, len(unexpected), strings.Join(unexpected, "\n\n"), egressGuardFil
 
 An allowlist that over-permits is not a guard. If the feature was removed or moved to a
 different package, drop or move the entry in %s — and if an exception is gone, the claim
-in README.md and cmd/netherchat-server/main.go can now be made stronger. Say so there.`,
+in README.md and cmd/netherchat-server/main.go can now be made stronger. Say so there.
+
+This is matched against the union over every released platform, so it is not a build-
+constraint artefact: the call site is absent everywhere, not just on the machine you
+happen to be running.`,
 			len(stale), strings.Join(stale, "\n"), egressGuardFile)
 	}
 }
@@ -390,15 +503,12 @@ type goListPkg struct {
 	Module     *struct{ Path string }
 }
 
-// serverLinkedPackages returns every package the relay binary links on the host
-// platform, in dependency order.
-func serverLinkedPackages(t *testing.T) []goListPkg {
-	t.Helper()
-	return serverLinkedPackagesFor(t, "", "")
-}
-
 // serverLinkedPackagesFor returns every package the relay binary links when built
 // for goos/goarch, in dependency order. Empty strings mean the host platform.
+//
+// There is deliberately no host-only wrapper. All three guards in this package check
+// every released platform, and a convenient "just the host" helper is what each of
+// them used before a GOOS-conditional dependency walked past it.
 //
 // Unlike the crypto boundary guard next door this does not skip when the toolchain
 // is unavailable: a guard that can silently not run is not a guard, and `go test`
