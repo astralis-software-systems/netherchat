@@ -28,6 +28,26 @@
   color: var(--accent2);
 }
 
+/* The relay endpoint, named on both screens. Muted — it is a fact to be checked,
+   not an alarm — but the host itself is mono so it reads as an address. */
+.nc-relay {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.nc-relay-host {
+  font-family: var(--font-mono);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.nc-gate .nc-relay {
+  margin: -1rem 0 1.5rem;
+}
+.nc-head .nc-relay {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---------- join (name) screen ---------- */
 
 .nc-gate {

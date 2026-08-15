@@ -137,20 +137,37 @@ export function encode(op: Op, payload: unknown): string {
   return JSON.stringify({ type: op, data: payload });
 }
 
-/** Normalize a user-entered server address to a ws(s):// URL ending in /ws. */
-export function normalizeWsUrl(raw: string): string {
-  let s = raw.trim();
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
-    s = (location.protocol === "https:" ? "wss://" : "ws://") + s;
-  }
-  s = s.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
-  const u = new URL(s);
-  if (u.pathname === "" || u.pathname === "/") u.pathname = "/ws";
-  return u.toString();
+/** The relay a page talks to. */
+export interface Relay {
+  /** ws(s)://host/ws — the address the WebSocket opens. */
+  url: string;
+  /** host[:port] — shown in the UI, so a user can check it against the link they were sent. */
+  host: string;
 }
 
-/** The same-origin relay URL — the zero-config default for a self-hosted deploy. */
-export function defaultWsUrl(): string {
-  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${scheme}//${location.host}/ws`;
+/**
+ * The relay for a page: the origin that served it, and nothing else.
+ *
+ * There is deliberately no way to point the socket somewhere other than this
+ * origin. The resolution reads the page URL's scheme and host only — the query
+ * string is never consulted — so a crafted link cannot aim the connection at a
+ * relay of the sender's choosing. That is not a theoretical concern: a hostile
+ * relay is handed the room key by the ordinary key-exchange path (client.ts
+ * `onKeyRequest` wraps it for any member the relay announces) while the status
+ * line still reads "end-to-end encrypted".
+ *
+ * Cross-origin was never actually available anyway: the relay accepts WebSockets
+ * with the library's default same-origin enforcement (server/internal/ws
+ * `HandleWS`), so a genuine relay refuses a handshake from another origin. The
+ * supported deployment serves this bundle and reverse-proxies `/ws` behind ONE
+ * origin (see vite.config.ts and docs/commands.md).
+ *
+ * `url` and `host` are returned together so the endpoint the socket opens and the
+ * endpoint the UI names cannot drift apart. `pageURL` is a parameter rather than a
+ * read of `location` so the resolution is testable without a DOM.
+ */
+export function pageRelay(pageURL: string = location.href): Relay {
+  const page = new URL(pageURL);
+  const scheme = page.protocol === "https:" ? "wss:" : "ws:";
+  return { url: `${scheme}//${page.host}/ws`, host: page.host };
 }
