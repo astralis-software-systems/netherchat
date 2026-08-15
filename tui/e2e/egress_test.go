@@ -272,6 +272,7 @@ var allowedServerModules = map[string]string{
 	"github.com/dustin/go-humanize":    "modernc.org/sqlite dependency",
 	"github.com/ncruces/go-strftime":   "modernc.org/sqlite dependency",
 	"github.com/mattn/go-isatty":       "modernc.org/libc dependency",
+	"github.com/google/uuid":           "modernc.org/libc dependency, via its unix build files (Linux CI, not Windows)",
 	"github.com/remyoudompheng/bigfft": "modernc.org/mathutil dependency",
 	"golang.org/x/sys":                 "syscall shims for modernc.org/libc and x/crypto",
 }
