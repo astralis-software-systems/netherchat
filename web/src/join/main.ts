@@ -9,7 +9,7 @@ import "../styles/tokens.css";
 import "../styles/fonts.css";
 import "./join.css";
 import { NetherClient, type ClientEvent } from "../net/client";
-import { defaultWsUrl, normalizeWsUrl } from "../net/protocol";
+import { pageRelay } from "../net/protocol";
 import { newEphemeralIdentity } from "../crypto/identity";
 
 const app = document.getElementById("app")!;
@@ -18,10 +18,9 @@ const params = new URLSearchParams(location.search);
 const room = (params.get("room") ?? "").trim();
 const token = (params.get("token") ?? "").trim();
 
-// An invite link may pin the relay with `?server=…` (e.g. a self-hosted box at
-// an arbitrary IP); without it we default to the origin that served this page.
-const serverParam = (params.get("server") ?? "").trim();
-const wsUrl = serverParam ? normalizeWsUrl(serverParam) : defaultWsUrl();
+// The relay is the origin that served this page — a link carries the room and the
+// token, never the endpoint. See pageRelay() for why the link is not allowed a say.
+const relay = pageRelay();
 
 if (!room) {
   renderError("This link is missing its room.", "Ask whoever sent it for a fresh invite link.");
@@ -43,6 +42,11 @@ function renderGate(roomName: string): void {
   card.appendChild(h1);
 
   card.appendChild(p("nc-sub", "An end-to-end encrypted room. Ephemeral — nothing is saved."));
+
+  // Named before the user commits: this is the last screen on which they can
+  // simply close the tab. The full ws URL rather than the bare host — there is
+  // room for it here, and the scheme says whether the transport is protected.
+  card.appendChild(relayLine(relay.url));
 
   const form = document.createElement("form");
   form.className = "nc-form";
@@ -84,11 +88,27 @@ function renderError(title: string, sub: string): void {
   app.appendChild(box);
 }
 
+/**
+ * The "relay <endpoint>" row shown on both screens. `text` is what is displayed
+ * (the full ws URL where there is room for it, the bare host in the chat header);
+ * the complete URL always goes to the tooltip and the accessible name, so the
+ * scheme is never hidden from someone who cannot hover. Text only — no innerHTML.
+ */
+function relayLine(text: string, fullURL: string = text): HTMLElement {
+  const row = div("nc-relay");
+  row.append("relay ");
+  row.appendChild(span("nc-relay-host", text));
+  row.title = fullURL;
+  row.setAttribute("role", "note");
+  row.setAttribute("aria-label", "relay " + fullURL);
+  return row;
+}
+
 function startChat(roomName: string, name: string): void {
   const ui = renderChat(roomName);
 
   const client = new NetherClient(
-    wsUrl,
+    relay.url,
     roomName,
     name,
     newEphemeralIdentity(),
@@ -132,6 +152,9 @@ function renderChat(roomName: string): ChatUI {
 
   const head = div("nc-head");
   head.appendChild(span("nc-title", "#" + roomName));
+  // The status line says the room is encrypted; this says who it is encrypted
+  // WITH. Someone who cannot see the endpoint cannot notice it is the wrong one.
+  head.appendChild(relayLine(relay.host, relay.url));
   head.appendChild(div("nc-spacer"));
 
   const status = div("nc-status");

@@ -73,8 +73,12 @@ func NewServer(h *hub.Hub, cfg config.Config, invites *invite.Store, eph *epheme
 func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		// TUI clients send no Origin header, so default same-origin enforcement
-		// is fine for them. The v2 web client will get an explicit allowlist via
-		// config; we do not blanket-allow cross-origin here.
+		// is fine for them. For browsers it is deliberate and permanent, not a
+		// placeholder: the web client is served from this origin and resolves its
+		// relay from the page origin alone (web/src/net/protocol.ts). Do NOT add
+		// an allowlist — it would restore the premise that the page origin and
+		// the relay may differ, which is the premise a link-borne endpoint
+		// (`/join?server=…`) exploited.
 	})
 	if err != nil {
 		s.log.Debug("websocket accept failed", "err", err)
