@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -231,11 +232,26 @@ func (e *eavesdropper) waitForMessages(t *testing.T, n int, timeout time.Duratio
 // name that no longer exists: rename or move the package and a hardcoded path
 // would keep passing forever while checking nothing at all. Derived this way the
 // path follows the package, and a path that stopped resolving would not compile.
+//
+// This value is platform-stable, which matters because the guard below resolves
+// graphs for platforms other than the host. It is a compile-time constant of THIS
+// test binary, built for the host, and an import path is a module-relative directory
+// path: build constraints select files WITHIN a package, never the package's path.
+// tui/internal/crypto carries no build tags and compiles the same nine files on
+// every target, so there is no GOOS on which crypto.Identity resolves elsewhere.
 var cryptoPkg = reflect.TypeOf(crypto.Identity{}).PkgPath()
 
 // TestServerBinaryDoesNotLinkClientCrypto proves the blind-relay boundary at the
 // build-graph level: the server binary's transitive dependencies must not
 // include the client crypto package. The server literally cannot decrypt.
+//
+// The graph is resolved once per released platform (serverBuildTargets), not once
+// for the host. Package sets are GOOS-conditional, so an import reaching the relay
+// through a build-constrained file is invisible from a machine that does not build
+// that file — which is exactly how github.com/google/uuid slipped past the module
+// guard next door and landed on main. README.md sells this test as the reason "the
+// relay cannot read your messages" is a property of the build graph rather than a
+// promise; that sentence is about every binary shipped, so the check is too.
 //
 // Like the egress guard next door, this does not skip when the toolchain
 // misbehaves: a guard that can silently not run is not a guard, and `go test`
@@ -243,35 +259,54 @@ var cryptoPkg = reflect.TypeOf(crypto.Identity{}).PkgPath()
 // fails if that ever changes ... not a marketing line", and a Skip would make
 // that sentence true only on the days nothing went wrong — a module-cache blip
 // or a transient download failure would turn the boundary check into a green
-// tick. serverLinkedPackages fails loudly on a go list error or an empty graph,
-// so the only way to reach the comparison below is holding the real graph.
+// tick. serverLinkedPackagesFor fails loudly on a go list error or an empty graph,
+// per platform, so the only way to reach the comparisons below is holding real
+// graphs for all of them.
 func TestServerBinaryDoesNotLinkClientCrypto(t *testing.T) {
-	pkgs := serverLinkedPackages(t)
+	counts := make([]string, 0, len(serverBuildTargets))
 
-	linked := make(map[string]bool, len(pkgs))
-	for _, p := range pkgs {
-		linked[p.ImportPath] = true
-	}
+	for _, tgt := range serverBuildTargets {
+		platform := tgt.GOOS + "/" + tgt.GOARCH
+		pkgs := serverLinkedPackagesFor(t, tgt.GOOS, tgt.GOARCH)
 
-	// Positive control: packages the relay must link, matched exactly the way the
-	// crypto path is matched below. If these are missing, the comparison is not
-	// finding packages that ARE in the graph, and the absence proved afterwards
-	// would mean nothing.
-	for _, must := range []string{serverMainPkg, netherchatModule + "/protocol"} {
-		if !linked[must] {
-			t.Fatalf("%s is absent from the %d-package %s dependency graph; the guard is not inspecting the relay", must, len(linked), serverMainPkg)
+		linked := make(map[string]bool, len(pkgs))
+		for _, p := range pkgs {
+			linked[p.ImportPath] = true
 		}
-	}
 
-	for _, p := range pkgs {
-		if p.ImportPath != cryptoPkg && !strings.HasPrefix(p.ImportPath, cryptoPkg+"/") {
-			continue
+		// Positive control: packages the relay must link, matched exactly the way the
+		// crypto path is matched below. If these are missing, the comparison is not
+		// finding packages that ARE in the graph, and the absence proved afterwards
+		// would mean nothing.
+		//
+		// Checked per platform, not once against the union: a target that resolved to
+		// a truncated graph contributes no packages, so it would prove its absence
+		// vacuously and hide behind the targets that did resolve. Every platform earns
+		// its own positive control before its absence counts for anything.
+		for _, must := range []string{serverMainPkg, netherchatModule + "/protocol"} {
+			if !linked[must] {
+				t.Fatalf("%s is absent from the %d-package %s dependency graph for %s; the guard is not inspecting the relay", must, len(linked), serverMainPkg, platform)
+			}
 		}
-		t.Fatalf(`the server binary transitively imports %s — the blind-relay boundary is violated.
+
+		for _, p := range pkgs {
+			if p.ImportPath != cryptoPkg && !strings.HasPrefix(p.ImportPath, cryptoPkg+"/") {
+				continue
+			}
+			t.Fatalf(`the server binary transitively imports %s on %s — the blind-relay boundary is violated.
 
 Only packages under tui/ may reach the client crypto package; that Go visibility rule is
 what makes "the server cannot read message content" a property of the build graph rather
 than a promise. To share a type across the boundary, put a crypto-free one in protocol/ —
-do not import %s from a server-side package.`, p.ImportPath, cryptoPkg)
+do not import %s from a server-side package.
+
+The import was found while resolving the graph for %s and may sit behind a build
+constraint, so a build on your own machine can look clean. The boundary holds on every
+released platform or it does not hold.`, p.ImportPath, platform, cryptoPkg, platform)
+		}
+
+		counts = append(counts, fmt.Sprintf("%s=%d", platform, len(linked)))
 	}
+
+	t.Logf("%s absent from %s across %d platforms (%s)", cryptoPkg, serverMainPkg, len(serverBuildTargets), strings.Join(counts, " "))
 }
