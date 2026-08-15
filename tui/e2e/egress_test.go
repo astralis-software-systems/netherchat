@@ -43,6 +43,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
@@ -247,10 +248,20 @@ in README.md and cmd/netherchat-server/main.go can now be made stronger. Say so 
 // stops a new library from quietly adding egress the relay would then perform on
 // its own: no module gets into the server binary without an edit here.
 //
-// Modules, not packages: a dependency bump changes package sets and GOOS changes
-// them too (golang.org/x/sys/windows here, golang.org/x/sys/unix on the CI runner),
-// while module paths stay put. Version numbers are deliberately not pinned — go.mod
-// and go.sum already do that job.
+// Modules, not packages: a dependency bump reshuffles package sets constantly, and
+// GOOS reshuffles them too (golang.org/x/sys/windows here, golang.org/x/sys/unix on
+// the CI runner), so pinning package paths would be unworkable noise. Module paths
+// are far steadier — but they are NOT platform-independent, and an earlier version
+// of this comment claimed they were. That claim is what made the miss plausible:
+// github.com/google/uuid reaches the binary through modernc.org/libc's unix build
+// files, so it is absent on Windows, present on Linux and macOS. A green Windows run
+// was read as proof, and it reached main and went red on the CI runner.
+//
+// The whole matrix is therefore the unit of truth, not the host:
+// TestServerEgressModuleDepsAllowlisted checks the UNION over every released
+// platform. Which means an entry below can be legitimately absent from YOUR build —
+// see the presence notes on the platform-conditional ones. Version numbers are
+// deliberately not pinned; go.mod and go.sum already do that job.
 var allowedServerModules = map[string]string{
 	netherchatModule:                  "this module",
 	"github.com/coder/websocket":      "the relay's WebSocket transport (Accept only; see egressAPI)",
@@ -270,37 +281,71 @@ var allowedServerModules = map[string]string{
 	"modernc.org/mathutil":             "modernc.org/sqlite dependency",
 	"modernc.org/memory":               "modernc.org/sqlite dependency",
 	"github.com/dustin/go-humanize":    "modernc.org/sqlite dependency",
-	"github.com/ncruces/go-strftime":   "modernc.org/sqlite dependency",
-	"github.com/mattn/go-isatty":       "modernc.org/libc dependency",
-	"github.com/google/uuid":           "modernc.org/libc dependency, via its unix build files (Linux CI, not Windows)",
+	"github.com/ncruces/go-strftime":   "modernc.org/sqlite dependency; windows and darwin only",
+	"github.com/mattn/go-isatty":       "modernc.org/libc dependency; windows and darwin only",
+	"github.com/google/uuid":           "modernc.org/libc dependency, via its unix build files; linux and darwin only",
 	"github.com/remyoudompheng/bigfft": "modernc.org/mathutil dependency",
 	"golang.org/x/sys":                 "syscall shims for modernc.org/libc and x/crypto",
 }
 
-// TestServerEgressModuleDepsAllowlisted fails when a module that is not on
-// allowedServerModules enters the relay binary's dependency graph.
+// serverBuildTargets is the platform matrix the relay is released for, mirroring the
+// netherchat-server build in .goreleaser.yaml (goos: [linux, darwin, windows] x
+// goarch: [amd64, arm64]). Every entry is a binary a user can download, so every
+// entry is covered by the egress claim and belongs in the union below.
 //
-// The check is one-directional on purpose: an unlisted module fails, a listed
-// module that is absent does not. Build constraints legitimately drop a module on
-// some platforms, and a guard that goes red on the CI runner for a reason having
-// nothing to do with egress is a guard that gets deleted.
+// GOARCH is enumerated even though no module currently enters or leaves on
+// architecture alone. modernc.org/libc does carry per-arch files, and "we checked a
+// subset and it looked fine" is the precise reasoning this guard now exists to
+// refuse. All six `go list` invocations together take well under a second.
+var serverBuildTargets = []struct{ GOOS, GOARCH string }{
+	{"linux", "amd64"}, {"linux", "arm64"},
+	{"darwin", "amd64"}, {"darwin", "arm64"},
+	{"windows", "amd64"}, {"windows", "arm64"},
+}
+
+// TestServerEgressModuleDepsAllowlisted fails when a module that is not on
+// allowedServerModules enters the relay binary's dependency graph on ANY released
+// platform.
+//
+// It resolves the graph once per entry in serverBuildTargets and checks the union,
+// because the module set is GOOS-conditional and a host-only check is not a check:
+// github.com/google/uuid enters through modernc.org/libc's unix build files, so the
+// host run on a Windows machine went green and the Linux runner went red. The union
+// puts that failure on the developer's own terminal, before the push.
+//
+// The check stays one-directional: an unlisted module fails, a listed module that is
+// absent does not. Absence is now a weaker signal than it looks — a module can be
+// missing from every target here and still be real on a platform outside the release
+// matrix — so a stale entry is left to review rather than turned into a red build.
 func TestServerEgressModuleDepsAllowlisted(t *testing.T) {
-	pkgs := serverLinkedPackages(t)
+	seen := map[string]string{} // module path -> "example package (on the first platform it appeared)"
+	platforms := make([]string, 0, len(serverBuildTargets))
+	counts := make([]string, 0, len(serverBuildTargets))
 
-	seen := map[string]string{} // module path -> an example package from it
-	for _, p := range pkgs {
-		if p.Module == nil {
-			continue // standard library: no module, and vendored by the toolchain
+	for _, tgt := range serverBuildTargets {
+		platform := tgt.GOOS + "/" + tgt.GOARCH
+		platforms = append(platforms, platform)
+
+		onThisPlatform := map[string]bool{}
+		for _, p := range serverLinkedPackagesFor(t, tgt.GOOS, tgt.GOARCH) {
+			if p.Module == nil {
+				continue // standard library: no module, and vendored by the toolchain
+			}
+			onThisPlatform[p.Module.Path] = true
+			if _, ok := seen[p.Module.Path]; !ok {
+				seen[p.Module.Path] = fmt.Sprintf("%s (on %s)", p.ImportPath, platform)
+			}
 		}
-		if _, ok := seen[p.Module.Path]; !ok {
-			seen[p.Module.Path] = p.ImportPath
+
+		// Per-platform, not just the union: a target that silently resolved to an
+		// empty or truncated graph would otherwise hide inside a healthy total.
+		if len(onThisPlatform) < 2 {
+			t.Fatalf("found %d modules for %s in the %s dependency graph; the guard is not inspecting anything", len(onThisPlatform), platform, serverMainPkg)
 		}
+		counts = append(counts, fmt.Sprintf("%s=%d", platform, len(onThisPlatform)))
 	}
 
-	if len(seen) < 2 {
-		t.Fatalf("found %d modules in the %s dependency graph; the guard is not inspecting anything", len(seen), serverMainPkg)
-	}
-	t.Logf("%d modules reach %s", len(seen), serverMainPkg)
+	t.Logf("%d modules reach %s across %d platforms (%s)", len(seen), serverMainPkg, len(serverBuildTargets), strings.Join(counts, " "))
 
 	var unexpected []string
 	for mod, example := range seen {
@@ -321,10 +366,17 @@ outbound network calls out of the box" claim that README.md makes on the relay's
 This list exists so that trust is granted deliberately rather than inherited from a
 transitive upgrade.
 
+This is the UNION over every released platform, so the module named above may well be
+absent from a build on your own machine — build constraints decide, and the platform it
+was found on is named with it. Checking only the host is how github.com/google/uuid
+reached main. Platforms checked:
+
+  %s
+
 If the dependency is INTENTIONAL, add it to allowedServerModules in %s with a one-line
 reason — and if it can call out, say which operator switch gates that, and update the
 egress claim in README.md and cmd/netherchat-server/main.go to match.`,
-			len(unexpected), strings.Join(unexpected, "\n\n"), egressGuardFile)
+			len(unexpected), strings.Join(unexpected, "\n\n"), strings.Join(platforms, ", "), egressGuardFile)
 	}
 }
 
@@ -338,19 +390,43 @@ type goListPkg struct {
 	Module     *struct{ Path string }
 }
 
-// serverLinkedPackages returns every package the relay binary links, in
-// dependency order. Unlike the crypto boundary guard next door this does not skip
-// when the toolchain is unavailable: a guard that can silently not run is not a
-// guard, and `go test` running at all means `go list` is there.
+// serverLinkedPackages returns every package the relay binary links on the host
+// platform, in dependency order.
 func serverLinkedPackages(t *testing.T) []goListPkg {
 	t.Helper()
+	return serverLinkedPackagesFor(t, "", "")
+}
 
+// serverLinkedPackagesFor returns every package the relay binary links when built
+// for goos/goarch, in dependency order. Empty strings mean the host platform.
+//
+// Unlike the crypto boundary guard next door this does not skip when the toolchain
+// is unavailable: a guard that can silently not run is not a guard, and `go test`
+// running at all means `go list` is there. That applies per platform — a target that
+// cannot be resolved is a failure, not a quietly smaller union.
+func serverLinkedPackagesFor(t *testing.T, goos, goarch string) []goListPkg {
+	t.Helper()
+
+	platform := "the host platform"
 	cmd := exec.Command("go", "list", "-deps", "-json=ImportPath,Dir,GoFiles,Module", serverMainPkg)
+	if goos != "" {
+		platform = goos + "/" + goarch
+		// go list reads build constraints from the environment, which is the whole
+		// mechanism here: it makes another platform's module set visible from this
+		// one. CGO_ENABLED is pinned to the value every real build uses (see
+		// .goreleaser.yaml and CLAUDE.md) so that a developer machine with a C
+		// compiler installed does not resolve the host target differently from the
+		// cross ones — that asymmetry is the same bug in a smaller costume.
+		// A later Env entry wins over an earlier one, so these override the inherited
+		// values rather than colliding with them.
+		cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
+	}
+
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("go list -deps %s: %v\n%s", serverMainPkg, err, stderr.String())
+		t.Fatalf("go list -deps %s for %s: %v\n%s", serverMainPkg, platform, err, stderr.String())
 	}
 
 	var pkgs []goListPkg
@@ -360,12 +436,12 @@ func serverLinkedPackages(t *testing.T) []goListPkg {
 		if err := dec.Decode(&p); err == io.EOF {
 			break
 		} else if err != nil {
-			t.Fatalf("decoding go list output: %v", err)
+			t.Fatalf("decoding go list output for %s: %v", platform, err)
 		}
 		pkgs = append(pkgs, p)
 	}
 	if len(pkgs) == 0 {
-		t.Fatalf("go list -deps %s returned no packages", serverMainPkg)
+		t.Fatalf("go list -deps %s for %s returned no packages", serverMainPkg, platform)
 	}
 	return pkgs
 }
