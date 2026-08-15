@@ -27,6 +27,15 @@ approves, seals, or executes anything inside the room.
 
 ## Setup
 
+Build the binary from source — releases and the Docker image ship only
+`netherchat` and `netherchat-server`. With Go 1.26+:
+
+```sh
+go build -o bin/ ./cmd/netherchat-itsm
+```
+
+(`go build -o bin/ ./cmd/...`, or `just build`, builds every binary in the repo.)
+
 ### ServiceNow
 
 ```sh

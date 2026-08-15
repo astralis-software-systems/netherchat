@@ -127,7 +127,11 @@ keys_url = "https://github.com/oncall-2.keys"  # fetch on /whois; no pin
 # [[trust]], the relay never reads these — relay-less pairing involves no server.
 [direct]
 port          = 7777   # listening port for direct peer connections (0 = a free port)
-lan_discovery = true    # advertise + discover on the LAN via mDNS (_netherchat._tcp)
+lan_discovery = true   # advertise on the LAN via mDNS (_netherchat._tcp) even without --lan
+# Flags win over both: --port overrides port, and --lan is never switched off by
+# lan_discovery = false. lan_discovery only ADDS an mDNS advertisement to a
+# `pair --manual` host, which otherwise just prints an offer blob. Advertising binds
+# UDP 5353 and announces your fingerprint + port to the local network.
 # Sneakernet has NO NAT traversal by design: peers must share a LAN (--lan) or be
 # directly reachable by the addresses in a manual offer (--manual), e.g. over a VPN.
 

@@ -32,8 +32,11 @@ All pure Go, no cgo, so the static binary and trivial cross-compilation survive:
   recovery — lose the key file and you lose access. By design.**
 - **Room keys & epochs.** A room has a 32-byte symmetric key for the current
   epoch. The first member mints epoch 0. Messages are sealed under it with
-  XChaCha20-Poly1305 and signed with the sender's Ed25519 key; recipients verify
-  the signature before decrypting.
+  XChaCha20-Poly1305 and signed with the sender's Ed25519 key. When a signature is
+  present the recipient verifies it **before** decrypting, and a message whose
+  signature fails is rejected with a warning — its body is never shown. Signatures
+  are a protocol-v3 addition and are optional on the wire; see the interop caveat
+  under the limits below.
 - **Key distribution.** When a member joins, one existing member (the oldest)
   wraps the current room key for the newcomer's X25519 key with `nacl/box` and
   sends it through the server. The server routes the sealed blob but cannot open
@@ -57,6 +60,25 @@ All pure Go, no cgo, so the static binary and trivial cross-compilation survive:
   stable interface, negotiated via the protocol version.
 - ⚠️ **Metadata is not hidden.** The server sees who is in which room, message
   sizes, and timing. End-to-end encryption protects content, not metadata.
+- ⚠️ **A message can legitimately arrive unsigned — and a hostile relay can force
+  that.** Per-message signatures arrived in protocol **v3** and are deliberately
+  additive: a frame with no `sig` is accepted as *unsigned* and decrypted rather
+  than rejected, so v2 senders still interoperate (see `PROTOCOL.md`). The
+  consequence is a downgrade path — a malicious relay can **strip** `sig` from a v3
+  message and the recipient still displays it, attributed to the sender by routing
+  metadata alone. Confidentiality is unaffected: the relay holds no room key, so it
+  can neither read the body nor substitute one (the AEAD would fail). What degrades
+  is **authenticity**, from *proven* to *claimed*.
+
+  The TUI does mark it, modestly: an unsigned message renders a warn-colored `?`
+  after the sender's name — `alice ?: …` — while `✓` means signed and
+  `[[trust]]`-pinned and `✓✓` means signed and `/verify`-confirmed. Be aware that
+  the signed-but-unpinned baseline draws **no** badge at all, so the whole signal is
+  one character appearing rather than a mark changing; it is easy to miss if you
+  are not looking for it. The marker survives export: `/export` prefixes unsigned
+  lines with `?`, and the JSON form carries a `signed` field. If per-message
+  authenticity matters for your threat model, read `?` as *unattributed*, not as
+  cosmetic.
 
 ## Relay authentication: the `.onion` address is the relay's key (`--tor`)
 

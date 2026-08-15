@@ -92,6 +92,15 @@ NC-1 alert and POSTs them to the relay — exactly like every other inbound conn
 no new core. Event kinds: `artifact_produced`, `sensitive_ingest`, `decision_proposed`,
 `anomaly_detected`.
 
+Build it from source — releases and the Docker image ship only `netherchat` and
+`netherchat-server`. With Go 1.26+:
+
+```sh
+go build -o bin/ ./cmd/netherchat-agent-adapter
+```
+
+(`go build -o bin/ ./cmd/...`, or `just build`, builds every binary in the repo.)
+
 ```sh
 # one event
 netherchat-agent-adapter --event event.json --server https://relay --source my-agent --token "$TOK"

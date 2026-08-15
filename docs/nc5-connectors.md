@@ -16,6 +16,22 @@ Five deliverables:
 | 4 | CI/CD (GitHub Actions / GitLab) | `netherchat-cicd` | inbound (webhook or CLI) | `ci-failure`, `ci-resolved` |
 | 5 | SIEM outbound | `netherchat-siem-out` | outbound | — (metadata events) |
 
+### Getting the binaries
+
+Built from source — releases and the Docker image ship only `netherchat` and
+`netherchat-server`. With Go 1.26+:
+
+```bash
+go build -o bin/ ./cmd/netherchat-slack-notify
+go build -o bin/ ./cmd/netherchat-slack-bot
+go build -o bin/ ./cmd/netherchat-alertmanager
+go build -o bin/ ./cmd/netherchat-paging
+go build -o bin/ ./cmd/netherchat-cicd
+go build -o bin/ ./cmd/netherchat-siem-out
+```
+
+Or `go build -o bin/ ./cmd/...` (`just build`) for every binary in the repo.
+
 ---
 
 ## The boundary law (every adapter, no exceptions)
