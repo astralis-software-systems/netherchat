@@ -34,6 +34,9 @@ class FakeSocket {
   onclose: ((ev: { code: number; reason: string }) => void) | null = null;
 
   constructor(readonly url: string) {
+    // Not a `const self = this` workaround: the client constructs its own socket, so
+    // publishing the newest instance module-side is how a test reaches it at all.
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
     lastSocket = this;
   }
   send(s: string): void {

@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
     "test:node": "tsx scripts/interop-check.ts"
@@ -18,9 +19,13 @@
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/node": "^20.19.42",
+    "eslint": "^9.39.5",
+    "globals": "^15.15.0",
     "tsx": "^4.23.12",
     "typescript": "~5.6.3",
+    "typescript-eslint": "^8.67.0",
     "vite": "^8.2.1",
     "vitest": "^4.1.10"
   }

@@ -69,13 +69,23 @@ govulncheck:
     govulncheck ./...
     govulncheck -C terraform-provider-netherchat ./...
 
-# Check the web client - the same three commands CI runs. test:node is the one that
+# Check the web client - the same four commands CI runs. test:node is the one that
 # matters: web/ implements the crypto primitives a second time in TypeScript, and
-# those 13 Go-generated vectors are the only thing proving the two agree.
+# the Go-generated interop vectors are the only thing proving the two agree.
 # `npm --prefix` rather than `cd web`, because just runs each recipe line in its own
 # shell and a cd would not carry to the next line. No shell-specific syntax, so one
 # recipe covers both. Needs `npm install` in web/ first; CI does that with `npm ci`.
 check-web:
+    npm --prefix web run lint
     npm --prefix web run typecheck
     npm --prefix web run test
     npm --prefix web run test:node
+
+# Prove the browser client keeps user text out of the HTML parser: the join client
+# renders message bodies and display names arriving from any room member, and routes
+# every one through textContent. This lints that property rather than trusting it -
+# innerHTML, outerHTML, insertAdjacentHTML, document.write and eval are refused, with
+# one documented exception at join/main.ts (a static SVG). Correctness only, no
+# formatting; see web/eslint.config.js for the split and why it mirrors gofmt/go vet.
+lint-web:
+    npm --prefix web run lint
