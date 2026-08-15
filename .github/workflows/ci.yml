@@ -54,6 +54,45 @@ jobs:
           cd terraform-provider-netherchat
           govulncheck ./...
 
+  # web/ implements the same cryptographic primitives a second time: the browser
+  # cannot link tui/internal/crypto, so the signing bytes, the room-key ratchet, and
+  # the sealed-message and beacon formats each exist twice - once in Go, once in
+  # TypeScript. Only the interop vectors prove the two still agree, which makes
+  # test:node the reason this job exists: 13 Go-generated vectors replayed against the
+  # browser crypto, failing the build on the first byte of divergence.
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      # web/ pins no Node version - no engines field, no .nvmrc - so it is pinned
+      # here. 24 is the current LTS and clears both vite 8 (^20.19 || >=22.12) and
+      # vitest 4 (^20 || ^22 || >=24); 21.x, 22.0-22.11 and 23.x each fall outside one
+      # of the two. cache-dependency-path is repo-relative, unlike the run steps.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: install (from lockfile)
+        run: npm ci
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: test (vitest)
+        run: npm run test
+
+      # The Go <-> browser agreement check. The script exits non-zero on any failed
+      # vector, so a divergence between the two crypto implementations fails here
+      # rather than in a room.
+      - name: interop vectors (Go <-> browser crypto)
+        run: npm run test:node
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:

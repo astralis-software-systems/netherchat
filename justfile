@@ -68,3 +68,14 @@ govulncheck:
     go install golang.org/x/vuln/cmd/govulncheck@latest
     govulncheck ./...
     govulncheck -C terraform-provider-netherchat ./...
+
+# Check the web client - the same three commands CI runs. test:node is the one that
+# matters: web/ implements the crypto primitives a second time in TypeScript, and
+# those 13 Go-generated vectors are the only thing proving the two agree.
+# `npm --prefix` rather than `cd web`, because just runs each recipe line in its own
+# shell and a cd would not carry to the next line. No shell-specific syntax, so one
+# recipe covers both. Needs `npm install` in web/ first; CI does that with `npm ci`.
+check-web:
+    npm --prefix web run typecheck
+    npm --prefix web run test
+    npm --prefix web run test:node
