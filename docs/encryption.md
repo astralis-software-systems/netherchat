@@ -70,15 +70,38 @@ All pure Go, no cgo, so the static binary and trivial cross-compilation survive:
   can neither read the body nor substitute one (the AEAD would fail). What degrades
   is **authenticity**, from *proven* to *claimed*.
 
-  The TUI does mark it, modestly: an unsigned message renders a warn-colored `?`
-  after the sender's name — `alice ?: …` — while `✓` means signed and
-  `[[trust]]`-pinned and `✓✓` means signed and `/verify`-confirmed. Be aware that
-  the signed-but-unpinned baseline draws **no** badge at all, so the whole signal is
+  **Both clients mark it, and neither hides the body.** Every signature that *is*
+  present is verified, in the browser as in the TUI; a present-but-invalid
+  signature is rejected outright and its body is never displayed. What follows is
+  only about the frame that arrives with **no** `sig` at all.
+
+  The TUI marks it modestly: an unsigned message renders a warn-colored `?` after
+  the sender's name — `alice ?: …` — while `✓` means signed and `[[trust]]`-pinned
+  and `✓✓` means signed and `/verify`-confirmed. Be aware that the
+  signed-but-unpinned baseline draws **no** badge at all, so the whole signal is
   one character appearing rather than a mark changing; it is easy to miss if you
   are not looking for it. The marker survives export: `/export` prefixes unsigned
-  lines with `?`, and the JSON form carries a `signed` field. If per-message
-  authenticity matters for your threat model, read `?` as *unattributed*, not as
-  cosmetic.
+  lines with `?`, and the JSON form carries a `signed` field.
+
+  The web join client marks it more loudly, because a browser can afford to: an
+  unsigned message gets a warn-colored **`⚠ unsigned`** badge after the sender's
+  name — a word, not a symbol, so it needs no legend — on a tinted row with a warn
+  left rule, and the badge carries a hover/focus explanation. The first unsigned
+  message in a session is preceded by a one-time note that also states the
+  convention out loud ("messages without this mark were signature-verified"), so
+  the signal does not depend on noticing that something is *absent*.
+
+  The two clients differ in what they can say. The TUI has four states because it
+  has a trust model: unsigned, signed, signed **and** `[[trust]]`-pinned, signed
+  and `/verify`-SAS-confirmed. The web client has **no trust pinning and no SAS
+  verification** — identities there are ephemeral and per-visit — so it has exactly
+  two states, unsigned and signed, and it does not claim otherwise. A signed
+  message in the browser means *this frame carried a valid signature from the
+  identity key the relay attached to that member*; it does **not** mean you have
+  checked who holds that key. For that, use a TUI client and `/verify`.
+
+  If per-message authenticity matters for your threat model, read `?` and
+  `⚠ unsigned` as *unattributed*, not as cosmetic.
 
 ## Relay authentication: the `.onion` address is the relay's key (`--tor`)
 

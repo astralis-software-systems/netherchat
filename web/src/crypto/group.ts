@@ -94,11 +94,25 @@ export function sealMessage(
   return { nonce, ciphertext, signature };
 }
 
+/** The result of openMessage: the plaintext, plus whether it was authenticated. */
+export interface OpenedMessage {
+  plaintext: Uint8Array;
+  /**
+   * True only if the frame carried a signature AND it verified. False means the
+   * frame arrived unsigned — a legacy/pre-v3 sender, or a relay that stripped
+   * `sig` — so the sender is attributed by routing metadata alone, not proven.
+   * A signature that is present but INVALID never gets here: it throws.
+   */
+  signed: boolean;
+}
+
 /**
- * Decrypt a message. If a signature is present it is verified BEFORE decrypting
- * (so a forged ciphertext never touches the AEAD); an invalid signature throws.
- * An empty signature is accepted as "unsigned" (legacy / pre-v3) and decrypted
- * without verification. Throws on decrypt failure or epoch mismatch.
+ * Decrypt a message and report whether it carried a valid signature — the
+ * browser counterpart of Go's OpenMessage, which returns (plaintext, signed,
+ * err). If a signature is present it is verified BEFORE decrypting (so a forged
+ * ciphertext never touches the AEAD); an invalid signature throws. An empty
+ * signature is accepted as "unsigned" (legacy / pre-v3, signed=false) and
+ * decrypted without verification. Throws on decrypt failure or epoch mismatch.
  */
 export function openMessage(
   rk: RoomKey,
@@ -109,7 +123,8 @@ export function openMessage(
   nonce: Uint8Array,
   ciphertext: Uint8Array,
   signature: Uint8Array,
-): Uint8Array {
+): OpenedMessage {
+  let signed = false;
   if (signature.length > 0) {
     if (senderSignPub.length !== 32) throw new Error("sender signing key invalid");
     if (
@@ -121,10 +136,11 @@ export function openMessage(
     ) {
       throw new Error("message signature verification failed");
     }
+    signed = true;
   }
   if (rk.epoch !== epoch) {
     throw new Error(`epoch mismatch: holding key for epoch ${rk.epoch}, message is epoch ${epoch}`);
   }
   const aead = xchacha20poly1305(rk.key, nonce, u64be(epoch));
-  return aead.decrypt(ciphertext);
+  return { plaintext: aead.decrypt(ciphertext), signed };
 }

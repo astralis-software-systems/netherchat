@@ -194,6 +194,43 @@
   border-radius: var(--radius-xs);
 }
 
+/* Unsigned messages (§3.3). A signed message is unmarked, so this has to be
+   legible on its own rather than as "one character appeared": the badge spells
+   the word out, and the row is tinted and ruled so it reads as different from a
+   distance. The one-time note above the first one explains the convention. */
+.nc-unsigned {
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: help;
+}
+.nc-unsigned:focus-visible {
+  outline: 2px solid var(--warn);
+  outline-offset: 1px;
+}
+
+.nc-row.nc-unsigned-row {
+  margin-left: -0.6rem;
+  padding-left: 0.5rem;
+  border-left: 2px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 7%, transparent);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+}
+
+.nc-unsigned-note {
+  color: var(--warn);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  margin-top: 0.35rem;
+}
+
 .nc-sys {
   color: var(--muted);
   font-style: italic;

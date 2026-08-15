@@ -29,7 +29,7 @@ function check(name: string, ok: boolean) {
 // 1. Decrypt + verify the Go-sealed v3 message.
 const rk = { epoch: VECTOR.epoch, key: fromB64(VECTOR.roomKey) };
 const pt = openMessage(rk, fromB64(VECTOR.signPub), VECTOR.roomID, VECTOR.fromID, VECTOR.epoch, fromB64(VECTOR.nonce), fromB64(VECTOR.cipher), fromB64(VECTOR.sig));
-check("decrypts Go-sealed message", new TextDecoder().decode(pt) === VECTOR.plaintext);
+check("decrypts Go-sealed message (and reports it signed)", new TextDecoder().decode(pt.plaintext) === VECTOR.plaintext && pt.signed);
 
 // 2. Tampered ciphertext is rejected.
 {
@@ -70,16 +70,17 @@ check("decrypts Go-sealed message", new TextDecoder().decode(pt) === VECTOR.plai
   const k = newRoomKey(0);
   const s = sealMessage(id, k, "ops", "me", new TextEncoder().encode("hello, war room"));
   const out = openMessage(k, id.signPub, "ops", "me", k.epoch, s.nonce, s.ciphertext, s.signature);
-  check("seal/open round-trip", new TextDecoder().decode(out) === "hello, war room");
+  check("seal/open round-trip", new TextDecoder().decode(out.plaintext) === "hello, war room" && out.signed);
 }
 
-// 6. Unsigned message accepted (empty signature → decrypt without verify).
+// 6. Unsigned message accepted (empty signature → decrypt without verify) AND
+//    reported as unsigned, so the UI can mark it (§3.3).
 {
   const id = newEphemeralIdentity();
   const k = newRoomKey(0);
   const s = sealMessage(id, k, "ops", "me", new TextEncoder().encode("legacy"));
   const out = openMessage(k, id.signPub, "ops", "me", k.epoch, s.nonce, s.ciphertext, new Uint8Array(0));
-  check("accepts unsigned message", new TextDecoder().decode(out) === "legacy");
+  check("accepts unsigned message (and reports it unsigned)", new TextDecoder().decode(out.plaintext) === "legacy" && !out.signed);
 }
 
 // 7. Wrap/unwrap a room key.

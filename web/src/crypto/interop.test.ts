@@ -27,7 +27,7 @@ const VECTOR = {
 describe("Go ↔ browser byte interop", () => {
   it("decrypts and verifies a message sealed by the Go TUI", () => {
     const rk = { epoch: VECTOR.epoch, key: fromB64(VECTOR.roomKey) };
-    const pt = openMessage(
+    const opened = openMessage(
       rk,
       fromB64(VECTOR.signPub),
       VECTOR.roomID,
@@ -37,7 +37,10 @@ describe("Go ↔ browser byte interop", () => {
       fromB64(VECTOR.cipher),
       fromB64(VECTOR.sig),
     );
-    expect(new TextDecoder().decode(pt)).toBe(VECTOR.plaintext);
+    expect(new TextDecoder().decode(opened.plaintext)).toBe(VECTOR.plaintext);
+    // A Go-signed frame must report as signed, or the UI would mark a genuinely
+    // authenticated message as unattributed.
+    expect(opened.signed).toBe(true);
   });
 
   it("rejects a tampered ciphertext (signature covers it)", () => {
@@ -71,17 +74,47 @@ describe("browser crypto round-trips (post-refactor sanity)", () => {
     const id = newEphemeralIdentity();
     const rk = newRoomKey(0);
     const sealed = sealMessage(id, rk, "ops", "me", utf8("hello, war room"));
-    const pt = openMessage(rk, id.signPub, "ops", "me", rk.epoch, sealed.nonce, sealed.ciphertext, sealed.signature);
-    expect(new TextDecoder().decode(pt)).toBe("hello, war room");
+    const opened = openMessage(rk, id.signPub, "ops", "me", rk.epoch, sealed.nonce, sealed.ciphertext, sealed.signature);
+    expect(new TextDecoder().decode(opened.plaintext)).toBe("hello, war room");
+    expect(opened.signed).toBe(true);
   });
 
   it("accepts a message with no signature as unsigned", () => {
     const id = newEphemeralIdentity();
     const rk = newRoomKey(0);
     const sealed = sealMessage(id, rk, "ops", "me", utf8("legacy"));
-    // Empty signature → decrypt without verification (no throw).
-    const pt = openMessage(rk, id.signPub, "ops", "me", rk.epoch, sealed.nonce, sealed.ciphertext, new Uint8Array(0));
-    expect(new TextDecoder().decode(pt)).toBe("legacy");
+    // Empty signature → decrypt without verification (no throw), and report it.
+    const opened = openMessage(rk, id.signPub, "ops", "me", rk.epoch, sealed.nonce, sealed.ciphertext, new Uint8Array(0));
+    expect(new TextDecoder().decode(opened.plaintext)).toBe("legacy");
+    expect(opened.signed).toBe(false);
+  });
+
+  it("reports signed-ness per frame, not per session", () => {
+    // The same sender, same room key: one signed frame and one stripped frame
+    // must not blur into each other. This is the relay-downgrade case — a relay
+    // that drops `sig` from a v3 message it is relaying.
+    const id = newEphemeralIdentity();
+    const rk = newRoomKey(0);
+    const sealed = sealMessage(id, rk, "ops", "me", utf8("same bytes"));
+    const withSig = openMessage(rk, id.signPub, "ops", "me", rk.epoch, sealed.nonce, sealed.ciphertext, sealed.signature);
+    const stripped = openMessage(rk, id.signPub, "ops", "me", rk.epoch, sealed.nonce, sealed.ciphertext, new Uint8Array(0));
+    expect(new TextDecoder().decode(withSig.plaintext)).toBe("same bytes");
+    expect(new TextDecoder().decode(stripped.plaintext)).toBe("same bytes");
+    expect(withSig.signed).toBe(true);
+    expect(stripped.signed).toBe(false);
+  });
+
+  it("throws rather than returning signed=false for an INVALID signature", () => {
+    // A present-but-bad signature must be rejected outright (the body is never
+    // returned), not downgraded to "unsigned" and displayed with a badge.
+    const id = newEphemeralIdentity();
+    const rk = newRoomKey(0);
+    const sealed = sealMessage(id, rk, "ops", "me", utf8("forged"));
+    const badSig = Uint8Array.from(sealed.signature);
+    badSig[0] ^= 0x01;
+    expect(() =>
+      openMessage(rk, id.signPub, "ops", "me", rk.epoch, sealed.nonce, sealed.ciphertext, badSig),
+    ).toThrow(/signature verification failed/);
   });
 
   it("wraps and unwraps a room key between two identities", () => {

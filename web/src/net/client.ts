@@ -38,6 +38,7 @@ import {
   sealMessage,
   openMessage,
   type RoomKey,
+  type OpenedMessage,
 } from "../crypto/group";
 import type { Identity } from "../crypto/identity";
 
@@ -50,7 +51,18 @@ export type ClientEvent =
       policy: RoomPolicy;
     }
   | { t: "keyReady"; epoch: number }
-  | { t: "message"; fromID: string; fromName: string; text: string; self: boolean; at: number }
+  // `signed` mirrors Go's client.EvMessage.Signed (§3.3): true if the frame
+  // carried a signature that verified. False means the sender is attributed by
+  // routing metadata alone — the UI must say so (a relay can strip `sig`).
+  | {
+      t: "message";
+      fromID: string;
+      fromName: string;
+      text: string;
+      self: boolean;
+      signed: boolean;
+      at: number;
+    }
   | { t: "serverMessage"; kind: string; from: string; text: string; at: number }
   | { t: "control"; action: string; byName?: string; self?: boolean; ttlSeconds?: number }
   | { t: "execResult"; command: string; allowed: boolean; output?: string; error?: string }
@@ -130,8 +142,18 @@ export class NetherClient {
       sig: toB64(sealed.signature),
     };
     this.sendRaw(encode(Op.Message, msg));
-    // Local echo: the server fans the message out to OTHERS only.
-    this.onEvent({ t: "message", fromID: this.selfID, fromName: this.name, text, self: true, at: Date.now() });
+    // Local echo: the server fans the message out to OTHERS only. sealMessage
+    // always signs, so our own line is signed by construction (as in Go's
+    // client.go, which echoes with Signed: true).
+    this.onEvent({
+      t: "message",
+      fromID: this.selfID,
+      fromName: this.name,
+      text,
+      self: true,
+      signed: true,
+      at: Date.now(),
+    });
   }
 
   vanish(): void {
@@ -305,9 +327,9 @@ export class NetherClient {
       this.onEvent({ t: "error", message: `message from unknown member ${m.from_id}` });
       return;
     }
-    let pt: Uint8Array;
+    let opened: OpenedMessage;
     try {
-      pt = openMessage(
+      opened = openMessage(
         this.rk,
         sender.signPub,
         this.room,
@@ -325,8 +347,11 @@ export class NetherClient {
       t: "message",
       fromID: m.from_id,
       fromName: sender.name,
-      text: new TextDecoder().decode(pt),
+      text: new TextDecoder().decode(opened.plaintext),
       self: false,
+      // An absent/empty `sig` decrypts fine but is NOT authenticated; carry that
+      // through instead of dropping it, so the UI can mark the message.
+      signed: opened.signed,
       at: Date.now(),
     });
   }
