@@ -138,8 +138,8 @@
             <p>X25519 + XChaCha20-Poly1305 + Ed25519 + HKDF. Pure Go in the terminal, byte-compatible in the browser — the same crypto on both sides, checked by shared interop vectors.</p>
           </article>
           <article class="lp-feature">
-            <h3>One static binary</h3>
-            <p>No runtime, no dependencies. A ~12&nbsp;MB <code>FROM scratch</code> image, or a single binary per platform. <code>curl … | bash</code> and you're done.</p>
+            <h3>Static binaries, no runtime</h3>
+            <p>No runtime, no dependencies, no libc. The relay is a ~12&nbsp;MB <code>FROM scratch</code> image holding a single binary; each release archive carries both the <code>netherchat</code> client and the <code>netherchat-server</code> relay, for macOS, Linux and Windows. <code>curl … | bash</code> installs the client — add <code>--with-server</code> for the relay.</p>
           </article>
           <article class="lp-feature">
             <h3>Terminal &amp; browser</h3>
