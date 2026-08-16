@@ -136,6 +136,95 @@ the relay silently ignores while you believe you are serving `wss://`. If you ar
 upgrading from a config that carried those keys, delete them — they were never
 read, so removing them changes nothing about how your relay serves traffic.
 
+## Serving the web client (`/join` and `/beacon`)
+
+The relay serves no HTML. It answers `/ws` and the REST endpoints and nothing
+else, so the browser clients are static files your reverse proxy serves:
+
+```bash
+cd web && npm run build     # → web/dist/{index,join,beacon}.html
+```
+
+They must be on the **same origin as the relay**. `HandleWS` enforces
+same-origin on the WebSocket handshake deliberately and permanently
+(`server/internal/ws/server.go:74-82`), and the page resolves its relay from its
+own origin alone — a browser client on a different host cannot connect.
+
+Netherchat's links are extensionless, and that is the public contract:
+
+```
+https://chat.example.com/join?room=ops&token=…
+https://chat.example.com/beacon?room=ops&ttl=3600#key=…
+```
+
+The files behind them are `join.html` and `beacon.html`, so **your proxy needs
+two rewrite rules**. Without them both links serve whatever your `/` route
+serves. The beacon case fails *silently*: the key is in the URL fragment, which
+never leaves the browser, so the recipient gets a wrong page and no error.
+
+Rewrite **exactly** `/join` and `/beacon` — nothing deeper. `/beacon/<room>` is
+the relay's beacon REST API (`PROTOCOL.md` §1.2) and must still be proxied.
+
+```
+# Caddy
+chat.example.com {
+    root * /srv/netherchat/dist
+
+    # Clean URLs. `path /join /beacon` matches those two paths exactly, so
+    # /beacon/<room> below is untouched. Query strings survive a rewrite;
+    # the #key=… fragment never reaches the proxy at all.
+    @pages path /join /beacon
+    rewrite @pages {path}.html
+
+    reverse_proxy /ws       localhost:3000
+    reverse_proxy /beacon/* localhost:3000
+
+    file_server
+}
+```
+
+```nginx
+# nginx
+server {
+    listen 443 ssl;
+    server_name chat.example.com;
+    root /srv/netherchat/dist;
+
+    # Clean URLs. `location =` is an exact match and outranks the /beacon/
+    # prefix below, so /beacon hits the page and /beacon/<room> hits the API.
+    location = /join   { try_files /join.html   =404; }
+    location = /beacon { try_files /beacon.html =404; }
+
+    location = /ws {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host       $host;      # same-origin handshake check
+    }
+
+    location /beacon/ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+    }
+
+    location / { try_files $uri $uri/ =404; }
+}
+```
+
+Verify both, and that the API path still works:
+
+```bash
+curl -sS 'https://chat.example.com/join?room=ops&token=x'   | head -5
+curl -sS 'https://chat.example.com/beacon?room=ops&ttl=3600' | head -5
+curl -sS 'https://chat.example.com/beacon/ops'                        # the REST API
+```
+
+`vite dev` and `vite preview` apply the same two rewrites through the
+`cleanRoutes` plugin in `web/vite.config.ts`, so a link that works in dev works
+here. The hosted site does it with a CloudFront viewer-request function
+(`infra/cloudfront/`).
+
 ## Reachability without infra: Tor onion service (`--tor`)
 
 When you have nothing to host *on* — no public IP, behind CGNAT, VPN down, the

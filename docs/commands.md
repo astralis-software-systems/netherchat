@@ -68,8 +68,11 @@ byte-for-byte identical to the TUI (X25519 + XChaCha20-Poly1305 + Ed25519), so a
 browser guest and terminal users share the same room transparently.
 
 To serve it on the same origin as the relay, build `web/` (`npm run build`) and
-have your reverse proxy serve the static `dist/` and map the clean path
-`/join → /join.html` (one rewrite rule), while proxying `/ws` to the relay.
+have your reverse proxy serve the static `dist/` and map the clean paths
+`/join → /join.html` **and `/beacon → /beacon.html`** (two rewrite rules — the
+beacon reader needs one too, and without it the link fails silently), while
+proxying `/ws` and `/beacon/<room>` to the relay. Rules for Caddy and nginx are
+in [`docs/self-hosting.md`](self-hosting.md#serving-the-web-client-join-and-beacon).
 
 ## `/verify` — out-of-band verification (SAS)
 
