@@ -7,7 +7,7 @@
     <title>Netherchat — messaging that lives below the surface</title>
     <meta
       name="description"
-      content="Netherchat is a self-hostable, end-to-end encrypted, real-time messaging system. A blind-relay server that cannot read your messages, a terminal client that doesn't look like 1998, and a browser client for everyone else."
+      content="Netherchat is a self-hostable, end-to-end encrypted, real-time messaging system. A blind-relay server that cannot read your messages, a terminal client that doesn't look like 1998, and a link-join browser client for guests."
     />
     <link rel="icon" href="/favicon.png" type="image/png" />
     <meta property="og:title" content="Netherchat" />
@@ -59,7 +59,7 @@
             <code><span class="lp-prompt">$</span> curl -fsSL https://netherchat.com/install | bash</code>
             <button class="lp-copy" data-copy="curl -fsSL https://netherchat.com/install | bash">copy</button>
           </div>
-          <p class="lp-fineprint">macOS · Linux · Windows (WSL2) · or <code>docker run -p 3000:3000 salkreiner/netherchat</code></p>
+          <p class="lp-fineprint">macOS · Linux · Windows (PowerShell) · or <code>docker run -p 3000:3000 salkreiner/netherchat</code></p>
         </div>
 
         <!-- faux client, rendered live (no screenshot), themed -->
@@ -110,8 +110,11 @@
             <h3>Zero telemetry, zero persistence</h3>
             <p>
               No analytics, no phone-home, ever. By default nothing is written to disk — rooms evaporate when empty —
-              and the relay makes no outbound calls at all; a route's <code>reply_url</code> and <code>--tor</code> are
-              opt-in. Message bodies cross the wire as ciphertext it has no key to open.
+              and out of the box the relay makes no outbound network calls. Two opt-in features add egress once an
+              operator configures them: a route's <code>reply_url</code> and <code>--tor</code>. One further call never
+              leaves the host — <code>--healthcheck</code> GETs <code>/health</code> on <code>127.0.0.1</code> so the
+              <code>FROM scratch</code> image can declare a Docker healthcheck.
+              Message bodies cross the wire as ciphertext it has no key to open.
             </p>
           </article>
         </div>
@@ -120,27 +123,27 @@
           and over a plain <code>ws://</code> hop so does the network, because the routing fields around the ciphertext
           are plaintext JSON (terminate TLS at a reverse proxy in front of the relay).
           Forward secrecy is per-epoch (not per-message), and the group key-distribution layer is
-          custom over audited primitives — slated for external review before any paid tier, with MLS (RFC 9420) as the
-          migration target. See <a href="https://github.com/astralis-software-systems/netherchat/blob/main/docs/encryption.md" rel="noreferrer">encryption.md</a>.
+          custom over audited primitives — it should get an independent cryptographic review before any paid tier, with
+          MLS (RFC 9420) as the migration target. See <a href="https://github.com/astralis-software-systems/netherchat/blob/main/docs/encryption.md" rel="noreferrer">encryption.md</a>.
         </p>
       </section>
 
       <!-- ============================================== features ======== -->
       <section class="lp-features" id="features">
         <h2 class="lp-section-title">Built for engineering teams</h2>
-        <p class="lp-section-sub">Designed to scale to everyone else without compromising the developer experience. Built for engineering teams; trusted for incident response and high-stakes coordination.</p>
+        <p class="lp-section-sub">Designed to scale to everyone else without compromising the developer experience.</p>
         <div class="lp-feature-grid">
           <article class="lp-feature">
             <h3>End-to-end encrypted</h3>
-            <p>X25519 + XChaCha20-Poly1305 + Ed25519, audited pure-Go and WebCrypto-grade primitives. The same crypto in the terminal and the browser.</p>
+            <p>X25519 + XChaCha20-Poly1305 + Ed25519 + HKDF. Pure Go in the terminal, byte-compatible in the browser — the same crypto on both sides, checked by shared interop vectors.</p>
           </article>
           <article class="lp-feature">
             <h3>One static binary</h3>
-            <p>No runtime, no dependencies. A ~7&nbsp;MB <code>FROM scratch</code> image, or a single binary per platform. <code>curl … | bash</code> and you're done.</p>
+            <p>No runtime, no dependencies. A ~12&nbsp;MB <code>FROM scratch</code> image, or a single binary per platform. <code>curl … | bash</code> and you're done.</p>
           </article>
           <article class="lp-feature">
             <h3>Terminal &amp; browser</h3>
-            <p>A modern TUI for power users and this web client for everyone else — both speak one documented wire protocol to the same server.</p>
+            <p>A modern TUI for power users and a link-join browser client for guests — both speak one documented wire protocol to the same relay.</p>
           </article>
           <article class="lp-feature">
             <h3>Eight themes, instant</h3>
@@ -148,7 +151,7 @@
           </article>
           <article class="lp-feature">
             <h3>Pipes &amp; webhooks</h3>
-            <p><code>echo "deploy done" | netherchat send #ops</code>. Every room gets an inbound webhook for CI and alerts. Any alert source can open a locked-down war room — a monitoring page, a CI failure, or a security tool posting a finding.</p>
+            <p><code>echo "deploy done" | netherchat send ops</code>. Give a room a webhook token in <code>netherchat.toml</code> and it accepts inbound posts from CI and alerts. Any alert source can open a locked-down war room — a monitoring page, a CI failure, or a security tool posting a finding.</p>
           </article>
           <article class="lp-feature">
             <h3>Ephemeral by default</h3>
@@ -196,12 +199,7 @@
           <article class="lp-card">
             <div class="lp-card-ico">🔥</div>
             <h3>Proof of destruction</h3>
-            <p>Scuttle a room and a co-signed receipt is written before the keys are zeroized — proof of what was destroyed and when. The one artifact that outlives the room, verifiable offline. Ephemerality you can prove, not just promise.</p>
-          </article>
-          <article class="lp-card">
-            <div class="lp-card-ico">👁</div>
-            <h3>Proven blind, not promised</h3>
-            <p><code>doctor --paranoid</code> taps the live relay and shows only ciphertext crossing the wire, entropy-checked. Not a README claim — a capture you run yourself against the real server.</p>
+            <p>Scuttle a room and a signed receipt — co-signed by the members present — is written before the keys are zeroized, proving what was destroyed and when. The one artifact that outlives the room, verifiable offline. Ephemerality you can prove, not just promise.</p>
           </article>
         </div>
       </section>
