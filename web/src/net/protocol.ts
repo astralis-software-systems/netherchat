@@ -69,7 +69,7 @@ export interface Welcome {
    * only makes the failing shape impossible to write down in a test, which is how
    * it shipped. Consume it as `w.members ?? []`.
    */
-  members: WireMember[] | null;
+  members?: WireMember[] | null;
   you_are_first: boolean;
   policy: RoomPolicy;
 }

@@ -87,8 +87,8 @@ func TestBeaconLinkURLMatchesWebVector(t *testing.T) {
 //
 // That is not the same claim as "the relay's own origin", and the difference is
 // worth stating because the shorter phrasing reads as a defect. The relay process
-// serves no HTML (docs/self-hosting.md:141) — but the supported deployment
-// requires the pages and `/ws` to be on ONE origin (`:147-149`, and `HandleWS`
+// serves no HTML (docs/self-hosting.md, "Serving the web client") — but the supported deployment
+// requires the pages and `/ws` to be on ONE origin (same section, and `HandleWS`
 // enforces same-origin on the handshake), so the origin a client dialed IS the
 // origin that serves the pages. `wss://chat.example.com/ws` → the proxy at
 // `https://chat.example.com`, which serves join.html and beacon.html. The
