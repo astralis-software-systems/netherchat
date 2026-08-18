@@ -691,7 +691,11 @@ func (m *Model) runBeaconLink(r *room, arg string) {
 		return
 	}
 	link := m.beaconLink(r.name, key, int(ttl.Seconds()))
-	m.addSystem("beacon read-only link (status only — confers no room access; share out of band):\n  " + link)
+	out := "beacon read-only link (status only — confers no room access; share out of band):\n  " + link
+	if n := m.webBaseNotice(); n != "" {
+		out += "\n  " + n
+	}
+	m.addSystem(out)
 }
 
 // beaconLink builds the browser read URL for a room beacon: the web /beacon page
@@ -1215,6 +1219,9 @@ func (m *Model) renderBreakGlass(e client.EvBreakGlass) string {
 		for _, in := range e.Invites {
 			b.WriteString(fmt.Sprintf("     %-*s  %s\n", width, in.Name, m.joinLink(e.Room, in.Token)))
 		}
+		if n := m.webBaseNotice(); n != "" {
+			b.WriteString("\n   " + n + "\n")
+		}
 	}
 	b.WriteString(fmt.Sprintf("\n   you're in #%s (background) — switch to it with ctrl+n", e.Room))
 	return b.String()
@@ -1236,6 +1243,33 @@ func (m *Model) webBase() string {
 		return m.webURL
 	}
 	return deriveWebBase(m.url)
+}
+
+// webBaseNotice is the mint-time warning that accompanies any link built on a
+// DERIVED base — that is, whenever --web-url is unset. It is empty otherwise.
+//
+// The derivation is right in the supported deployment, where the pages and /ws
+// share one origin (docs/self-hosting.md, "Serving the web client"). It is wrong
+// when a client is pointed straight at the relay's listen address while the pages
+// are served somewhere else, and this client cannot tell those two apart: no wire
+// field carries the relay's own --web-url to a connected client, so the base is
+// inferred from the URL the operator typed and nothing more.
+//
+// What makes that worth a line of output is the silence. The sender sees a
+// plausible link; the recipient sees a bare 404; and for a beacon link the key
+// lives in the fragment, which by RFC 3986 §3.5 never leaves the browser, so no
+// server logs the miss either. A guess that fails visibly needs no warning. This
+// one fails in all three directions at once, so mint time is the only place the
+// operator can still be told.
+//
+// Every link-minting path goes through webBase() — /beacon link, /invite, and
+// /break-glass — so every one of them carries this.
+func (m *Model) webBaseNotice() string {
+	if m.webURL != "" {
+		return ""
+	}
+	return "note: link base derived from the relay URL (no --web-url) — correct only if that origin also serves the web client. " +
+		"Pass --web-url to THIS client if the pages are elsewhere; the relay's own --web-url does not reach clients."
 }
 
 // deriveWebBase maps a relay URL to the web client's origin.
@@ -1276,6 +1310,9 @@ func (m *Model) renderInvite(room string, e client.EvInvite) string {
 	b.WriteString(fmt.Sprintf("  cli:   netherchat connect %s --room %s --invite %s\n", m.url, room, e.Token))
 	if !e.Expires.IsZero() {
 		b.WriteString("  expires: " + e.Expires.Format("2006-01-02 15:04") + "\n")
+	}
+	if n := m.webBaseNotice(); n != "" {
+		b.WriteString("  " + n + "\n")
 	}
 	if r := m.session[room]; r != nil && r.inviteQR {
 		r.inviteQR = false

@@ -168,6 +168,23 @@
 .nc-status[data-state="connecting"] .nc-dot {
   background: var(--warn);
 }
+/* In the room, no room key yet — the state the client used to have no word for,
+   which is why a room nobody could hand a key out in was indistinguishable from
+   a socket that had not opened. Warn, not error: it may still resolve. */
+.nc-status[data-state="waiting"] {
+  color: var(--warn);
+}
+.nc-status[data-state="waiting"] .nc-dot {
+  background: var(--warn);
+}
+/* Connected but unusable: the key never came, or a frame could not be processed.
+   Distinct from "down", where the socket itself is gone. */
+.nc-status[data-state="error"] {
+  color: var(--error);
+}
+.nc-status[data-state="error"] .nc-dot {
+  background: var(--error);
+}
 .nc-status[data-state="encrypted"] {
   color: var(--success);
 }

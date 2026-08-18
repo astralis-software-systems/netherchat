@@ -61,7 +61,15 @@ export interface Welcome {
   protocol_version: number;
   your_id: string;
   room: string;
-  members: WireMember[];
+  /**
+   * The members already present. Current relays send `[]` for an empty room, but
+   * `null` is admitted here because relays that predate that guarantee send it —
+   * Go marshals a nil `[]Member` as JSON `null`, which is what an empty room
+   * produced. Narrowing this to `WireMember[]` does not make the wire honest; it
+   * only makes the failing shape impossible to write down in a test, which is how
+   * it shipped. Consume it as `w.members ?? []`.
+   */
+  members: WireMember[] | null;
   you_are_first: boolean;
   policy: RoomPolicy;
 }

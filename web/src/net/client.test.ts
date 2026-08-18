@@ -13,6 +13,8 @@
 // the point is that a real Go-shaped frame with its `sig` removed still reaches
 // the UI flagged as unsigned, which is exactly the relay-downgrade path.
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { NetherClient, type ClientEvent } from "./client";
 import { Op, type KeyDeliver, type Welcome, type WireMessage } from "./protocol";
@@ -47,6 +49,18 @@ class FakeSocket {
   /** Push one server frame at the client, the way onmessage would. */
   deliver(type: string, data: unknown): void {
     this.onmessage?.({ data: JSON.stringify({ type, data }) });
+  }
+
+  /**
+   * Push a frame the relay actually produced, byte for byte.
+   *
+   * `deliver` above builds its argument from a TypeScript value, so the wire
+   * shape is whatever protocol.ts says it may be. This one takes the string and
+   * hands it over untouched, which is the only way a fixture captured from the Go
+   * relay can reach the client without the reader's own types reshaping it.
+   */
+  deliverRaw(raw: string): void {
+    this.onmessage?.({ data: raw });
   }
 }
 
@@ -227,5 +241,139 @@ describe("signed-ness reaches the UI layer", () => {
       ["early signed", true],
       ["early stripped", false],
     ]);
+  });
+});
+
+// --- Harness B: frames the relay actually sent -------------------------------
+//
+// Everything above builds its inbound frames from TypeScript values checked
+// against protocol.ts. That is a closed loop: the type decides what the wire may
+// contain, and the wire is never asked. It cost five defects, one of which
+// (`welcome.members` arriving as JSON `null` for the first joiner) the type
+// system did not merely fail to catch but actively forbade anyone from writing
+// down — `members: WireMember[]` makes `members: null` a compile error.
+//
+// So these cases replay bytes captured from a real relay
+// (tui/e2e/frames_gen_test.go writes testdata/frames.json; regenerate with
+// `GEN_INTEROP=1 go test ./tui/e2e -run TestGenWireFrames -v`) and hand them to
+// the client as strings. No literal, no `satisfies`, nothing between the relay's
+// output and onmessage.
+
+interface FramesFile {
+  frames: Record<string, string>;
+}
+
+function capturedFrames(): Record<string, string> {
+  const path = fileURLToPath(new URL("./testdata/frames.json", import.meta.url));
+  const parsed = JSON.parse(readFileSync(path, "utf8")) as FramesFile;
+  return parsed.frames;
+}
+
+/**
+ * A first-joiner Welcome from a relay that predates the "members is always an
+ * array" fix, frozen rather than generated: once server/internal/hub emits `[]`
+ * no generator can produce these bytes again, and the client still has to
+ * survive them. PROTOCOL.md admits clients across [MinVersion, Version] = [2, 3]
+ * and the deployment model is self-hosted relays an operator pins, so a browser
+ * bundle WILL meet a relay older than itself. Captured from netherchat @ e2f0e2b
+ * by the generator above before the fix landed.
+ */
+const LEGACY_NULL_MEMBERS_WELCOME =
+  '{"type":"welcome","data":{"protocol_version":3,"your_id":"15fdc53abfe8f963",' +
+  '"room":"wirecap","members":null,"you_are_first":true,' +
+  '"policy":{"invite_only":false,"webhook":false}}}';
+
+/** A client wired to a fake socket, with nothing delivered yet. */
+function bareClient(): { events: ClientEvent[]; socket: FakeSocket; client: NetherClient } {
+  const me = newEphemeralIdentity();
+  const events: ClientEvent[] = [];
+  const client = new NetherClient("ws://relay.test/ws", ROOM, "me", me, (e) => events.push(e));
+  client.connect();
+  return { events, socket: lastSocket!, client };
+}
+
+describe("captured relay frames", () => {
+  it("has a fixture for both join orderings", () => {
+    const frames = capturedFrames();
+    expect(Object.keys(frames).sort()).toEqual(["welcomeEmptyRoom", "welcomeNonEmptyRoom"]);
+  });
+
+  it("accepts the first joiner's Welcome without throwing", () => {
+    const { socket } = bareClient();
+    // The whole of B1: this threw `TypeError: w.members is not iterable`, and
+    // because it threw from inside onWelcome it also skipped the epoch-0 mint,
+    // the connected event, and the keyReady event five lines below.
+    expect(() => {
+      socket.deliverRaw(capturedFrames().welcomeEmptyRoom);
+    }).not.toThrow();
+  });
+
+  it("mints epoch 0 from the first joiner's Welcome", () => {
+    const { socket, events, client } = bareClient();
+    socket.deliverRaw(capturedFrames().welcomeEmptyRoom);
+
+    expect(events.map((e) => e.t)).toEqual(["connected", "keyReady"]);
+    const connected = events.find((e) => e.t === "connected");
+    expect(connected).toMatchObject({ youAreFirst: true, members: [] });
+    expect(events.find((e) => e.t === "keyReady")).toMatchObject({ epoch: 0 });
+    // A browser client CAN found a room; the only thing that ever stopped it was
+    // the throw above.
+    expect(client.fingerprintReady()).toBe(true);
+  });
+
+  it("accepts a later joiner's Welcome and registers the member already present", () => {
+    const { socket, events } = bareClient();
+    expect(() => {
+      socket.deliverRaw(capturedFrames().welcomeNonEmptyRoom);
+    }).not.toThrow();
+
+    expect(events.map((e) => e.t)).toEqual(["connected"]);
+    const connected = events.find((e) => e.t === "connected");
+    expect(connected).toMatchObject({ youAreFirst: false });
+    expect(connected?.t === "connected" && connected.members.map((m) => m.name)).toEqual(["first"]);
+  });
+
+  it("survives an older relay that still sends members as null", () => {
+    const { socket, events, client } = bareClient();
+    expect(() => {
+      socket.deliverRaw(LEGACY_NULL_MEMBERS_WELCOME);
+    }).not.toThrow();
+
+    // Not merely "does not crash": the room must still be founded, because the
+    // alternative is a connected client that can never talk to anyone.
+    expect(events.map((e) => e.t)).toEqual(["connected", "keyReady"]);
+    expect(client.fingerprintReady()).toBe(true);
+  });
+});
+
+describe("a frame the client cannot process", () => {
+  it("becomes a visible error instead of an exception out of onmessage", () => {
+    const { socket, events } = bareClient();
+
+    // A member_joined with no member. The dispatch in handleRaw casts env.data to
+    // the wire type and hands it straight to the handler, so a frame that does not
+    // match reaches property access on undefined. In a browser the resulting throw
+    // escapes to the DOM event dispatcher, which logs it and moves on — the socket
+    // stays open, the listener stays registered, and the UI is told nothing at all.
+    // That silence is what made B1 unrecoverable rather than merely broken.
+    expect(() => {
+      socket.deliverRaw('{"type":"member_joined","data":{}}');
+    }).not.toThrow();
+
+    const errors = events.filter((e): e is Extract<ClientEvent, { t: "error" }> => e.t === "error");
+    expect(errors).toHaveLength(1);
+    // The UI has to be able to tell "one frame was unprocessable" from "one message
+    // failed to decrypt": the first leaves this client in an unknown state and must
+    // reach the status indicator, not only the transcript.
+    expect(errors[0].fatal).toBe(true);
+    expect(errors[0].message).toContain("member_joined");
+  });
+
+  it("keeps dispatching after one bad frame", () => {
+    const { socket, events } = bareClient();
+    socket.deliverRaw('{"type":"member_joined","data":{}}');
+    socket.deliverRaw(capturedFrames().welcomeEmptyRoom);
+
+    expect(events.map((e) => e.t)).toEqual(["error", "connected", "keyReady"]);
   });
 });

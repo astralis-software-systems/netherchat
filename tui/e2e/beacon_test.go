@@ -20,6 +20,11 @@ import (
 
 const beaconToken = "beacon-secret"
 
+// notEnabled is the relay's own sentence for "this room has no beacon", written
+// verbatim by server/internal/api/beacon.go. It is the only thing that
+// distinguishes that 404 from a proxy that never forwarded /beacon/ at all.
+const notEnabled = "beacon is not enabled for this room"
+
 func beaconConfig() config.Config {
 	c := config.Default()
 	c.Rooms = map[string]config.RoomConfig{"ops": {BeaconToken: beaconToken}}
@@ -37,7 +42,12 @@ func httpGet(t *testing.T, url string) (*http.Response, []byte) {
 	return resp, body
 }
 
-func beaconReq(t *testing.T, method, url, token, body string) int {
+// beaconReq returns the status code AND the response body. The body is returned
+// because it is where the relay says what went wrong: every failure path in
+// server/internal/api/beacon.go writes a specific sentence, and the status code
+// alone cannot distinguish "this room has no beacon" from a reverse proxy that
+// never forwarded /beacon/ at all — both are 404.
+func beaconReq(t *testing.T, method, url, token, body string) (int, string) {
 	t.Helper()
 	var r io.Reader
 	if body != "" {
@@ -51,8 +61,9 @@ func beaconReq(t *testing.T, method, url, token, body string) int {
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, url, err)
 	}
+	respBody, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	return resp.StatusCode
+	return resp.StatusCode, strings.TrimSpace(string(respBody))
 }
 
 // TestBeaconRESTEndpoints proves the PUT/GET/DELETE contract (§1.2): writes need
@@ -66,13 +77,13 @@ func TestBeaconRESTEndpoints(t *testing.T) {
 	cipherB64 := base64.StdEncoding.EncodeToString([]byte("opaque-ciphertext-blob"))
 	body := `{"ciphertext":"` + cipherB64 + `","ttl_seconds":3600}`
 
-	if code := beaconReq(t, "PUT", base, "", body); code != http.StatusUnauthorized {
+	if code, _ := beaconReq(t, "PUT", base, "", body); code != http.StatusUnauthorized {
 		t.Fatalf("PUT no token = %d, want 401", code)
 	}
-	if code := beaconReq(t, "PUT", base, "wrong", body); code != http.StatusUnauthorized {
+	if code, _ := beaconReq(t, "PUT", base, "wrong", body); code != http.StatusUnauthorized {
 		t.Fatalf("PUT wrong token = %d, want 401", code)
 	}
-	if code := beaconReq(t, "PUT", base, beaconToken, body); code != http.StatusOK {
+	if code, _ := beaconReq(t, "PUT", base, beaconToken, body); code != http.StatusOK {
 		t.Fatalf("PUT valid token = %d, want 200", code)
 	}
 
@@ -96,16 +107,41 @@ func TestBeaconRESTEndpoints(t *testing.T) {
 	}
 
 	// DELETE needs the token; afterwards GET is 404.
-	if code := beaconReq(t, "DELETE", base, beaconToken, ""); code != http.StatusOK {
+	if code, _ := beaconReq(t, "DELETE", base, beaconToken, ""); code != http.StatusOK {
 		t.Fatalf("DELETE = %d, want 200", code)
 	}
 	if resp, _ := httpGet(t, base); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("GET after delete = %d, want 404", resp.StatusCode)
 	}
 
-	// A room with no beacon_token cannot have a beacon set (opt-in only).
-	if code := beaconReq(t, "PUT", ts.URL+"/beacon/general", "anything", body); code != http.StatusNotFound {
+	// A room with no beacon_token cannot have a beacon set (opt-in only), and the
+	// relay says which of the several 404s this is.
+	code, why := beaconReq(t, "PUT", ts.URL+"/beacon/general", "anything", body)
+	if code != http.StatusNotFound {
 		t.Fatalf("PUT to a non-beacon room = %d, want 404", code)
+	}
+	if !strings.Contains(why, notEnabled) {
+		t.Fatalf("404 body = %q, want it to contain %q", why, notEnabled)
+	}
+
+	// And the sentence has to survive into what the operator is shown. This half is
+	// the one that matters: asserting the status code alone was the reason B4 stayed
+	// invisible for as long as it did — the check reproduced exactly the information
+	// the client kept, so the information the client threw away could not be missed.
+	// `404 Not Found` is also what a reverse proxy that never forwarded /beacon/
+	// returns, and the two have completely different remedies.
+	alice := connect(t, ts.URL, "general", "alice", "")
+	waitMatch[client.EvKeyReady](t, alice, nil, 5*time.Second)
+	alice.UseBeaconToken("anything")
+	alice.SetBeacon("SEV1 declared", 3600)
+	res := waitMatch[client.EvBeaconResult](t, alice, func(e client.EvBeaconResult) bool {
+		return e.Action == "set"
+	}, 5*time.Second)
+	if res.OK {
+		t.Fatal("/beacon set succeeded against a room with no beacon_token")
+	}
+	if !strings.Contains(res.Err, notEnabled) {
+		t.Fatalf("client reported %q; the relay's reason did not survive the round trip", res.Err)
 	}
 }
 

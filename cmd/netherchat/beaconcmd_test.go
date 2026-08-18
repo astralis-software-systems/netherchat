@@ -82,9 +82,24 @@ func TestBeaconLinkURLMatchesWebVector(t *testing.T) {
 	}
 }
 
-// TestWebBaseFor pins where a beacon link points by default: the relay's own
-// origin. That default is precisely why the key's placement matters — see
-// docs/encryption.md.
+// TestWebBaseFor pins where a beacon link points by default: the origin THIS
+// CLIENT DIALED, with ws(s) mapped to http(s) and the path dropped.
+//
+// That is not the same claim as "the relay's own origin", and the difference is
+// worth stating because the shorter phrasing reads as a defect. The relay process
+// serves no HTML (docs/self-hosting.md:141) — but the supported deployment
+// requires the pages and `/ws` to be on ONE origin (`:147-149`, and `HandleWS`
+// enforces same-origin on the handshake), so the origin a client dialed IS the
+// origin that serves the pages. `wss://chat.example.com/ws` → the proxy at
+// `https://chat.example.com`, which serves join.html and beacon.html. The
+// derivation is correct there, which is the case it is a default for.
+//
+// It is wrong in exactly one situation: the client was pointed straight at the
+// relay's listen address while the pages are served somewhere else — `ws://
+// localhost:3000` with a separate `vite preview` on `:5173`. `--web-url` is the
+// remedy and the "explicit web url wins" row below is what pins it; it must be
+// passed to EVERY CLIENT that mints a link, because the relay's own `-web-url`
+// reaches no client (see docs/self-hosting.md, flags).
 func TestWebBaseFor(t *testing.T) {
 	for _, tc := range []struct {
 		name, server, webURL, want string

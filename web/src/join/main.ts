@@ -104,6 +104,30 @@ function relayLine(text: string, fullURL: string = text): HTMLElement {
   return row;
 }
 
+/**
+ * How long to wait for a room key before saying so.
+ *
+ * There is no timer anywhere else in this client, and the absence was the whole
+ * problem: `connecting…` was set once at render and cleared by exactly two events,
+ * so every failure to establish a key — the relay never answering, a distributor
+ * that holds no key, an exception in the Welcome handler — presented as the same
+ * indefinite "connecting…". Fifteen seconds is well past a healthy key exchange
+ * (one round trip through the relay to the oldest member and back) and well inside
+ * the patience of someone who was told to click a link and start talking.
+ */
+const KEY_DEADLINE_MS = 15_000;
+
+/**
+ * What to do when no key arrives. Specific, because the remedy is specific: a room
+ * whose key holders have all gone cannot re-mint one — minting is gated on being
+ * first into an empty room, and the room is not empty. Tearing it down and rejoining
+ * is the recovery, and today only a terminal client can do the tearing down.
+ */
+const NO_KEY_ADVICE =
+  "no room key after 15s — nobody in this room can hand one out. " +
+  "Ask a terminal client to run /scuttle and then rejoin, " +
+  "or open the room from a terminal client first.";
+
 function startChat(roomName: string, name: string): void {
   const ui = renderChat(roomName);
 
@@ -129,9 +153,29 @@ function startChat(roomName: string, name: string): void {
   });
 
   // Best-effort clean exit so the room's member count updates promptly.
-  window.addEventListener("pagehide", () => client.close());
+  window.addEventListener("pagehide", () => {
+    clearKeyDeadline(ui);
+    client.close();
+  });
 
   client.connect();
+
+  // Armed after connect(), cleared by keyReady, by a disconnect, or by an
+  // unprocessable frame — whichever gets there first. Nothing else in this client
+  // can move the status line off "connecting…" when the key simply never comes.
+  ui.keyTimer = window.setTimeout(() => {
+    ui.keyTimer = undefined;
+    if (ui.status.dataset.state === "encrypted") return;
+    setStatus(ui, "error", "no room key");
+    addLine(ui, "nc-err", NO_KEY_ADVICE);
+  }, KEY_DEADLINE_MS);
+}
+
+function clearKeyDeadline(ui: ChatUI): void {
+  if (ui.keyTimer !== undefined) {
+    window.clearTimeout(ui.keyTimer);
+    ui.keyTimer = undefined;
+  }
 }
 
 interface ChatUI {
@@ -144,6 +188,8 @@ interface ChatUI {
   members: number;
   /** Whether the one-time "what unsigned means" note has been shown. */
   explainedUnsigned: boolean;
+  /** Pending key-arrival deadline, if one is armed. */
+  keyTimer?: number;
 }
 
 function renderChat(roomName: string): ChatUI {
@@ -197,8 +243,19 @@ function onEvent(ui: ChatUI, e: ClientEvent): void {
   switch (e.t) {
     case "connected":
       setMembers(ui, e.members.length + 1);
+      // In the room, no key yet. This state is the one the client was missing, and
+      // its absence is what made two different defects look identical on screen: a
+      // Welcome that threw before emitting anything left the pill at "connecting…",
+      // and a room whose key holders had all gone emitted `connected` and then
+      // nothing — also leaving the pill at "connecting…". They are now
+      // distinguishable at a glance. The TUI has had this state all along
+      // ("connected (awaiting key)", tui/ui/app/model.go).
+      if (ui.status.dataset.state !== "encrypted") {
+        setStatus(ui, "waiting", "connected — waiting for the room key");
+      }
       break;
     case "keyReady":
+      clearKeyDeadline(ui);
       setStatus(ui, "encrypted", "end-to-end encrypted");
       ui.input.disabled = false;
       (ui.form.querySelector("button") as HTMLButtonElement).disabled = false;
@@ -228,8 +285,21 @@ function onEvent(ui: ChatUI, e: ClientEvent): void {
       break;
     case "error":
       addLine(ui, "nc-err", friendlyError(e.message));
+      // An error has to move the status line at least once, because the transcript
+      // is not where someone looks when nothing is happening. Two cases qualify: a
+      // frame the client could not process at all (`fatal` — its state is now
+      // unknown, whatever the connection looks like), and any error at all while
+      // the key has not arrived, where the pill would otherwise sit at
+      // "connecting…" or "waiting" until the deadline. An error AFTER the key is a
+      // per-message problem in a room that demonstrably works, and turning the pill
+      // red there would make it lie about the connection.
+      if (e.fatal || ui.status.dataset.state === "connecting" || ui.status.dataset.state === "waiting") {
+        clearKeyDeadline(ui);
+        setStatus(ui, "error", e.fatal ? "protocol error" : "could not join");
+      }
       break;
     case "disconnected":
+      clearKeyDeadline(ui);
       setStatus(ui, "down", "disconnected");
       ui.input.disabled = true;
       (ui.form.querySelector("button") as HTMLButtonElement).disabled = true;
@@ -238,7 +308,22 @@ function onEvent(ui: ChatUI, e: ClientEvent): void {
   }
 }
 
-function setStatus(ui: ChatUI, state: "connecting" | "encrypted" | "down", label: string): void {
+/**
+ * The five connection states, and the whole of what this client says about itself:
+ *
+ *   connecting  socket open pending, no Welcome yet
+ *   waiting     in the room, no room key yet
+ *   encrypted   the key arrived; the composer is live
+ *   error       no key by the deadline, or a frame that could not be processed
+ *   down        the socket closed
+ *
+ * `connecting` and `waiting` are both "not usable yet" but have different causes and
+ * different remedies, which is why they are separate; `error` and `down` are both
+ * terminal but only one of them means the connection is gone.
+ */
+type Status = "connecting" | "waiting" | "encrypted" | "error" | "down";
+
+function setStatus(ui: ChatUI, state: Status, label: string): void {
   ui.status.dataset.state = state;
   ui.statusText.textContent = label;
 }

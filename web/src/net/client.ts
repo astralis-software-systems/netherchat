@@ -69,7 +69,13 @@ export type ClientEvent =
   | { t: "invite"; room: string; token: string; expires?: number }
   | { t: "memberJoined"; id: string; name: string }
   | { t: "memberLeft"; id: string; name: string }
-  | { t: "error"; message: string }
+  // `fatal` marks an error the client could not recover from within one frame:
+  // the frame was not processed at all, so this client's state is whatever the
+  // aborted handler had set so far. The UI must put that on its status indicator
+  // and not only in a transcript — an ordinary error (one message that would not
+  // decrypt, an unknown sender) says nothing about the connection, and a frame
+  // that could not be handled says everything about it.
+  | { t: "error"; message: string; fatal?: boolean }
   | { t: "disconnected"; reason?: string };
 
 interface MemberRec {
@@ -193,6 +199,30 @@ export class NetherClient {
     } catch {
       return;
     }
+    try {
+      this.dispatch(env);
+    } catch (e) {
+      // A frame this client could not process at all.
+      //
+      // Unguarded, an exception here escapes to the DOM event dispatcher, which
+      // reports it to the console and carries on — the socket stays open and the
+      // listener stays registered, so the failure is invisible to everything
+      // except a devtools panel nobody has open. And the handler aborted partway,
+      // so this client's state is whatever its first half managed to set. That is
+      // the entire shape of the `members: null` defect: one unexpected null in a
+      // Welcome cost the epoch-0 mint, the connected event and the keyReady event,
+      // with no symptom on screen but a status pill that never changed.
+      //
+      // The guard does not make the frame work. It makes the failure sayable.
+      this.onEvent({
+        t: "error",
+        message: `could not handle a ${env.type} frame: ${String(e)}`,
+        fatal: true,
+      });
+    }
+  }
+
+  private dispatch(env: Envelope): void {
     switch (env.type) {
       case Op.Welcome:
         this.onWelcome(env.data as Welcome);
@@ -235,7 +265,14 @@ export class NetherClient {
   private onWelcome(w: Welcome): void {
     this.selfID = w.your_id;
     const members: { id: string; name: string }[] = [];
-    for (const m of w.members) {
+    // `?? []` is not defensive padding. A Go relay marshals an empty `[]Member`
+    // slice as JSON `null`, so a relay that predates the fix in
+    // server/internal/hub sends `"members":null` to precisely the first joiner —
+    // the one frame that also tells this client to mint epoch 0. Iterating it
+    // threw, and the throw skipped the mint below, so a browser client could
+    // never found a room. PROTOCOL.md admits relays across [MinVersion, Version]
+    // and operators pin their own, so this bundle will meet older ones.
+    for (const m of w.members ?? []) {
       this.addMember(m.id, m.name, m.identity_key, m.kx_key);
       members.push({ id: m.id, name: m.name });
     }

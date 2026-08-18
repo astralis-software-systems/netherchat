@@ -1,0 +1,9 @@
+{
+  "_comment": "Envelope bytes captured from a real Netherchat relay. Feed them to a client verbatim; do not re-type them as literals in the consuming language.",
+  "_generator": "GEN_INTEROP=1 go test ./tui/e2e -run TestGenWireFrames -v",
+  "_source": "tui/e2e/frames_gen_test.go, via server.Handler(config.Default()) over a raw WebSocket",
+  "frames": {
+    "welcomeEmptyRoom": "{\"type\":\"welcome\",\"data\":{\"protocol_version\":3,\"your_id\":\"202076dc4d831d4a\",\"room\":\"wirecap\",\"members\":[],\"you_are_first\":true,\"policy\":{\"invite_only\":false,\"webhook\":false}}}\n",
+    "welcomeNonEmptyRoom": "{\"type\":\"welcome\",\"data\":{\"protocol_version\":3,\"your_id\":\"ae47f3387477ef16\",\"room\":\"wirecap\",\"members\":[{\"id\":\"202076dc4d831d4a\",\"name\":\"first\",\"identity_key\":\"ERATEhUUFxYZGBsaHRwfHgEAAwIFBAcGCQgLCg0MDw4=\",\"kx_key\":\"kZCTkpWUl5aZmJuanZyfnoGAg4KFhIeGiYiLio2Mj44=\"}],\"you_are_first\":false,\"policy\":{\"invite_only\":false,\"webhook\":false}}}\n"
+  }
+}

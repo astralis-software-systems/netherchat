@@ -45,6 +45,14 @@ func TestBeaconLinkPutsKeyInFragmentNotQuery(t *testing.T) {
 
 // TestBeaconLinkMatchesCLIShape holds the TUI builder to the same string the CLI
 // emits, so the two cannot drift apart under one web reader.
+//
+// The base in `want` is the origin this model dialed (`wss://chat.example.com/ws`
+// → `https://chat.example.com`), which under the deployment contract is the origin
+// serving join.html and beacon.html — the pages and `/ws` must share one origin
+// (docs/self-hosting.md:147-149). It is NOT an assertion that the relay process
+// serves HTML; that process sits behind the proxy at some private address and
+// serves none. See cmd/netherchat/beaconcmd_test.go TestWebBaseFor for the one
+// topology where the derivation is wrong and why `--web-url` is the answer.
 func TestBeaconLinkMatchesCLIShape(t *testing.T) {
 	m := newModel("wss://chat.example.com/ws", "alice", "", "ops", "")
 	const (

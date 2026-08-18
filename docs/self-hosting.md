@@ -61,7 +61,19 @@ go build -o bin/ ./cmd/netherchat-server
 
 Flags: `--config <path>` (load `netherchat.toml`), `--addr` (override the listen
 address), `--version`, `--healthcheck` (probe the local `/health` and exit 0/1 —
-used by the Docker `HEALTHCHECK`).
+used by the Docker `HEALTHCHECK`), `--web-url <url>`.
+
+`--web-url` sets the base URL for the one-time `/join` links **the relay itself
+mints** — the ones it returns in its own REST responses when a `[[route]]` rule or
+an inbound alert spawns a war room. **It does not reach connected clients.** No
+wire frame carries it, so the links printed by `/invite`, `/break-glass`, and
+`/beacon link` in a TUI are built from *that client's* own `--web-url`: pass it
+there as well. With a client's `--web-url` unset, its links are derived from the
+relay URL it dialed (ws→http, wss→https) — right in the single-origin deployment
+below, wrong the moment a client talks straight to the relay's listen address while
+the pages are served somewhere else. A TUI warns when it mints a link on a derived
+base; the beacon case would otherwise fail silently, because the key sits in the
+URL fragment and never reaches a server that could log the miss.
 
 ## Configuration (`netherchat.toml`)
 
@@ -75,7 +87,9 @@ edit, and run `netherchat-server --config netherchat.toml`. It covers:
   is replayable to someone joining an *active* room but is unrecoverable after the
   room empties, a `/vanish`, or a restart. See [`encryption.md`](encryption.md).
 - **`[rooms.NAME]`** — per-room policy: `invite_only`, `webhook` + `webhook_token`,
-  `ttl` (ephemeral rooms expire after inactivity).
+  `ttl` (ephemeral rooms expire after inactivity), `beacon_token` + `beacon_ttl`
+  (Status Beacon, below), `durable` (opt-in persisted case room), and
+  `[rooms.NAME.scuttle]` (dead-man's switch).
 - **`[[trust]]`** — client-side identity pins (`handle`, `fpr`, `keys_url`) read by
   clients for `/whois`. The relay never reads them. See [`commands.md`](commands.md).
 
@@ -135,6 +149,30 @@ returns `valid:false` from `POST /api/v1/config/validate`) rather than a setting
 the relay silently ignores while you believe you are serving `wss://`. If you are
 upgrading from a config that carried those keys, delete them — they were never
 read, so removing them changes nothing about how your relay serves traffic.
+
+## Enabling the Status Beacon
+
+The beacon is off unless a room turns it on, and the token is the switch. A room can
+have a beacon only if it sets `beacon_token` — or, failing that, reuses its
+`webhook_token`. A room with neither answers `PUT /beacon/<room>` with
+`404 beacon is not enabled for this room`. There is no global setting and no default,
+so a room you never named in `netherchat.toml` has no beacon.
+
+```toml
+[rooms.ops]
+beacon_token = "a-long-random-secret"   # authorizes PUT/DELETE /beacon/ops
+beacon_ttl   = "1h"                     # how long a beacon persists (hard max 24h)
+```
+
+**The same token must be in the config each client loads.** The relay checks it; the
+client sends it. A TUI reads `netherchat.toml` from `--config` or from its own working
+directory, so each client that will run `/beacon set` needs it too. Configure only the
+relay and the write fails `401`; configure neither and it fails `404`. `netherchat`
+prints which config it loaded at startup — `config: none found` means the token was
+not read.
+
+Reads are deliberately unauthenticated: the stored blob is ciphertext the relay cannot
+decrypt, so `GET /beacon/<room>` needs no token.
 
 ## Serving the web client (`/join` and `/beacon`)
 
@@ -364,12 +402,13 @@ still works.
 
 ## REST endpoints
 
-| Endpoint    | Returns                                            |
-|-------------|----------------------------------------------------|
-| `/health`   | `{"status":"ok"}`                                  |
-| `/version`  | version + protocol number + source URL + license   |
-| `/source`   | 302 redirect to the source for this build          |
-| `/rooms`    | room names and member counts — **never** content   |
+| Endpoint          | Returns                                                                                                                                                                            |
+|-------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `/health`         | `{"status":"ok"}`                                                                                                                                                                  |
+| `/version`        | version + protocol number + source URL + license                                                                                                                                   |
+| `/source`         | 302 redirect to the source for this build                                                                                                                                          |
+| `/rooms`          | room names and member counts — **never** content                                                                                                                                   |
+| `/beacon/<room>`  | `GET` returns the room's beacon ciphertext + `updated_at`, or 404. `PUT`/`DELETE` write it and require the room's beacon token. Ciphertext only — the relay cannot read a beacon.    |
 
 ## What the operator can and cannot see
 

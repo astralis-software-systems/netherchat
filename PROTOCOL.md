@@ -103,7 +103,13 @@ client                          server
 - `welcome.you_are_first` is `true` iff the room was empty. That client MUST mint
   the epoch-0 room key locally. Otherwise the client waits for a `key_deliver`.
 - `welcome.members` lists the members already present (id, name, both public keys),
-  so the new client can verify their signatures and identify a key distributor.
+  so the new client can verify their signatures and identify a key distributor. It
+  is **always an array**: `[]` when the room was empty, never `null`. The
+  distinction is not cosmetic — the empty-room case is exactly the frame that also
+  carries `you_are_first`, so a client that cannot iterate the field cannot mint
+  epoch 0, and Go relays before this was stated marshalled the empty case as
+  `null`. Clients that must interoperate with such a relay should read the field
+  as "absent or null means empty".
 
 The server then broadcasts `member_joined{member}` to the existing members.
 

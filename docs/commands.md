@@ -230,13 +230,18 @@ war room (where they'd see raw chatter and widen the blast radius). The beacon
 publishes a single mutable status line readable through a short-TTL link, encrypted
 to a **separate key** so a reader sees the status but **never the room messages**.
 
-Enable it per room in `netherchat.toml`:
+Enable it per room in `netherchat.toml` — in **both** the relay's config and the
+config each client loads:
 
 ```toml
 [rooms.ops]
 beacon_token = "a-long-random-secret"   # authorizes /beacon set and /beacon clear
 beacon_ttl   = "1h"                      # how long a beacon persists (max 24h)
 ```
+
+Two files in two processes, not one: the relay checks the token and the client sends
+it. Configure only the relay and `/beacon set` fails `401`; configure neither and it
+fails `404`. See [`self-hosting.md`](self-hosting.md) for the relay side.
 
 Then, from the TUI:
 

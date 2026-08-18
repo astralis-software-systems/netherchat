@@ -7,3 +7,7 @@ dist/
 # Self-hosted brand fonts are fetched on demand (see fonts/README.md); the
 # binaries are not committed.
 public/fonts/*.woff2
+
+# Playwright (see playwright.config.ts) — run output and HTML report.
+test-results/
+playwright-report/

@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/salehkreiner/netherchat/protocol"
@@ -104,7 +106,7 @@ func (c *Client) FetchBeaconStatus() {
 			return
 		}
 		if resp.StatusCode != http.StatusOK {
-			c.emit(EvBeaconStatus{Err: "server returned " + resp.Status})
+			c.emit(EvBeaconStatus{Err: beaconReason(resp)})
 			return
 		}
 		var body struct {
@@ -166,9 +168,28 @@ func doBeacon(req *http.Request) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("beacon %s failed: server returned %s", req.Method, resp.Status)
+		return fmt.Errorf("beacon %s failed: %s", req.Method, beaconReason(resp))
 	}
 	return nil
+}
+
+// beaconReason is what went wrong, as the relay described it.
+//
+// resp.Status on its own is "404 Not Found", and that is the one field which
+// cannot distinguish the failures an operator has to tell apart: the room has no
+// beacon_token, the token is wrong, the payload is too large, or a reverse proxy
+// never forwarded /beacon/ at all. Every failure path in
+// server/internal/api/beacon.go writes a specific sentence via http.Error, and the
+// relay is the only party that knows which one applies — so reading the body is
+// not extra detail, it is the diagnosis. It is bounded because the body may be a
+// proxy's HTML error page rather than the relay's one-liner, and the status code is
+// kept alongside it because a proxy's page will not name itself.
+func beaconReason(resp *http.Response) string {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	if msg := strings.TrimSpace(string(body)); msg != "" {
+		return msg + " (" + resp.Status + ")"
+	}
+	return "server returned " + resp.Status
 }
 
 // httpBase derives the relay's http(s):// origin from its ws(s):// URL.

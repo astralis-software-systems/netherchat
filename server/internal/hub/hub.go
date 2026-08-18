@@ -84,7 +84,17 @@ func (h *Hub) Join(roomName string, m *Member) JoinResult {
 	}
 	r.lastActivity = time.Now()
 
-	res := JoinResult{YouAreFirst: len(r.members) == 0}
+	// Existing is preallocated rather than left nil so that an empty room yields
+	// an empty slice. Go's encoding/json renders a nil slice as `null`, and
+	// protocol.Welcome.Members carries no omitempty, so leaving it nil put
+	// `"members":null` on the wire for exactly the first joiner. Go's own decoder
+	// and Go's `range` both accept that, so no client in this tree ever noticed;
+	// a client in a language whose iteration does not tolerate null cannot join
+	// an empty room at all. PROTOCOL.md §4 states the invariant.
+	res := JoinResult{
+		Existing:    make([]protocol.Member, 0, len(r.order)),
+		YouAreFirst: len(r.members) == 0,
+	}
 	for _, id := range r.order {
 		if em := r.members[id]; em != nil {
 			res.Existing = append(res.Existing, em.Info)
