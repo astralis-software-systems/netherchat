@@ -287,7 +287,8 @@ usage:
   netherchat status  [--format tmux|starship] [--json]   compact war-room segment for your prompt (§2.3)
   netherchat whoami  [--json]                     show your identity
   netherchat verify  <artifact.json> [--json]     verify a sealed record, roster, receipt, or identity attestation
-                     identity artifacts take --issuer <keys> --at <RFC3339>; without --issuer there is no verdict
+                     identity artifacts, and records carrying them, take --issuer <keys> --at <RFC3339>
+                     without --issuer nothing about identity is checked, and nothing about it is claimed
   netherchat report  <record.json> [--format html|md] [--executive]  render a shareable incident timeline (§2.6)
   netherchat replay  <record.json> --into <room>  stream a sealed record into a room for a retro
   netherchat rooms   [--json] [--server ws://...] list active rooms

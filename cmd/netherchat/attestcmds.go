@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/salehkreiner/netherchat/tui/attest"
@@ -13,13 +14,27 @@ import (
 // discriminator key, and verifies accordingly — a sealed record (§1.4), a signed
 // roster (§1.4), or a scuttle receipt (§1.5). Each verifier exits 0 for VALID and
 // 1 for INVALID/error, so the command composes in scripts and CI.
+//
+// TWO OF THESE FOUR BRANCHES CAN CONSUME --issuer AND --at, and the other two
+// say so instead of swallowing them. A record CARRIES attestations, so it takes
+// both flags and routes them to VerifyBytesWithIdentity; the standalone identity
+// artifact takes both by definition. A roster and a receipt carry no identity
+// content at all, so a pinned issuer could only be ignored there — and a
+// security flag that a command accepts and ignores is precisely the defect this
+// dispatcher was changed to fix. It is refused, loudly, rather than dropped.
 func verifyArtifact(path string, jsonMode bool, ident identityVerifyOpts) int {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		output.WriteError(jsonMode, err)
 		return 1
 	}
-	switch detectArtifact(b) {
+	kind := detectArtifact(b)
+	if (kind == "roster" || kind == "receipt") && ident.pinned() {
+		output.WriteError(jsonMode, fmt.Errorf(
+			"--issuer does not apply to a %s attestation: it carries no identity/v1 content, so a pinned issuer would check nothing", kind))
+		return 2
+	}
+	switch kind {
 	case "roster":
 		return verifyRosterBytes(b, jsonMode)
 	case "receipt":
@@ -29,7 +44,7 @@ func verifyArtifact(path string, jsonMode bool, ident identityVerifyOpts) int {
 	default:
 		// A sealed record carries "netherchat_record"; an unrecognized shape falls
 		// through to the record verifier, which reports a clear parse error.
-		return verifyRecordBytes(b, jsonMode)
+		return verifyRecordBytes(b, jsonMode, ident)
 	}
 }
 

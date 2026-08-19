@@ -105,6 +105,42 @@ type identityVerifyOpts struct {
 	at         string // RFC3339 evaluation time; empty means now
 }
 
+// pinned reports whether the operator supplied a trust anchor. Every identity
+// path branches on this and nothing else: it is the standalone-inert switch.
+func (o identityVerifyOpts) pinned() bool { return o.issuerPath != "" }
+
+// resolve turns the operator's --issuer and --at into the options the identity
+// verifier takes: the trust anchors, and the instant the validity windows are
+// asked about.
+//
+// ONE function does this for every artifact family. The record carrier and the
+// standalone artifact must not be able to answer "which keys, and as of when"
+// differently — that they diverged at all is what let `verify record.json
+// --issuer acme-ca.pub` verify nothing while `verify identity.json --issuer
+// acme-ca.pub` verified correctly, for a day, in the same binary.
+//
+// A missing --at defaults to now, which is the CLI's job: VerifyIdentity rejects
+// a zero At as an error, and a command is the right place to read a clock —
+// the no-clock rule is a constraint on the library.
+//
+// It must not be called unless o.pinned(); an unpinned caller has to stay on the
+// byte-identical path and never reach a key file or a clock.
+func (o identityVerifyOpts) resolve() (attest.IdentityOptions, error) {
+	keys, err := loadIssuerKeys(o.issuerPath)
+	if err != nil {
+		return attest.IdentityOptions{}, err
+	}
+	at := time.Now().UTC()
+	if o.at != "" {
+		parsed, perr := time.Parse(time.RFC3339, o.at)
+		if perr != nil {
+			return attest.IdentityOptions{}, fmt.Errorf("--at %q does not parse as RFC3339: %w", o.at, perr)
+		}
+		at = parsed
+	}
+	return attest.IdentityOptions{IssuerKeys: keys, At: at}, nil
+}
+
 // verifyIdentityBytes parses and reports on an identity attestation.
 //
 // With NO issuer key it prints the artifact's structural facts and exits
@@ -124,7 +160,7 @@ func verifyIdentityBytes(b []byte, jsonMode bool, opts identityVerifyOpts) int {
 		return 1
 	}
 
-	if opts.issuerPath == "" {
+	if !opts.pinned() {
 		if jsonMode {
 			_ = output.WriteJSON(struct {
 				Artifact  string   `json:"artifact"`
@@ -156,22 +192,13 @@ func verifyIdentityBytes(b []byte, jsonMode bool, opts identityVerifyOpts) int {
 		return 1
 	}
 
-	keys, err := loadIssuerKeys(opts.issuerPath)
+	iopts, err := opts.resolve()
 	if err != nil {
 		output.WriteError(jsonMode, err)
 		return 1
 	}
-	at := time.Now().UTC()
-	if opts.at != "" {
-		parsed, perr := time.Parse(time.RFC3339, opts.at)
-		if perr != nil {
-			output.WriteError(jsonMode, fmt.Errorf("--at %q does not parse as RFC3339: %w", opts.at, perr))
-			return 1
-		}
-		at = parsed
-	}
 
-	res, err := attest.VerifyIdentity(a, attest.IdentityOptions{IssuerKeys: keys, At: at})
+	res, err := attest.VerifyIdentity(a, iopts)
 	if err != nil {
 		output.WriteError(jsonMode, err)
 		return 1
