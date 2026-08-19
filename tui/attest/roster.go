@@ -148,7 +148,15 @@ func VerifyRoster(r *RosterAttestation) (*RosterResult, error) {
 	}
 	preimage := protocol.RosterSigningBytes(r.Room, r.Epoch, setHash)
 	signers := make([]string, 0, len(r.Signatures))
-	for fpr, sigB64 := range r.Signatures {
+	// Iterate the fingerprints in sorted order, not the map. The VERDICT is
+	// deterministic either way — every signature has to verify, so any failure is
+	// fatal whichever one is met first — but the loop returns on the first
+	// failure, so the fingerprint named in Reason was a function of Go's
+	// randomized map order. A roster with two bad signatures blamed a different
+	// one on each run, which is not something an operator can act on or a test
+	// can assert.
+	for _, fpr := range sortedKeys(r.Signatures) {
+		sigB64 := r.Signatures[fpr]
 		keyB64, ok := r.SignerKeys[fpr]
 		if !ok {
 			res.Reason = fmt.Sprintf("no signer key for %s (cannot verify its signature)", fpr)

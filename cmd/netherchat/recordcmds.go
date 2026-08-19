@@ -18,8 +18,15 @@ import (
 func verifyCmd(args []string) {
 	fs := flag.NewFlagSet("verify", flag.ExitOnError)
 	jsonMode := fs.Bool("json", false, "output the verification result as JSON")
+	// --issuer and --at apply to an identity attestation only. There is no default
+	// issuer file and no default key: an issuer is a trust anchor, and this binary
+	// holds none of its own. Without --issuer an identity artifact prints its
+	// structural facts and exits non-zero, because with no anchor there is no
+	// verdict to give.
+	issuer := fs.String("issuer", "", "identity artifacts: file of issuer public keys, one per line (base64 or ssh-ed25519)")
+	at := fs.String("at", "", "identity artifacts: RFC3339 evaluation time the validity window is asked about (default: now)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: netherchat verify <record.json> [--json]")
+		fmt.Fprintln(os.Stderr, "usage: netherchat verify <record.json|roster.json|receipt.json|identity.json> [--json] [--issuer <keys>] [--at <RFC3339>]")
 		fs.PrintDefaults()
 	}
 	// The record path is the first positional; flags follow it. Go's flag parser
@@ -32,7 +39,7 @@ func verifyCmd(args []string) {
 	}
 	path := args[0]
 	_ = fs.Parse(args[1:])
-	os.Exit(verifyArtifact(path, *jsonMode))
+	os.Exit(verifyArtifact(path, *jsonMode, identityVerifyOpts{issuerPath: *issuer, at: *at}))
 }
 
 // verifyFile loads and verifies a sealed RECORD specifically, returning the

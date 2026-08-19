@@ -58,6 +58,8 @@ type (
 	VerifyResult     = record.VerifyResult
 	ArtifactMeta     = record.ArtifactMeta
 	VerifiedApprover = record.VerifiedApprover
+	VerifiedIdentity = record.VerifiedIdentity
+	IdentityOutcome  = record.IdentityOutcome
 )
 
 // On-disk schema versions and the built-in entry kinds. KindTyped marks a
@@ -98,7 +100,17 @@ var (
 	MarshalArtifactBody           = record.MarshalArtifactBody
 	ParseArtifactBody             = record.ParseArtifactBody
 	RenderMinutes                 = record.RenderMinutes
+	VerifyWithIdentity            = record.VerifyWithIdentity
+	VerifyBytesWithIdentity       = record.VerifyBytesWithIdentity
+	IsIdentityEntry               = record.IsIdentityEntry
+	IdentityEntrySpec             = record.IdentityEntrySpec
+	VerifiedIdentitiesOf          = record.VerifiedIdentitiesOf
 )
+
+// ReasonMalformedArtifact is the identity outcome for an attestation entry whose
+// body does not parse as an identity artifact at all — the one outcome only the
+// record carrier can reach, since an entry body is an opaque signed string.
+const ReasonMalformedArtifact = record.ReasonMalformedArtifact
 
 // --- Reports (tui/report) --------------------------------------------------
 
@@ -142,4 +154,90 @@ var (
 	NewReceipt    = attest.NewReceipt
 	ParseReceipt  = attest.ParseReceipt
 	VerifyReceipt = attest.VerifyReceipt
+)
+
+// --- Identity attestations (tui/attest) ------------------------------------
+
+// Issuer-signed, offline-verifiable bindings of a key fingerprint to a principal
+// and roles, plus the revocation statement they are checked against. Netherchat
+// holds no trust anchors: issuer keys and the evaluation time are parameters on
+// every call, and with none supplied the answer says so rather than judging the
+// subject.
+type (
+	IdentityAttestation = attest.IdentityAttestation
+	IdentitySpec        = attest.IdentitySpec
+	IdentityOptions     = attest.IdentityOptions
+	IdentityResult      = attest.IdentityResult
+	IdentityReason      = attest.IdentityReason
+	IdentityReasonClass = attest.IdentityReasonClass
+	RevocationStatement = attest.RevocationStatement
+	RevocationSpec      = attest.RevocationSpec
+	RevokedSerial       = attest.RevokedSerial
+	RevocationResult    = attest.RevocationResult
+	RevocationCheck     = attest.RevocationCheck
+)
+
+// The on-disk schema versions, the typed-entry schema tag, and the algorithm the
+// v1 verifier accepts.
+const (
+	IdentityVersion   = attest.IdentityVersion
+	RevocationVersion = attest.RevocationVersion
+	IdentitySchema    = attest.IdentitySchema
+	AlgorithmEd25519  = attest.AlgorithmEd25519
+)
+
+// The outcome classes. A consumer branches on these, never on Valid alone:
+// ClassUnconfigured and ClassUnanchored are facts about the VERIFIER's setup and
+// must never render as a credential failure, because neither says anything about
+// the subject.
+const (
+	ClassUnconfigured = attest.ClassUnconfigured
+	ClassUnanchored   = attest.ClassUnanchored
+	ClassLifecycle    = attest.ClassLifecycle
+	ClassMalformed    = attest.ClassMalformed
+	ClassForged       = attest.ClassForged
+)
+
+// Every outcome code the identity verifier can report. They are listed rather
+// than hidden behind an accessor because this façade mirrors the implementation
+// packages one-for-one, and because a consumer switching on an outcome wants the
+// compiler to tell it when a case disappears.
+const (
+	ReasonNoIssuerPinned         = attest.ReasonNoIssuerPinned
+	ReasonNoPinnedIssuerVerified = attest.ReasonNoPinnedIssuerVerified
+	ReasonNotYetValid            = attest.ReasonNotYetValid
+	ReasonExpired                = attest.ReasonExpired
+	ReasonRevoked                = attest.ReasonRevoked
+	ReasonUnsupportedVersion     = attest.ReasonUnsupportedVersion
+	ReasonUnsupportedAlgorithm   = attest.ReasonUnsupportedAlgorithm
+	ReasonMalformedSerial        = attest.ReasonMalformedSerial
+	ReasonMalformedSubject       = attest.ReasonMalformedSubject
+	ReasonMalformedPrincipal     = attest.ReasonMalformedPrincipal
+	ReasonMalformedPrincipalType = attest.ReasonMalformedPrincipalType
+	ReasonMalformedRoles         = attest.ReasonMalformedRoles
+	ReasonMalformedIssuer        = attest.ReasonMalformedIssuer
+	ReasonMalformedTime          = attest.ReasonMalformedTime
+	ReasonInvertedWindow         = attest.ReasonInvertedWindow
+	ReasonIssuerDidNotSign       = attest.ReasonIssuerDidNotSign
+	ReasonSignerKeyMalformed     = attest.ReasonSignerKeyMalformed
+	ReasonSignerKeyMismatch      = attest.ReasonSignerKeyMismatch
+	ReasonSignatureMalformed     = attest.ReasonSignatureMalformed
+	ReasonSignatureInvalid       = attest.ReasonSignatureInvalid
+	ReasonRevocationUnverifiable = attest.ReasonRevocationUnverifiable
+)
+
+// Identity constructors, parsers, verifiers, the outcome classifier, and the
+// issuer-side signing bytes. The two SigningBytes helpers exist so an external
+// issuer tool — an enterprise CA integration outside this module — can derive
+// the exact preimage through this façade instead of importing protocol.
+var (
+	NewIdentityAttestation = attest.NewIdentityAttestation
+	ParseIdentity          = attest.ParseIdentity
+	VerifyIdentity         = attest.VerifyIdentity
+	ClassOf                = attest.ClassOf
+	IdentitySigningBytes   = attest.IdentitySigningBytes
+	NewRevocation          = attest.NewRevocation
+	ParseRevocation        = attest.ParseRevocation
+	VerifyRevocation       = attest.VerifyRevocation
+	RevocationSigningBytes = attest.RevocationSigningBytes
 )

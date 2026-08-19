@@ -11,6 +11,7 @@ package attest
 
 import (
 	"encoding/base64"
+	"sort"
 	"time"
 )
 
@@ -24,5 +25,19 @@ func b64map(m map[string][]byte) map[string]string {
 	for k, v := range m {
 		out[k] = base64.StdEncoding.EncodeToString(v)
 	}
+	return out
+}
+
+// sortedKeys returns a map's fingerprint keys in sorted order, so a verifier
+// that returns on the first failure names the SAME signature on every run. Go
+// randomizes map iteration, and a verifier whose reported reason changes between
+// runs on identical input gives an operator nothing to act on and a test nothing
+// to assert.
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
 	return out
 }

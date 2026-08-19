@@ -67,13 +67,22 @@ func (c *Client) appendRecord(kind, actionee, body string) error {
 	if body == "" {
 		return errors.New("nothing to record (empty text)")
 	}
+	return c.appendSpec(record.EntrySpec{Kind: kind, Actionee: actionee, Body: body})
+}
+
+// appendSpec is the general form of appendRecord: it takes a full EntrySpec, so
+// a typed entry (an identity attestation) travels the same path as a decision —
+// same lock discipline, same broadcast, same local echo. Splitting it out is
+// what lets a typed producer exist without a second copy of the sign-and-send
+// sequence, which is where the two would drift.
+func (c *Client) appendSpec(spec record.EntrySpec) error {
 	c.mu.Lock()
 	if c.rk == nil {
 		c.mu.Unlock()
 		return errors.New("room key not established yet")
 	}
 	author := record.Author{ID: c.id.Fingerprint(), Name: c.name, Key: c.id.SignPub, Sign: c.id.Sign}
-	e, err := c.chain.AppendNew(author, kind, actionee, body)
+	e, err := c.chain.Append(author, spec)
 	c.mu.Unlock()
 	if err != nil {
 		return err

@@ -222,6 +222,31 @@ type VerifyResult struct {
 	// or distinctness rule — that is consumer policy. A roleless v1 approver appears only
 	// in ArtifactApprovers, never here.
 	ArtifactApproverRoles map[string][]VerifiedApprover `json:"artifact_approver_roles,omitempty"`
+
+	// IdentityBindings maps a SUBJECT FINGERPRINT to the issuer-signed identity
+	// bindings that verified against the caller-supplied issuer keys and whose
+	// validity window contained the caller-supplied evaluation time. Deduplicated
+	// by the (subject, issuer, serial) triple and sorted by issuer then serial.
+	//
+	// Keyed by fingerprint, not by proposal id, because a binding is about a KEY:
+	// the fingerprint is the identifier every other surface here already uses
+	// (Entry.AuthorID, the Signatures/SignerKeys map keys, ApprovalProof.ApproverFpr,
+	// VerifiedApprover.Fingerprint), so joining a binding to an approver is a map
+	// lookup and no matching logic.
+	//
+	// ABSENT unless ALL of: the caller used VerifyWithIdentity (plain Verify never
+	// populates it); at least one issuer key was supplied; the record carries at
+	// least one netherchat.identity/v1 entry; and at least one of those verified.
+	// The library surfaces what verified; it attaches no meaning to a principal or
+	// a role, and it never decides what a binding entitles.
+	IdentityBindings map[string][]VerifiedIdentity `json:"identity_bindings,omitempty"`
+
+	// IdentityOutcomes carries one entry per identity attestation entry in the
+	// record, verified or not, so a rejected attestation is visible rather than
+	// silently missing — an attestation that failed would otherwise be
+	// indistinguishable from one that was never there. Same population rule as
+	// IdentityBindings.
+	IdentityOutcomes []IdentityOutcome `json:"identity_outcomes,omitempty"`
 }
 
 // VerifiedApprover is one cryptographically-verified role-typed approval

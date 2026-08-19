@@ -44,6 +44,43 @@ jobs:
       - name: relay egress guard
         run: go test ./tui/e2e/ -run TestServerEgress -v
 
+      # The identity/v1 seam rules (roadmap §6 rules 1 and 2), made mechanical:
+      # the identity layer holds no trust anchor of its own, and it says what an
+      # issuer signed without saying what that is enough for. Scope follows the
+      # SYMBOLS, not filenames, so moving a declaration moves the guard with it.
+      #
+      # The PASS count is checked because `go test -run <pattern>` exits 0 when
+      # the pattern matches nothing. Renaming a guard would otherwise turn this
+      # step green forever while checking nothing at all — which is the exact
+      # failure mode this repository has already shipped three times.
+      - name: identity seam guards
+        run: |
+          out=$(go test ./tui/e2e/ -count=1 -v \
+            -run 'TestIdentitySymbolsAreLive|TestIdentityLayerHasNoSufficiencyVocabulary|TestIdentityLayerHoldsNoTrustAnchors')
+          echo "$out"
+          n=$(printf '%s\n' "$out" | grep -c '^--- PASS')
+          if [ "$n" -ne 3 ]; then
+            echo "::error::expected 3 identity seam guards to run, saw $n — one was renamed or removed"; exit 1
+          fi
+
+      # Standalone-inert guard (identity spec §9.2). With no issuer pinned the
+      # identity layer changes nothing: record.Verify is untouched, and
+      # VerifyWithIdentity on a record that CARRIES attestations returns a
+      # byte-identical result. The producer path is exercised here too, so the
+      # entry format is checked by Netherchat rather than only by a consumer.
+      #
+      # This step has no `if:` and no continue-on-error, so it cannot skip, and
+      # the PASS count is checked for the same reason as the step above.
+      - name: standalone-inert guard
+        run: |
+          out=$(go test ./tui/record/ ./tui/e2e/ ./cmd/netherchat/ -count=1 -v \
+            -run 'TestVerifyWithIdentityIsInertWithNoPin|TestVerifyWithIdentityNeverChangesValid|TestIdentityAttestationTravelsTheProducerPath|TestVerifyIdentityBytesWithoutIssuerIsNotAVerdict')
+          echo "$out"
+          n=$(printf '%s\n' "$out" | grep -c '^--- PASS')
+          if [ "$n" -ne 4 ]; then
+            echo "::error::expected 4 inertness tests to run, saw $n — one was renamed or removed"; exit 1
+          fi
+
       # Both modules, explicitly: govulncheck only walks the CURRENT module, so a
       # root-only scan reports clean while the provider module carries reachable
       # vulnerabilities. No continue-on-error — a reachable vuln fails the build.

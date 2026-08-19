@@ -13,7 +13,7 @@ import (
 // discriminator key, and verifies accordingly — a sealed record (§1.4), a signed
 // roster (§1.4), or a scuttle receipt (§1.5). Each verifier exits 0 for VALID and
 // 1 for INVALID/error, so the command composes in scripts and CI.
-func verifyArtifact(path string, jsonMode bool) int {
+func verifyArtifact(path string, jsonMode bool, ident identityVerifyOpts) int {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		output.WriteError(jsonMode, err)
@@ -24,6 +24,8 @@ func verifyArtifact(path string, jsonMode bool) int {
 		return verifyRosterBytes(b, jsonMode)
 	case "receipt":
 		return verifyReceiptBytes(b, jsonMode)
+	case "identity":
+		return verifyIdentityBytes(b, jsonMode, ident)
 	default:
 		// A sealed record carries "netherchat_record"; an unrecognized shape falls
 		// through to the record verifier, which reports a clear parse error.
@@ -35,9 +37,10 @@ func verifyArtifact(path string, jsonMode bool) int {
 // without committing to a full decode.
 func detectArtifact(b []byte) string {
 	var probe struct {
-		Record  string `json:"netherchat_record"`
-		Roster  string `json:"netherchat_roster"`
-		Receipt string `json:"netherchat_receipt"`
+		Record   string `json:"netherchat_record"`
+		Roster   string `json:"netherchat_roster"`
+		Receipt  string `json:"netherchat_receipt"`
+		Identity string `json:"netherchat_identity"`
 	}
 	_ = json.Unmarshal(b, &probe)
 	switch {
@@ -45,6 +48,8 @@ func detectArtifact(b []byte) string {
 		return "roster"
 	case probe.Receipt != "":
 		return "receipt"
+	case probe.Identity != "":
+		return "identity"
 	default:
 		return "record"
 	}
@@ -52,6 +57,13 @@ func detectArtifact(b []byte) string {
 
 // verifyRosterBytes parses and verifies a roster attestation, printing the
 // verdict and returning the exit code.
+//
+// It prints a member COUNT and the signer fingerprints, and deliberately prints
+// no member names and no SAS-verified marks. That is not an omission to fix
+// later: only the member fingerprints enter set_hash, so the names and the
+// `verified` flags in the artifact are carried but unsigned, and printing them
+// under a line that begins "VALID roster" would present unchecked fields as
+// verified ones. RosterResult carries no names for the same reason.
 func verifyRosterBytes(b []byte, jsonMode bool) int {
 	r, err := attest.ParseRoster(b)
 	if err != nil {

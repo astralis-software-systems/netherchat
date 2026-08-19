@@ -156,6 +156,23 @@ func signOffsHTML(rec *record.SealedRecord) string {
 // key at the attested epoch, whether each was SAS-verified, and whether they
 // co-signed the roster. Executive mode shows member names but never fingerprints.
 // A nil roster renders nothing.
+//
+// WHAT IS SIGNED HERE AND WHAT IS NOT. The roster's signatures cover
+// RosterSigningBytes(room, epoch, set_hash), and set_hash is SHA-256 over the
+// sorted member FINGERPRINTS — nothing else. Name and Verified are informational
+// and are NOT part of the signed set hash, as RosterMember's own doc says: the
+// name is a cosmetic label, and Verified is whichever SAS state the ATTESTER's
+// session happened to hold when they ran /roster --signed. A roster attestation
+// proves who was present; it proves nothing about who they are.
+//
+// So the two ticks in this table are not the same kind of fact. "co-signed" is
+// backed by a signature this verifier checked. "SAS-verified" is one person's
+// unsigned note about their own out-of-band call. They must not be rendered as
+// though they were the same, and in executive mode below they very nearly are —
+// both collapse to a bare "✓ …" on one line, side by side. Anything added here
+// should widen that distinction rather than narrow it; issuer-attested identity
+// is a third state again, with a third basis, and composing four trust states
+// onto glyphs that already blur two is how the blur becomes permanent.
 func rosterHTML(r *attest.RosterAttestation, executive bool) string {
 	if r == nil {
 		return ""

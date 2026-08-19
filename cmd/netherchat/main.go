@@ -43,6 +43,8 @@ func main() {
 		agentCmd(os.Args[2:])
 	case "propose":
 		proposeCmd(os.Args[2:])
+	case "attest":
+		attestCmd(os.Args[2:])
 	case "approve-artifact":
 		approveArtifactCmd(os.Args[2:])
 	case "bridge":
@@ -284,7 +286,8 @@ usage:
   netherchat duress  selftest|beacon|verify|check  coercion-resistant safe response (C2)
   netherchat status  [--format tmux|starship] [--json]   compact war-room segment for your prompt (§2.3)
   netherchat whoami  [--json]                     show your identity
-  netherchat verify  <record.json> [--json]       verify a sealed record's hash chain + signatures
+  netherchat verify  <artifact.json> [--json]     verify a sealed record, roster, receipt, or identity attestation
+                     identity artifacts take --issuer <keys> --at <RFC3339>; without --issuer there is no verdict
   netherchat report  <record.json> [--format html|md] [--executive]  render a shareable incident timeline (§2.6)
   netherchat replay  <record.json> --into <room>  stream a sealed record into a room for a retro
   netherchat rooms   [--json] [--server ws://...] list active rooms

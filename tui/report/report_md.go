@@ -98,6 +98,14 @@ func signOffsMarkdown(rec *record.SealedRecord) string {
 
 // rosterMarkdown renders the signed roster attestation (item 6). Executive mode
 // omits fingerprints. A nil roster renders nothing.
+//
+// The "SAS-verified" column is NOT covered by the roster's signatures. Only the
+// member fingerprints enter set_hash, which is what the co-signatures actually
+// cover; Name and Verified ride along as informational fields, and Verified in
+// particular is one attester's session-local note about a phone call they made.
+// It sits in the same table as "co-signed", which IS checked, so the rendering
+// has to keep saying which is which — see rosterHTML for the longer version of
+// this note and for why it matters more once a third trust state exists.
 func rosterMarkdown(r *attest.RosterAttestation, executive bool) string {
 	if r == nil {
 		return ""
