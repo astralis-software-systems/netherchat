@@ -389,6 +389,20 @@ type EvArtifactApproved struct {
 // approvals off it — wait instead for the EvRecordEntry with Kind
 // record.KindArtifact whose body names this ProposalID. That one is emitted after
 // the entry is appended, so it is the signal that says it is on your chain.
+//
+// AND ON THE WRITER, NEITHER EVENT SAYS THE ENTRY LEFT THE MACHINE. The writer's
+// EvRecordEntry is its own local echo, emitted by appendSpec the moment the entry
+// is appended and handed to the send queue — before any of it has been written to
+// a socket. So the signal above, which is the right one to wait for everywhere
+// else, is vacuous on the one client that authored the thing. "Already appended
+// when this fires" is not reassurance on the writer; it is the precise state in
+// which closing the client used to destroy the entry, and the reason Close now
+// flushes (see Client.Close).
+//
+// There is no event that means "a peer has it". There is no acknowledgement of a
+// record entry on this wire, and no client can know its entry reached another
+// client's chain. An operator reading a sealed notice is being told quorum was
+// reached — not that the room's record contains the proof of it.
 type EvArtifactSealed struct {
 	ProposalID   string
 	Source       string

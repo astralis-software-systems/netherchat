@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -336,5 +337,24 @@ self-hosting:
 
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "netherchat: "+err.Error())
+	os.Exit(1)
+}
+
+// closeOrFail closes an evidence-producing client and refuses a zero exit status
+// when the flush could not deliver what it was holding. what names the thing at
+// stake, in the operator's terms ("the approval").
+//
+// It exits rather than returning an error because it runs from a defer, after the
+// command has already printed its success line — and a command that says an
+// approval is in the record while it sits unsent in a dead process must not also
+// tell the shell it worked. Nothing re-files the entry: no peer holds a claim on
+// it, and the proposal that produced it is deleted from every client at quorum.
+func closeOrFail(c *client.Client, what string) {
+	var u *client.UnflushedError
+	if !errors.As(c.Close(), &u) || !u.Evidence() {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "netherchat: %s did NOT reach the room: %v\n", what, u)
+	fmt.Fprintln(os.Stderr, "netherchat: it exists only on this machine, and nothing will re-file it")
 	os.Exit(1)
 }

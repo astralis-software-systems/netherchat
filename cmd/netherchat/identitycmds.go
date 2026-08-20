@@ -72,7 +72,10 @@ func attestCmd(args []string) {
 
 	room0 := strings.TrimPrefix(*room, "#")
 	c := dial(*url, room0, *name, *identity, *invite, 15*time.Second)
-	defer c.Close()
+	// Every attestation here becomes a chain entry, and nothing re-files a chain
+	// entry. --linger below gives the relay time to fan them out; this makes sure
+	// they reached the relay at all, and refuses to exit 0 when they did not.
+	defer closeOrFail(c, "the attestation(s)")
 	if err := waitForKey(c, 10*time.Second); err != nil {
 		fatal(err)
 	}

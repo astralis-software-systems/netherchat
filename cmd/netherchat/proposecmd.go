@@ -103,7 +103,12 @@ func approveArtifactCmd(args []string) {
 	}
 	room0 := strings.TrimPrefix(*room, "#")
 	c := dial(*url, room0, *name, *identity, *invite, 15*time.Second)
-	defer c.Close()
+	// This command prints "written into the record chain" and then exits, which is
+	// the exact shape that loses evidence: when this approver is the designated
+	// writer, the artifact entry is signed, appended locally, and handed to a send
+	// queue that the process is about to leave. Close flushes it now — and when the
+	// flush cannot, this refuses to exit 0 on a claim that is only locally true.
+	defer closeOrFail(c, "the approval")
 	if credential != nil {
 		if err := c.UseIdentity(credential); err != nil {
 			fatal(err)

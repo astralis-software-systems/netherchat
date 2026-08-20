@@ -3,6 +3,7 @@ package sneakernet
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -87,7 +88,7 @@ func RunHost(opts Options) error {
 	if err := c.ConnectWith(co.Loopback()); err != nil {
 		return err
 	}
-	defer c.Close()
+	defer closeSession(c, opts.Out)
 	if err := waitKeyReady(c, 10*time.Second); err != nil {
 		return err
 	}
@@ -157,7 +158,7 @@ func RunJoin(opts Options) error {
 	if err := c.ConnectWith(dt); err != nil {
 		return err
 	}
-	defer c.Close()
+	defer closeSession(c, opts.Out)
 	if err := waitKeyReady(c, 10*time.Second); err != nil {
 		return err
 	}
@@ -321,6 +322,20 @@ func report(out io.Writer, err error) {
 	if err != nil {
 		fmt.Fprintf(out, "! %v\n", err)
 	}
+}
+
+// closeSession ends a relay-less session, giving the write loop its flush budget
+// and saying so when the flush could not deliver. There is no relay here to hold
+// anything: a seal co-signature or a chain entry that does not cross the direct
+// link before it drops has reached nobody at all, and the peer has no way to ask
+// for it again.
+func closeSession(c *client.Client, out io.Writer) {
+	var u *client.UnflushedError
+	if !errors.As(c.Close(), &u) || !u.Evidence() {
+		return
+	}
+	fmt.Fprintf(out, "! %v\n", u)
+	fmt.Fprintln(out, "! your peer never received it, and nothing will re-send it")
 }
 
 func waitKeyReady(c *client.Client, timeout time.Duration) error {

@@ -55,6 +55,22 @@ type Client struct {
 	sendCh chan protocol.Envelope
 	done   chan struct{}
 
+	// Close's flush handshake (see Close). closing is closed once to ask writeLoop
+	// to drain sendCh and exit; flushed is closed by writeLoop when it has. Both
+	// are one-shot, so a second Close is a no-op.
+	//
+	// inFlight is the envelope currently handed to the transport, cleared only when
+	// Send reports success — there is exactly one write loop, so there is at most
+	// one. Without it the accounting would miss the frame that matters most: the one
+	// the socket swallowed. It carries its own mutex because the write loop must
+	// never contend for c.mu.
+	closeOnce   sync.Once
+	closing     chan struct{}
+	flushed     chan struct{}
+	dropMu      sync.Mutex
+	inFlight    *protocol.Envelope
+	inFlightErr error
+
 	mu      sync.Mutex
 	selfID  string
 	members map[string]memberInfo
@@ -269,6 +285,8 @@ func NewWithIdentity(serverURL, room, name string, id *crypto.Identity) (*Client
 		events:  make(chan Event, 256),
 		sendCh:  make(chan protocol.Envelope, 64),
 		done:    make(chan struct{}),
+		closing: make(chan struct{}),
+		flushed: make(chan struct{}),
 		members: make(map[string]memberInfo),
 		acks:    make(map[string]map[string]bool),
 		chain:   record.NewChain(),
@@ -745,19 +763,197 @@ func (c *Client) SAS(handle string) (words []string, fingerprint string, ok bool
 	return nil, "", false
 }
 
-// Close ends the session and closes the transport. It does not flush: cancelling the
-// context stops writeLoop, so anything still queued in sendCh is discarded. A caller
-// that has just produced evidence others need — an artifact record entry, a seal
-// co-signature — has to see it acknowledged before closing, because nothing retries
-// it and nothing reports the loss.
-func (c *Client) Close() error {
+// DefaultFlushTimeout bounds Close's attempt to put queued frames on the wire.
+//
+// The value is a teardown budget, not a transfer estimate. Draining a full sendCh
+// over a healthy connection is a few dozen microseconds — three orders of magnitude
+// inside this — so on every path that works, the deadline is never approached and
+// Close is as instant as it was before. What the budget is actually sizing is the
+// pathological case: a socket that is gone but not yet reported, where a single
+// write blocks until the kernel or the peer notices. Against that, two seconds is
+// the largest wait that still reads as "exiting" rather than "hung" to someone who
+// just pressed ctrl+c.
+//
+// It is also the budget this codebase had already converged on by hand. Five
+// callers sleep before closing, to give the write loop a head start: 400ms in
+// `netherchat send`, 400ms in `netherchat replay` (whose comment says outright
+// that the protocol has no delivery ack), 1500ms of --linger in `propose` and in
+// `attest`, and 2s of drainBriefly in `approve-artifact`. Every one of them is an
+// unmeasured guess at this same quantity. Two seconds matches the largest, so the
+// bound is no stricter than what the tree already assumed — and unlike a sleep, it
+// ends the moment the queue is empty instead of always costing what it budgets.
+const DefaultFlushTimeout = 2 * time.Second
+
+// UnflushedError reports frames that Close could not put on the wire. It is what
+// makes an evidence loss sayable: the entries it names were authored, signed, and
+// appended to this client's own chain, and no peer ever received them.
+type UnflushedError struct {
+	// Ops are the opcodes of the undelivered frames, in queue order.
+	Ops []protocol.Op
+	// After is how long the flush ran before giving up.
+	After time.Duration
+	// Cause is why the drain stopped: a transport error, or context.DeadlineExceeded
+	// when the budget ran out with the write still in progress.
+	Cause error
+}
+
+func (e *UnflushedError) Error() string {
+	kinds := make([]string, 0, len(e.Ops))
+	for _, op := range e.Ops {
+		kinds = append(kinds, string(op))
+	}
+	msg := fmt.Sprintf("close discarded %d unsent frame(s) [%s] after %s",
+		len(e.Ops), strings.Join(kinds, " "), e.After.Round(time.Millisecond))
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	if e.Evidence() {
+		msg += " — a record entry or seal signature did not reach the room"
+	}
+	return msg
+}
+
+func (e *UnflushedError) Unwrap() error { return e.Cause }
+
+// Evidence reports whether any undelivered frame carries something the record
+// depends on: a chain entry, or a signature in a co-signing round. Those are the
+// frames nobody re-files and nobody misses — a lost chat message is visible to the
+// person who sent it, a lost artifact entry is not.
+func (e *UnflushedError) Evidence() bool {
+	for _, op := range e.Ops {
+		switch op {
+		case protocol.OpRecordEntry, protocol.OpSealRequest, protocol.OpSealAck,
+			protocol.OpRosterRequest, protocol.OpRosterAck,
+			protocol.OpScuttleReceiptRequest, protocol.OpScuttleReceiptAck,
+			protocol.OpArtifactApproval, protocol.OpArtifactRejection:
+			return true
+		}
+	}
+	return false
+}
+
+// Close ends the session and closes the transport, first giving the write loop
+// DefaultFlushTimeout to put anything still queued on the wire.
+//
+// It flushes because the alternative is losing evidence in silence. enqueue hands a
+// signed frame to a buffered channel and returns; cancelling the context stops the
+// write loop wherever it is, and every frame still in that channel simply ceases to
+// exist. On the ordinary paths that is a dropped chat message, which the sender can
+// see did not land. On the evidence paths it is an artifact record entry authored,
+// signed, and appended to this client's own chain and delivered to nobody — with no
+// error raised, no peer that will re-file it, and a record that goes on to seal and
+// verify offline while missing the approval it exists to prove.
+//
+// WHAT A SUCCESSFUL FLUSH DOES AND DOES NOT PROVE. It proves the bytes left this
+// process. It does not prove anyone holds them: the relay may accept a frame into a
+// room nobody is left in, a peer may reject the entry as a fork, the socket may be
+// gone in a way the kernel has not reported yet. There is no acknowledgement of a
+// record entry on this wire, so no client can know its entry reached another
+// client's chain. Nor can any other client file the entry when the elected writer
+// vanishes — the proofs survive everywhere, but a second author would fork a chain
+// that has no way to reconcile. The promise here is therefore exactly this and no
+// more: AN ORDERLY CLOSE CANNOT SILENTLY DISCARD EVIDENCE. It can still fail to
+// deliver it, and when it does it says so.
+//
+// Close returns an *UnflushedError naming what did not go out, joined with any
+// transport close error. Callers that produce evidence must check it; the rest
+// inherit a flush that costs them nothing on a healthy connection.
+func (c *Client) Close() error { return c.CloseWithin(DefaultFlushTimeout) }
+
+// CloseWithin is Close with an explicit flush budget. CloseWithin(0) skips the
+// flush entirely and is the pre-flush behaviour: for a caller that must not block —
+// one holding a UI event loop, or tearing down after a failure where the queue is
+// known to be worthless.
+//
+// The budget bounds the flush, not the whole call: the transport's own Close still
+// runs afterwards. Frames enqueued after CloseWithin is entered are not covered.
+func (c *Client) CloseWithin(flush time.Duration) error {
+	started := time.Now()
+	// Ask writeLoop to drain. It, and only it, touches the transport's Send — the
+	// Transport contract promises a single writer, so Close must not send here.
+	c.closeOnce.Do(func() { close(c.closing) })
+
+	var cause error
+	if c.cancel != nil && flush > 0 {
+		t := time.NewTimer(flush)
+		select {
+		case <-c.flushed:
+		case <-t.C:
+			// The budget ran out with a write still in progress. Cancelling the
+			// transport below is what unblocks it; whatever is left is unsent.
+			cause = context.DeadlineExceeded
+		}
+		t.Stop()
+	}
+
 	if c.cancel != nil {
 		c.cancel()
 	}
+	var terr error
 	if c.transport != nil {
-		return c.transport.Close()
+		terr = c.transport.Close()
 	}
-	return nil
+
+	if u := c.takeUnflushed(started, cause); u != nil {
+		return errors.Join(u, terr)
+	}
+	return terr
+}
+
+// takeUnflushed collects what never reached the wire: the envelope the transport
+// still holds without having acknowledged it, then everything still queued behind
+// it. It returns nil when nothing was lost, which is the ordinary case — a healthy
+// close finds an empty queue and no frame in flight.
+//
+// A frame in flight is counted as lost. It may not be: the transport could complete
+// the write in the instant after we look. But this runs after the flush budget has
+// already been spent waiting for exactly that, and the transport is closed out from
+// under it on the next line, so counting it as delivered would be the optimistic
+// guess — and an optimistic guess about evidence is the failure this whole change
+// is about.
+func (c *Client) takeUnflushed(started time.Time, cause error) *UnflushedError {
+	c.dropMu.Lock()
+	inFlight, inFlightErr := c.inFlight, c.inFlightErr
+	c.inFlight, c.inFlightErr = nil, nil
+	c.dropMu.Unlock()
+
+	var ops []protocol.Op
+	if inFlight != nil {
+		ops = append(ops, inFlight.Type)
+	}
+	for drained := true; drained; {
+		select {
+		case env := <-c.sendCh:
+			ops = append(ops, env.Type)
+		default:
+			drained = false
+		}
+	}
+	if len(ops) == 0 {
+		return nil
+	}
+	if cause == nil {
+		cause = inFlightErr
+	}
+	return &UnflushedError{Ops: ops, After: time.Since(started), Cause: cause}
+}
+
+// beginSend / endSend bracket one transport write so Close can tell a frame that
+// landed from one the socket is still holding.
+func (c *Client) beginSend(env protocol.Envelope) {
+	c.dropMu.Lock()
+	c.inFlight, c.inFlightErr = &env, nil
+	c.dropMu.Unlock()
+}
+
+func (c *Client) endSend(err error) {
+	c.dropMu.Lock()
+	if err == nil {
+		c.inFlight = nil
+	} else {
+		c.inFlightErr = err
+	}
+	c.dropMu.Unlock()
 }
 
 // --- internal ---
@@ -784,21 +980,65 @@ func (c *Client) readLoop(recvCh <-chan []byte) {
 }
 
 func (c *Client) writeLoop() {
+	defer close(c.flushed)
 	for {
 		select {
 		case <-c.ctx.Done():
 			return
+		case <-c.closing:
+			c.drainForClose()
+			return
 		case env := <-c.sendCh:
-			b, err := json.Marshal(env)
-			if err != nil {
-				continue // an envelope we cannot marshal is a programming bug; skip it
-			}
-			if err := c.transport.Send(b); err != nil {
+			if c.writeEnvelope(env) != nil {
 				c.cancel()
 				return
 			}
 		}
 	}
+}
+
+// drainForClose puts the frames that were already queued when Close arrived onto
+// the wire, then returns so Close can proceed. It runs on the write loop's own
+// goroutine, which is what keeps the Transport's single-writer contract intact.
+//
+// The count is snapshotted rather than draining until the channel is empty, and
+// that bound is load-bearing rather than tidy. A producer that outruns the drain
+// keeps the queue non-empty indefinitely: a file transfer pushes chunks from its
+// own goroutine as fast as the window allows, so "drain until empty" would hold the
+// exit open for the entire budget and quietly turn an aborted transfer into a
+// mostly-completed one. Close means close. What was queued at that moment is what
+// was already committed to; anything produced after it belongs to a session that
+// has ended, and takeUnflushed reports it rather than sending it.
+//
+// It stops at the first transport error — there is exactly one connection, no
+// reconnect, and no retry, so a write that failed will fail again and retrying
+// only burns the caller's deadline.
+func (c *Client) drainForClose() {
+	for queued := len(c.sendCh); queued > 0; queued-- {
+		select {
+		case env := <-c.sendCh:
+			if c.writeEnvelope(env) != nil {
+				return
+			}
+		default:
+			return
+		}
+	}
+}
+
+// writeEnvelope marshals and transmits one envelope, recording it as in flight for
+// as long as the transport has it. An envelope that will not marshal is a
+// programming bug and is skipped rather than treated as a transport failure, which
+// is what the write loop has always done with it.
+func (c *Client) writeEnvelope(env protocol.Envelope) error {
+	b, err := json.Marshal(env)
+	if err != nil {
+		return nil
+	}
+	c.beginSend(env)
+	err = c.transport.Send(b)
+	c.endSend(err)
+	return err
 }
 
 func (c *Client) handle(env protocol.Envelope) {

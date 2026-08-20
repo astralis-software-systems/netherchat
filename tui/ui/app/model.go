@@ -6,6 +6,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -74,6 +76,14 @@ type Model struct {
 	pending                   []string // rendered "pending approvals" panel lines for the active room (§1.3)
 
 	initialInvite string
+
+	// lostOnClose collects what a room's client could not put on the wire as it
+	// closed. Nothing can be rendered for it: the two paths that reach it are
+	// ctrl+c and /quit, and both return tea.Quit in the same breath. So Run prints
+	// it to stderr once the alt-screen is released — after the UI is gone is late,
+	// and is still the only moment a person can read it. /leave reports inline
+	// instead, because there the UI is still there to report into.
+	lostOnClose []string
 }
 
 // Run connects to the initial room and runs the TUI. invite is the one-time
@@ -117,6 +127,13 @@ func Run(url, name, identityPath, room, notifyCmd, invite, webURL, torProxy stri
 	}
 	p := tea.NewProgram(m, opts...)
 	_, err = p.Run()
+	// The alt-screen is released here, so stderr is readable again. An evidence
+	// frame that never left the process is the one thing worth interrupting an exit
+	// for: nothing retries it, no peer re-files it, and the operator's own record
+	// will seal without it.
+	for _, line := range m.lostOnClose {
+		fmt.Fprintln(os.Stderr, "netherchat: "+line)
+	}
 	return err
 }
 
@@ -397,9 +414,11 @@ func (m *Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) onRoomConnected(msg roomConnectedMsg) tea.Cmd {
 	r, ok := m.session[msg.name]
 	if !ok {
-		// Room was left before the connection completed; tidy up.
+		// Room was left before the connection completed; tidy up. This one must not
+		// block: it runs inside Update, the UI stays alive after it, and the only
+		// thing this client ever sent is its own Hello into a room nobody wants.
 		if msg.c != nil {
-			_ = msg.c.Close()
+			_ = msg.c.CloseWithin(0)
 		}
 		return nil
 	}
@@ -924,8 +943,13 @@ func (m *Model) leaveRoom(name string) tea.Cmd {
 	if !ok {
 		return nil
 	}
+	// Bounded by client.DefaultFlushTimeout, and reached only when the socket has
+	// wedged. /leave is a deliberate act taken exactly where an approval may still
+	// be queued, so a pause is the right side of that trade — and unlike ctrl+c,
+	// the UI is still here afterwards to say what happened.
+	lost := ""
 	if r.client != nil {
-		_ = r.client.Close()
+		lost = closeLoss(name, r.client)
 	}
 	delete(m.session, name)
 	for i, x := range m.order {
@@ -935,10 +959,16 @@ func (m *Model) leaveRoom(name string) tea.Cmd {
 		}
 	}
 	if len(m.order) == 0 {
+		if lost != "" {
+			m.lostOnClose = append(m.lostOnClose, lost) // no UI left; Run prints it
+		}
 		return tea.Quit
 	}
 	if m.active == name {
 		m.active = m.order[0]
+	}
+	if lost != "" {
+		m.addError(lost)
 	}
 	m.syncViewport()
 	m.writeStatus() // a room left/closed changes the prompt segment (§2.3)
@@ -965,12 +995,46 @@ func (m *Model) cycleRoom(dir int) {
 	m.writeStatus() // switching rooms changes the active room / clears its unread (§2.3)
 }
 
+// closeAll shuts every room down on the way out (ctrl+c, /quit).
+//
+// Close now waits for the write loop to drain, so this is the one teardown path
+// that can block: a room whose socket has wedged costs client.DefaultFlushTimeout.
+// The rooms close concurrently for that reason — the budget is per room, and an
+// operator in four rooms should not pay it four times to leave. Concurrency is
+// safe because each room owns a separate client with its own write loop.
 func (m *Model) closeAll() {
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 	for _, r := range m.session {
-		if r.client != nil {
-			_ = r.client.Close()
+		if r.client == nil {
+			continue
 		}
+		wg.Add(1)
+		go func(name string, c *client.Client) {
+			defer wg.Done()
+			if lost := closeLoss(name, c); lost != "" {
+				mu.Lock()
+				m.lostOnClose = append(m.lostOnClose, lost)
+				mu.Unlock()
+			}
+		}(r.name, r.client)
 	}
+	wg.Wait()
+}
+
+// closeLoss closes a room's client and returns a line describing what never
+// reached the room, or "" when everything did.
+func closeLoss(room string, c *client.Client) string {
+	var u *client.UnflushedError
+	if !errors.As(c.Close(), &u) {
+		return ""
+	}
+	if !u.Evidence() {
+		// A dropped message or control frame is visible to the person who sent it;
+		// it does not need an exit-time warning.
+		return ""
+	}
+	return "#" + room + ": " + u.Error() + " — it is on this machine and nowhere else"
 }
 
 func (m *Model) addSystem(s string) {

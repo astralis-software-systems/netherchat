@@ -99,7 +99,7 @@ func hostHere(co *Coordinator, id *crypto.Identity, opts Options) error {
 	if err := c.ConnectWith(co.Loopback()); err != nil {
 		return err
 	}
-	defer c.Close()
+	defer closeSession(c, opts.Out)
 	if err := waitKeyReady(c, 10*time.Second); err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func joinPeer(p Peer, id *crypto.Identity, opts Options) error {
 	if err := c.ConnectWith(dt); err != nil {
 		return err
 	}
-	defer c.Close()
+	defer closeSession(c, opts.Out)
 	if err := waitKeyReady(c, 10*time.Second); err != nil {
 		return err
 	}
