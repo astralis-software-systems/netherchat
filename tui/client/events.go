@@ -372,10 +372,23 @@ type EvArtifactApproved struct {
 	RoleUnbacked bool
 }
 
-// EvArtifactSealed is emitted when a proposal reaches quorum and the signed
-// "artifact" record entry is written into the chain. Approvers lists the approving
-// fingerprints. Every client emits it (for the audit stream); the approver that
-// completed quorum is the one that wrote the entry.
+// EvArtifactSealed is emitted when a proposal reaches quorum. Approvers lists the
+// approving fingerprints. Every client emits it, off its OWN count of the approvals
+// it has seen — which is what makes it an audit-stream signal rather than a
+// statement about anyone's chain.
+//
+// IT DOES NOT MEAN THE ARTIFACT ENTRY IS IN YOUR CHAIN. Exactly one approver writes
+// that entry — the lowest fingerprint in the approver set (minFpr), NOT whoever
+// completed quorum; see countArtifactApproval for why the completer cannot be the
+// rule. On the writer the entry is already appended when this fires. On every other
+// client, including one whose own approval completed quorum, it fires as soon as the
+// local count reaches quorum: the writer may not have authored the entry yet, and it
+// still has to cross the wire.
+//
+// To act on the entry — to seal a record that must contain it, or to read the
+// approvals off it — wait instead for the EvRecordEntry with Kind
+// record.KindArtifact whose body names this ProposalID. That one is emitted after
+// the entry is appended, so it is the signal that says it is on your chain.
 type EvArtifactSealed struct {
 	ProposalID   string
 	Source       string

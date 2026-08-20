@@ -287,7 +287,7 @@ func TestAmendPreservesArtifactProofs(t *testing.T) {
 	// The single approval reaches quorum: alice writes the artifact entry, and the
 	// proposer captures alice's proof when it processes her approval (ordered before
 	// the entry it now waits for), so agent holds both the entry and the proof.
-	waitFor[EvRecordEntry](t, agent, 5*time.Second)
+	waitForArtifactEntry(t, agent, id)
 
 	// alice leaves so the proposer seals alone (order == 1, immediate finalize) while
 	// still holding the retained approval proof.

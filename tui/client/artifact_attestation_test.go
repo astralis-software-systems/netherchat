@@ -252,7 +252,17 @@ func TestRoleReachesTheSealedRecord(t *testing.T) {
 	if alice.Fingerprint() == writer {
 		sealer, leaver = bob, alice
 	}
-	waitFor[EvRecordEntry](t, sealer, 5*time.Second)
+	// The sealer is the NON-writer, so this proposal's entries reach it over the wire
+	// — and the writer files THREE of them: alice's credential, bob's credential, then
+	// the artifact entry. Waiting for "an EvRecordEntry" returns on the first
+	// credential and leaves the artifact entry still in flight.
+	//
+	// It has to land BEFORE leaver.Close(). Close cancels the writer's context, its
+	// writeLoop returns, and any frame still queued in sendCh is discarded — and at
+	// quorum every client deleted the proposal from its pending set, so no one
+	// re-files it. Past that point the entry is not late, it is gone, and the record
+	// this test verifies would be missing the very approval it asserts.
+	waitForArtifactEntry(t, sealer, id)
 	_ = agent.Close()
 	_ = leaver.Close()
 	waitFor[EvMemberLeft](t, sealer, 5*time.Second)

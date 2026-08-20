@@ -40,11 +40,25 @@ func dialClient(t *testing.T, url, room, name string) *Client {
 
 func waitFor[T Event](t *testing.T, c *Client, timeout time.Duration) T {
 	t.Helper()
+	return waitUntil[T](t, c, timeout, func(T) bool { return true })
+}
+
+// waitUntil is waitFor narrowed by a predicate: events of type T that do not match
+// are discarded like any other event, so a test can wait for A PARTICULAR event
+// rather than for the first one of its Go type.
+//
+// That distinction is load-bearing wherever one action produces several events of
+// the same type. A completed artifact proposal is the case that bites: the
+// designated writer files each approver's credential entry and then the artifact
+// entry, and all of them arrive as EvRecordEntry. Waiting on the type alone returns
+// on the first credential and reads as "the entry is here" when it is not.
+func waitUntil[T Event](t *testing.T, c *Client, timeout time.Duration, match func(T) bool) T {
+	t.Helper()
 	deadline := time.After(timeout)
 	for {
 		select {
 		case ev := <-c.Events():
-			if v, ok := ev.(T); ok {
+			if v, ok := ev.(T); ok && match(v) {
 				return v
 			}
 		case <-c.Done():

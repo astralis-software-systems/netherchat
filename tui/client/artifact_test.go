@@ -22,6 +22,28 @@ func hashOf(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// waitForArtifactEntry blocks until the artifact record entry for proposalID is on
+// c's chain. This — not EvArtifactSealed — is the signal that says "this proposal's
+// evidence has settled here".
+//
+// EvArtifactSealed fires when a client counts quorum from the approvals IT has seen.
+// On the one designated writer the entry is already appended by then; on every other
+// client it says nothing about the entry, which the writer may not have authored yet
+// and which still has to cross the wire. The writer files each approver's credential
+// first and the artifact entry last over one ordered connection, so the artifact
+// entry arriving means the credentials already have: it is the terminal signal for
+// the proposal, which is why waiting for it is enough.
+func waitForArtifactEntry(t *testing.T, c *Client, proposalID string) EvRecordEntry {
+	t.Helper()
+	return waitUntil[EvRecordEntry](t, c, 5*time.Second, func(e EvRecordEntry) bool {
+		if e.Kind != record.KindArtifact {
+			return false
+		}
+		meta, err := record.ParseArtifactBody(e.Body)
+		return err == nil && meta.ProposalID == proposalID
+	})
+}
+
 // twoClients spins up a test relay and connects two members to one room.
 func twoClients(t *testing.T, room string) (relay *httptest.Server, a, b *Client) {
 	t.Helper()
@@ -262,8 +284,13 @@ func TestQuorum2OfflineProvableTwoPerson(t *testing.T) {
 	if alice.Fingerprint() == writerFpr {
 		sealer, leaver = bob, alice
 	}
-	// The non-writer sealer must have the artifact entry on its chain before sealing.
-	waitFor[EvRecordEntry](t, sealer, 5*time.Second)
+	// The non-writer sealer must have the artifact entry on its chain before sealing —
+	// and specifically that entry, not merely the first EvRecordEntry. Nobody here
+	// carries a credential, so the writer files exactly one entry and the two coincide;
+	// the moment an approver in this test gained a UseIdentity call the writer would
+	// file credentials first and the loose wait would return on one of those, seal a
+	// chain without the artifact entry, and fail on the assertions below.
+	waitForArtifactEntry(t, sealer, id)
 
 	// The proposer and the WRITER leave so the non-writer sealer finalizes alone, still
 	// holding both approval proofs.

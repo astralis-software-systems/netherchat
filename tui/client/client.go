@@ -745,7 +745,11 @@ func (c *Client) SAS(handle string) (words []string, fingerprint string, ok bool
 	return nil, "", false
 }
 
-// Close ends the session and closes the transport.
+// Close ends the session and closes the transport. It does not flush: cancelling the
+// context stops writeLoop, so anything still queued in sendCh is discarded. A caller
+// that has just produced evidence others need — an artifact record entry, a seal
+// co-signature — has to see it acknowledged before closing, because nothing retries
+// it and nothing reports the loss.
 func (c *Client) Close() error {
 	if c.cancel != nil {
 		c.cancel()
