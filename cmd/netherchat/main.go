@@ -18,6 +18,7 @@ import (
 
 	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/server/config"
+	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/eventlog"
 	"github.com/salehkreiner/netherchat/tui/ui/app"
@@ -91,10 +92,14 @@ func connectCmd(args []string) {
 	invite := fs.String("invite", "", "one-time invite token for an invite-only room")
 	webURL := fs.String("web-url", "", "base URL of the browser join client for /break-glass links (default: derived from the server URL)")
 	configPath := fs.String("config", "", "netherchat.toml for trust pinning and [action.*] quorum policy (default: ./netherchat.toml if present)")
+	// A credential about your own key, not a trust anchor: it names who an issuer
+	// says you are and which roles you may act under, and it carries no key anyone
+	// verifies against. Netherchat has no issuer flag and reads no issuer file.
+	attestation := fs.String("attestation", "", "your identity attestation (identity.json), so an artifact approval carries the credential you act under")
 	useTor := fs.Bool("tor", false, "dial the relay through a local Tor SOCKS5 proxy (for ws://<addr>.onion relays)")
 	torProxy := fs.String("tor-proxy", client.DefaultTorProxy, "Tor SOCKS5 proxy address (Tor Browser uses 127.0.0.1:9150)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: netherchat connect [ws://host:port] [--room <name>] [--name <you>] [--identity <path>] [--invite <token>] [--tor [--tor-proxy 127.0.0.1:9050]] [--web-url <url>] [--config <toml>] [--notify <cmd>]")
+		fmt.Fprintln(os.Stderr, "usage: netherchat connect [ws://host:port] [--room <name>] [--name <you>] [--identity <path>] [--attestation <identity.json>] [--invite <token>] [--tor [--tor-proxy 127.0.0.1:9050]] [--web-url <url>] [--config <toml>] [--notify <cmd>]")
 		fs.PrintDefaults()
 	}
 	// The server URL is an optional leading positional; peel it off before parsing
@@ -120,8 +125,19 @@ func connectCmd(args []string) {
 	if cerr != nil {
 		fatal(cerr) // fail closed: a requested/present config that will not load is an error
 	}
+	// Same fail-closed posture as the config above, for the same reason: an
+	// operator who named an attestation asked for it, and a broken one is a
+	// mistake rather than a reason to run quietly without it.
+	var credential *attest.IdentityAttestation
+	if *attestation != "" {
+		a, aerr := readAttestation(*attestation)
+		if aerr != nil {
+			fatal(aerr)
+		}
+		credential = a
+	}
 	fmt.Fprintln(os.Stderr, configProvenanceLine(cfg, source))
-	if err := app.Run(url, *name, *identity, *room, *notify, *invite, *webURL, torDial, trustOf(cfg), actionQuorums(cfg), beaconTokens(cfg), cfg.Notify.On, cfg.Macros); err != nil {
+	if err := app.Run(url, *name, *identity, *room, *notify, *invite, *webURL, torDial, trustOf(cfg), actionQuorums(cfg), beaconTokens(cfg), cfg.Notify.On, cfg.Macros, credential); err != nil {
 		fatal(err)
 	}
 }

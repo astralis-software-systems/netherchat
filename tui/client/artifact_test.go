@@ -95,7 +95,7 @@ func TestApproveQuorum1Seals(t *testing.T) {
 	}
 	waitFor[EvArtifactProposed](t, alice, 5*time.Second)
 
-	if err := alice.ApproveArtifact(id); err != nil {
+	if err := alice.ApproveArtifact(id, ""); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	sealed := waitFor[EvArtifactSealed](t, alice, 5*time.Second)
@@ -153,7 +153,7 @@ func TestSelfApprovalRejected(t *testing.T) {
 	waitFor[EvArtifactProposed](t, alice, 5*time.Second)
 
 	// The proposer's own /approve-artifact is refused outright.
-	if err := agent.ApproveArtifact(id); err == nil {
+	if err := agent.ApproveArtifact(id, ""); err == nil {
 		t.Fatal("the proposer must not be able to approve its own proposal")
 	}
 	// And at the counting layer, an approval whose fingerprint equals the proposer's
@@ -193,7 +193,7 @@ func TestQuorum2NeedsTwoDistinct(t *testing.T) {
 	waitFor[EvArtifactProposed](t, bob, 5*time.Second)
 
 	// First human approval: count 1/2, nothing sealed yet.
-	if err := alice.ApproveArtifact(id); err != nil {
+	if err := alice.ApproveArtifact(id, ""); err != nil {
 		t.Fatalf("alice approve: %v", err)
 	}
 	ev := waitFor[EvArtifactApproved](t, alice, 5*time.Second)
@@ -201,7 +201,7 @@ func TestQuorum2NeedsTwoDistinct(t *testing.T) {
 		t.Fatalf("first approval = %d/%d, want 1/2", ev.Count, ev.Quorum)
 	}
 	// Alice approving again is refused (already approved).
-	if err := alice.ApproveArtifact(id); err == nil {
+	if err := alice.ApproveArtifact(id, ""); err == nil {
 		t.Fatal("the same human must not approve twice")
 	}
 	if len(alice.RecordEntries()) != 0 {
@@ -209,7 +209,7 @@ func TestQuorum2NeedsTwoDistinct(t *testing.T) {
 	}
 
 	// Second DISTINCT human: quorum reached, bob (the completer) writes the entry.
-	if err := bob.ApproveArtifact(id); err != nil {
+	if err := bob.ApproveArtifact(id, ""); err != nil {
 		t.Fatalf("bob approve: %v", err)
 	}
 	waitFor[EvArtifactSealed](t, bob, 5*time.Second)
@@ -244,11 +244,11 @@ func TestQuorum2OfflineProvableTwoPerson(t *testing.T) {
 	waitFor[EvArtifactProposed](t, alice, 5*time.Second)
 	waitFor[EvArtifactProposed](t, bob, 5*time.Second)
 
-	if err := alice.ApproveArtifact(id); err != nil {
+	if err := alice.ApproveArtifact(id, ""); err != nil {
 		t.Fatalf("alice approve: %v", err)
 	}
 	waitFor[EvArtifactApproved](t, alice, 5*time.Second)
-	if err := bob.ApproveArtifact(id); err != nil {
+	if err := bob.ApproveArtifact(id, ""); err != nil {
 		t.Fatalf("bob approve: %v", err)
 	}
 	waitFor[EvArtifactSealed](t, bob, 5*time.Second)
@@ -333,7 +333,7 @@ func TestRejectDiscards(t *testing.T) {
 		t.Fatal("a rejected proposal must not produce a record entry")
 	}
 	// Approving a rejected proposal fails.
-	if err := alice.ApproveArtifact(id); err == nil {
+	if err := alice.ApproveArtifact(id, ""); err == nil {
 		t.Fatal("approving a rejected proposal should fail")
 	}
 }

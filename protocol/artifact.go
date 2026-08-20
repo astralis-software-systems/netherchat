@@ -42,11 +42,45 @@ type ArtifactProposalBody struct {
 // ArtifactHash, ApproverFpr, Nonce) — domain-separated and bound to the proposal id,
 // the exact artifact (via its hash), the approver, and the proposal nonce, so an
 // approval of one artifact can never be replayed to endorse a different one.
+//
+// ATTESTATION IS THE APPROVER'S CREDENTIAL, CARRIED VERBATIM. It is the standalone
+// identity artifact's marshalled bytes — the same bytes a file on disk holds and the
+// same bytes a record entry carries — so one parser and one verifier serve every
+// arrival path and no second shape of the artifact enters the tree. It is []byte for
+// the same reason IdentityKey and KXKey are: encoding/json base64s it, and the relay
+// fans it out without looking inside. This package neither parses nor verifies it;
+// a reader supplies the issuer key and the evaluation time, and this frame supplies
+// only the statement an issuer signed.
 type ArtifactApprovalBody struct {
 	ProposalID   string `json:"proposal_id"`
 	ArtifactHash string `json:"artifact_hash"` // the approver independently verifies this matches the proposal
 	ApproverFpr  string `json:"approver_fpr"`  // must equal the signing sender's fingerprint
 	Sig          []byte `json:"sig"`
+
+	// Attestation is the approver's identity attestation as the issuer wrote it,
+	// or nil when the approver carries none. omitempty is what keeps this change
+	// additive: an approver carrying none marshals to exactly the bytes this
+	// struct marshalled to before the field existed; an older peer decoding a
+	// frame that has it ignores an unknown key (Envelope.Decode is a plain
+	// json.Unmarshal, and no wire struct here uses DisallowUnknownFields); and a
+	// newer peer decoding an older frame gets a nil slice, which means "the
+	// sender carried none" and is not an error.
+	Attestation []byte `json:"attestation,omitempty"`
+
+	// Role is which of the roles Attestation names the approver signed as, or
+	// empty for a roleless approval. It is the same content discriminator the
+	// sealed record's ApprovalProof.Role is: EMPTY means Sig covers
+	// ArtifactApprovalSigningBytes (v1); NON-EMPTY means it covers
+	// ArtifactApprovalSigningBytesV2, which binds the role, so relabelling,
+	// adding or stripping a role yields a different preimage and the signature
+	// stops verifying. Both ends dispatch on this field and on nothing else.
+	//
+	// The vocabulary is not this package's and never becomes one: a role is a
+	// string an issuer signed into the approver's own attestation, matched
+	// byte-for-byte and never normalized. A role that arrives without an
+	// attestation naming it is carried, surfaced, and left for a reader to judge
+	// — this layer states what was signed, not what it is enough for.
+	Role string `json:"role,omitempty"`
 }
 
 // ArtifactRejectionBody is the END-TO-END-ENCRYPTED plaintext of an

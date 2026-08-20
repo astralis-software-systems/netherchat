@@ -426,7 +426,17 @@ func (c *Client) assembleSealedLocked(snap *sealSnapshot) *record.SealedRecord {
 		if !ok || m.ProposalID == "" {
 			continue
 		}
+		// Dispatch on the captured role, exactly as the record verifier dispatches on
+		// the recorded one: a role-typed signature covers the v2 preimage, and handing
+		// it to the v1 writer would fail to verify and be dropped — silently, because
+		// the Sealer's error is discarded here (a seal must still produce a record).
+		// The two forms are the same approval in different clothes; picking the wrong
+		// one loses it.
 		for _, ca := range c.artifactProofs[m.ProposalID] {
+			if ca.role != "" {
+				_, _ = sealer.AddArtifactApprovalV2(m.ProposalID, ca.role, ed25519.PublicKey(ca.key), ca.sig)
+				continue
+			}
 			_, _ = sealer.AddArtifactApproval(m.ProposalID, ed25519.PublicKey(ca.key), ca.sig)
 		}
 	}

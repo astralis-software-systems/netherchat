@@ -141,6 +141,15 @@ type Client struct {
 	// completes it writes the signed "artifact" record entry. See artifact.go.
 	proposals map[string]*trackedProposal
 
+	// selfCredential is THIS operator's own identity attestation, marshalled once
+	// by UseIdentity, and selfCredentialRoles the roles it names. Both are empty
+	// until an operator provisions one, which is the free tier and the unchanged
+	// path. It is a credential about the local key, never a trust anchor: nothing
+	// here verifies it, because verification takes an issuer key and an evaluation
+	// time that belong to whoever READS the record. See identity.go.
+	selfCredential      []byte
+	selfCredentialRoles []string
+
 	// artifactProofs retains the identity-bound approval signatures collected for each
 	// artifact (keyed by proposal_id), so that whichever member later seals can persist
 	// them into SealedRecord.ArtifactApprovals — making two-person approval

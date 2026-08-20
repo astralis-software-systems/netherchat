@@ -60,6 +60,9 @@ encoding of `[]byte`).
 | `invite_result` | server → client                | the minted token |
 | `break_glass`        | client → server           | create an ephemeral war room + mint one-time join links |
 | `break_glass_result` | server → client           | the new room name, deadline, host token, and per-invitee tokens |
+| `artifact_proposal`  | member → server → room    | an agent-produced artifact awaiting human approval (§17) |
+| `artifact_approval`  | member → server → room    | a signed human approval of a proposal (§17) |
+| `artifact_rejection` | member → server → room    | discard a pending proposal; no record entry (§17) |
 
 `hello` additionally carries an optional `invite_token` (required to join an
 invite-only room), and `welcome` carries a `policy` describing the room
@@ -405,3 +408,97 @@ ActionApprovalSigningBytesV2 =
 
 The initiator-cannot-approve-their-own-request rule is unchanged (the approver
 fingerprint is still bound into the approval preimage).
+
+## 17. Agent-Decision Attestation (NC-W1)
+
+Additive over v3 (no version bump, no relay change). An agent — or a human acting
+for one — **proposes** an artifact it produced, named only by its content hash;
+named humans **approve** it; on quorum the artifact becomes a signed, hash-chained
+`artifact` entry in the sealed record. The proposer is recorded and can **never**
+count toward its own quorum. Only the hex SHA-256 of the artifact ever crosses:
+the content is never in a proposal, an approval, the record, the relay, or a log.
+
+Three opcodes, each carrying a `Message` the relay fans out verbatim as an opaque
+E2E envelope, exactly like `action_*` and `roster_*`:
+
+- `artifact_proposal`  — a proposer submits an artifact for human approval.
+- `artifact_approval`  — a named human co-signs a pending proposal.
+- `artifact_rejection` — any present member discards a pending proposal.
+
+The end-to-end-encrypted plaintexts (inside the `Message.ciphertext`):
+
+```json
+// artifact_proposal
+{ "proposal_id": "af620f04c3cd152c",   // random 16-hex; correlates approvals
+  "source": "requirements-agent",       // agent/tool label
+  "artifact_ref": "Q3-requirements",    // title or reference id
+  "artifact_hash": "<hex sha256>",      // the ONLY representation of the content
+  "summary": "draft for review",
+  "proposer_fpr": "SHA256:…",           // must equal the signed Message's sender
+  "quorum": 1,                          // distinct human approvers ([action.artifact])
+  "proposed_at": "2026-08-20T02:24:34Z",
+  "expires_unix": 1787192974,           // discarded ~300s after issue
+  "nonce": "ec73b94a2c84b2e8" }         // random hex, bound into every approval
+
+// artifact_approval
+{ "proposal_id": "af620f04c3cd152c",
+  "artifact_hash": "<hex sha256>",      // the approver verifies it matches the proposal
+  "approver_fpr": "SHA256:…",           // must equal the signed Message's sender
+  "sig": "<base64 Ed25519>",            // over the preimage selected by "role", below
+  "attestation": "<base64 bytes>",      // OPTIONAL — the approver's identity.json, verbatim
+  "role": "qa" }                        // OPTIONAL — one of the roles that attestation names
+
+// artifact_rejection
+{ "proposal_id": "af620f04c3cd152c", "rejecter_fpr": "SHA256:…", "reason": "not this quarter" }
+```
+
+**Approval signature, and the v1/v2 fork.** `role` is the content discriminator,
+the same one `ApprovalProof.role` is inside a sealed record. Absent or empty, the
+signature covers the roleless v1 preimage; non-empty, it covers the v2 preimage
+that binds the role:
+
+```
+ArtifactApprovalSigningBytes =
+  field("netherchat/artifact-approval/v1")
+    || field(proposal_id) || field(artifact_hash) || field(approver_fpr) || field(nonce)
+
+ArtifactApprovalSigningBytesV2 =
+  field("netherchat/artifact-approval/v2")
+    || field(proposal_id) || field(artifact_hash) || field(approver_fpr) || field(nonce)
+    || field(role)
+```
+
+The two layouts differ by domain tag and by the trailing `field(role)`, so adding,
+stripping, or relabelling a role in flight flips the layout and the signature stops
+verifying — the approval is then rejected as forged, not renegotiated. An approval
+of artifact `H1` can never be replayed to endorse `H2` (different `artifact_hash`),
+attributed to another approver (their fingerprint is in the preimage), or replayed
+against another proposal instance (the nonce differs).
+
+**`attestation` is the identity artifact, verbatim.** It is exactly what
+`(*IdentityAttestation).Marshal()` produces — the same bytes a standalone
+`identity.json` holds and the same bytes a `netherchat.identity/v1` record entry
+carries. One format, one parser, one verifier, three transports; no wire-specific
+shape exists. Both fields are `omitempty`, so an approver carrying no credential
+produces byte-identical frames to a client built before either field existed, an
+older peer ignores keys it does not know, and a newer peer reading an older frame
+sees "carried none" rather than an error.
+
+**The relay never parses either field.** It stamps the authenticated sender and
+fans the envelope out, as it does for `identity_key` and `kx_key`. It gains no
+ability to verify, and the boundary guard keeps it unable to link the crypto that
+could. One honest consequence: a credential carried this way states an
+enterprise-shaped principal, and a relay operator sees that opaque blob go past —
+the attestation is not a secret and grants nothing, but a self-hosted relay is
+doing real work in that sentence.
+
+**Netherchat holds no issuer keys and never decides whether a role is enough.** A
+role is only ever a selection from the set an issuer signed into the approver's own
+attestation; a sender will not sign a role its own credential does not name. A role
+that arrives on the wire *without* a credential naming it still verifies, still
+counts, and still seals — the mismatch is surfaced beside the approval and left to
+whoever reads the record with an issuer key pinned and an evaluation time chosen.
+
+**Relay-less pair mode carries all three ops** (§1.1). The Sneakernet coordinator
+routes them exactly as the relay does; there is no approval behaviour that depends
+on which transport a room is running on.

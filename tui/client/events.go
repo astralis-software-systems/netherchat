@@ -351,6 +351,25 @@ type EvArtifactApproved struct {
 	Quorum       int
 	Self         bool
 	At           time.Time
+
+	// Attestation is the approver's identity attestation exactly as it arrived —
+	// the standalone artifact's bytes — or nil when they carried none. It is
+	// handed over unread: this event states what accompanied the approval, and a
+	// surface that wants a name parses and verifies it against an issuer key the
+	// operator supplies.
+	Attestation []byte
+
+	// Role is the role the approver signed as, bound into the approval preimage,
+	// or empty for a roleless approval.
+	Role string
+
+	// RoleUnbacked reports that Role is not among the roles Attestation names
+	// about this approver — because the credential names other roles, because it
+	// is about someone else, because it did not parse, or because none arrived.
+	// The approval still counted: this is a fact placed beside the approval, not
+	// a ruling on it. A surface shows it; a reader with the issuer key decides
+	// what it is worth.
+	RoleUnbacked bool
 }
 
 // EvArtifactSealed is emitted when a proposal reaches quorum and the signed

@@ -325,3 +325,26 @@ func parseAuthorizedEd25519(line string) (ed25519.PublicKey, error) {
 	}
 	return pub, nil
 }
+
+// readAttestation reads and PARSES one identity.json from a path an operator
+// typed. It is the argv-level half of provisioning: a command is where a file
+// path legitimately enters, and parsing is a structural check — is this an
+// identity artifact at all — not a verdict.
+//
+// It deliberately does not verify. Verification takes an issuer key and an
+// evaluation time that belong to whoever READS the record, and this process has
+// neither; a client that refused to carry a credential because the CARRIER had
+// pinned no issuer would make the evidence a function of the sender's
+// configuration. `netherchat verify identity.json --issuer <key>` is where a
+// verdict is asked for, and it is a different command on purpose.
+func readAttestation(path string) (*attest.IdentityAttestation, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	a, err := attest.ParseIdentity(b)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return a, nil
+}

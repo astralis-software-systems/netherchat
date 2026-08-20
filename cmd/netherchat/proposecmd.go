@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/client"
 )
 
@@ -73,8 +74,13 @@ func approveArtifactCmd(args []string) {
 	seal := fs.Bool("seal", false, "after approval, seal the record and write it to --out")
 	out := fs.String("out", "record.json", "where to write the sealed record (with --seal)")
 	wait := fs.Duration("wait", 120*time.Second, "how long to wait for a proposal to arrive")
+	// The credential this approver acts under, and which of its roles. --role is
+	// only ever needed when the attestation names more than one; with one, it
+	// resolves itself, and with no attestation there is no signed set to name.
+	attestation := fs.String("attestation", "", "your identity attestation (identity.json), carried with the approval")
+	role := fs.String("role", "", "which of the roles your attestation names to approve as (only needed when it names more than one)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: netherchat approve-artifact --room <room> [--proposal <id>] [--seal --out record.json] [--server ws://...]")
+		fmt.Fprintln(os.Stderr, "usage: netherchat approve-artifact --room <room> [--proposal <id>] [--attestation <identity.json> [--role <role>]] [--seal --out record.json] [--server ws://...]")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
@@ -83,9 +89,26 @@ func approveArtifactCmd(args []string) {
 		fs.Usage()
 		os.Exit(2)
 	}
+	if *attestation == "" && *role != "" {
+		fatal(fmt.Errorf("--role %q needs an --attestation: a role has to be one an issuer signed into your credential", *role))
+	}
+	// Read and parse BEFORE dialing, so a typo in a path does not join a room.
+	var credential *attest.IdentityAttestation
+	if *attestation != "" {
+		a, err := readAttestation(*attestation)
+		if err != nil {
+			fatal(err)
+		}
+		credential = a
+	}
 	room0 := strings.TrimPrefix(*room, "#")
 	c := dial(*url, room0, *name, *identity, *invite, 15*time.Second)
 	defer c.Close()
+	if credential != nil {
+		if err := c.UseIdentity(credential); err != nil {
+			fatal(err)
+		}
+	}
 
 	// One unified event loop from connect (like `netherchat tail`): print readiness
 	// when the key is established and capture the first matching proposal. A single
@@ -93,7 +116,7 @@ func approveArtifactCmd(args []string) {
 	// seen by the next.
 	prop := watchForProposal(c, *proposalID, room0, *wait)
 	fmt.Printf("approving artifact %q (id %s, source %s, hash %s)\n", prop.ArtifactRef, prop.ProposalID, prop.Source, prop.ArtifactHash)
-	if err := c.ApproveArtifact(prop.ProposalID); err != nil {
+	if err := c.ApproveArtifact(prop.ProposalID, *role); err != nil {
 		fatal(err)
 	}
 	// Wait until the artifact entry is written (we are the completing approver for

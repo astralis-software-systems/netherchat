@@ -20,6 +20,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/salehkreiner/netherchat/protocol"
+	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/notify"
 	"github.com/salehkreiner/netherchat/tui/statusline"
@@ -45,6 +46,12 @@ type Model struct {
 	streamExpanded                     map[string]bool         // stream_id -> expanded, for /expand stream-N (§2.2)
 	streamLines                        int                     // /stream ring-buffer size (§2.2)
 	clockTicking                       bool                    // the 1s incident-clock refresh is active (A1)
+
+	// credential is this operator's own identity attestation, supplied by
+	// --attestation and handed to every room's client so an artifact approval
+	// carries it. It is a statement about the local key, not a trust anchor: no
+	// issuer key or evaluation time enters the TUI, and nothing here verifies it.
+	credential *attest.IdentityAttestation
 
 	cmds     *command.Set
 	theme    theme.Theme
@@ -75,8 +82,9 @@ type Model struct {
 // when non-empty, routes every room's dial through that Tor SOCKS5 proxy so a
 // ws://<addr>.onion relay is reachable (§1.5). trust holds the client-side
 // identity pins parsed from netherchat.toml.
-func Run(url, name, identityPath, room, notifyCmd, invite, webURL, torProxy string, trust []TrustEntry, actionQuorum map[string]int, beaconTokens map[string]string, notifyOn []string, macros map[string]string) error {
+func Run(url, name, identityPath, room, notifyCmd, invite, webURL, torProxy string, trust []TrustEntry, actionQuorum map[string]int, beaconTokens map[string]string, notifyOn []string, macros map[string]string, credential *attest.IdentityAttestation) error {
 	m := newModel(url, name, identityPath, room, notifyCmd)
+	m.credential = credential
 	m.initialInvite = invite
 	m.webURL = webURL
 	m.torProxy = torProxy
@@ -134,7 +142,6 @@ func shortHashUI(h string) string {
 func newModel(url, name, identityPath, roomName, notifyCmd string) *Model {
 	m := &Model{
 		url: url, name: name, identityPath: identityPath, notifyCmd: notifyCmd,
-		cmds:           buildCommands(),
 		theme:          theme.Default(),
 		renderer:       render.New(theme.Default(), 80), // width set for real on first resize
 		session:        map[string]*room{},
@@ -156,6 +163,9 @@ func newModel(url, name, identityPath, roomName, notifyCmd string) *Model {
 	m.session[roomName] = newRoom(roomName)
 	m.order = []string{roomName}
 	m.active = roomName
+	// Registered last: one completer reads the active room's client, so the
+	// command set is built against a model that already has one.
+	m.cmds = buildCommands(m)
 	return m
 }
 
@@ -173,11 +183,20 @@ type roomEventMsg struct {
 type roomGoneMsg struct{ name string }
 type tickMsg time.Time
 
-func connectRoom(url, room, name, idPath, token, torProxy string, actionQuorum map[string]int) tea.Cmd {
+func connectRoom(url, room, name, idPath, token, torProxy string, actionQuorum map[string]int, credential *attest.IdentityAttestation) tea.Cmd {
 	return func() tea.Msg {
 		c, err := client.New(url, room, name, idPath)
 		if err != nil {
 			return roomConnectedMsg{room, nil, err}
+		}
+		// Fail the connect rather than joining quietly without it: an operator who
+		// named an attestation asked for their approvals to carry it, and the one
+		// check here — that it is about THIS key — can only be made once the BYO-key
+		// cascade has resolved which key that is.
+		if credential != nil {
+			if err := c.UseIdentity(credential); err != nil {
+				return roomConnectedMsg{room, nil, err}
+			}
 		}
 		if torProxy != "" {
 			if err := c.UseTorProxy(torProxy); err != nil {
@@ -216,7 +235,7 @@ func tickEvery() tea.Cmd {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, connectRoom(m.url, m.active, m.name, m.identityPath, m.initialInvite, m.torProxy, m.actionQuorum), tickEvery())
+	return tea.Batch(textinput.Blink, connectRoom(m.url, m.active, m.name, m.identityPath, m.initialInvite, m.torProxy, m.actionQuorum, m.credential), tickEvery())
 }
 
 // --- Update -----------------------------------------------------------------
@@ -781,7 +800,18 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 		if e.Self {
 			who = "you"
 		}
-		r.appendSystem(fmt.Sprintf("✓ %s approved artifact %s  (approvals: %d/%d)", who, e.ArtifactRef, e.Count, e.Quorum))
+		msg := fmt.Sprintf("✓ %s approved artifact %s  (approvals: %d/%d)", who, e.ArtifactRef, e.Count, e.Quorum)
+		if e.Role != "" {
+			msg += fmt.Sprintf("  as %s", e.Role)
+		}
+		r.appendSystem(msg)
+		// The mismatch is stated, not ruled on: the approval above counted and the
+		// record will carry it. What the role is worth needs an issuer key, which
+		// belongs to whoever reads the record.
+		if e.RoleUnbacked {
+			r.appendError(fmt.Sprintf(
+				"   the attestation carried with that approval does not name the role %q — recorded as signed; a reader with the issuer key judges it", e.Role))
+		}
 
 	case client.EvArtifactSealed:
 		r.appendSystem(fmt.Sprintf("🔒 Artifact sealed into the record: %s  (source %s, hash %s)", e.ArtifactRef, e.Source, shortHashUI(e.ArtifactHash)))
@@ -886,7 +916,7 @@ func (m *Model) joinRoomOpts(name, token string, activate bool) tea.Cmd {
 		m.active = name
 	}
 	m.syncViewport()
-	return connectRoom(m.url, name, m.name, m.identityPath, token, m.torProxy, m.actionQuorum)
+	return connectRoom(m.url, name, m.name, m.identityPath, token, m.torProxy, m.actionQuorum, m.credential)
 }
 
 func (m *Model) leaveRoom(name string) tea.Cmd {

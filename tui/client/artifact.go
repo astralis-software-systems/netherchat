@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/salehkreiner/netherchat/protocol"
+	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/internal/crypto"
 	"github.com/salehkreiner/netherchat/tui/record"
 )
@@ -39,10 +40,27 @@ var artifactProposalTTL = 300 * time.Second
 // artifact-approval preimage. Retained so that whichever member later seals can
 // persist it into SealedRecord.ArtifactApprovals, making two-person approval
 // offline-provable. fpr is the approver fingerprint.
+//
+// att is the approver's identity attestation exactly as it arrived, or nil when
+// they carried none. It is kept beside the proof so a surface can show whose
+// credential accompanied which approval; the proof itself is what seals.
+//
+// role is the role the signature covers, and it is the v1/v2 discriminator the
+// seal writer dispatches on: empty means sig covers the roleless v1 preimage,
+// non-empty the role-typed v2 one. A role captured here and dropped on the way
+// to the Sealer would silently fail to verify and vanish, which is why it rides
+// with the proof rather than beside it.
+//
+// unbacked latches that role is not among the roles att names about this
+// approver. It is recorded, never acted on: the approval still counts and still
+// seals. See onArtifactApproval.
 type capturedApproval struct {
-	fpr string
-	key []byte
-	sig []byte
+	fpr      string
+	key      []byte
+	sig      []byte
+	att      []byte
+	role     string
+	unbacked bool
 }
 
 // trackedProposal is the in-memory lifecycle of one artifact proposal, held by every
@@ -159,7 +177,28 @@ func (c *Client) Propose(source, ref, hash, summary string, quorum int) (string,
 // ApproveArtifact signs and broadcasts a human approval of a pending proposal, then
 // accounts it locally. proposalID may be a unique prefix. It refuses to approve a
 // proposal we authored (the second law: an agent/proposer can never self-approve).
-func (c *Client) ApproveArtifact(proposalID string) error {
+//
+// THE CREDENTIAL, WHEN ONE IS CARRIED. An operator who provisioned an attestation
+// through UseIdentity sends it with the approval. From there the DESIGNATED WRITER
+// places every approver's credential into the record chain alongside the artifact
+// entry (see writeArtifactEntry) — one writer, so the chain cannot fork, and before
+// the seal, because a sealed record admits a co-signature over an unchanged head and
+// nothing else. Both copies are needed and neither substitutes for the other: the
+// wire copy is what a member watching the room right now can see, and the chain copy
+// is what a reader opening the sealed file years later can re-verify.
+//
+// THE ROLE, AND WHERE IT MAY COME FROM. role names which of the roles the carried
+// attestation states the approver is acting under, and it is signed into the approval
+// preimage. Netherchat has no role vocabulary of its own and does not acquire one
+// here: the only roles this call accepts are the ones inside the operator's own
+// signed credential, so the field is a selection from a signed set and never a
+// free-text string an approver asserts about themselves. An empty role with a
+// credential naming exactly one role resolves to that role — there is no choice to
+// make, so there is no question to ask. An empty role with a credential naming
+// several is an error that names them, which is what a command surface turns into a
+// prompt. An empty role with no credential at all is the unchanged, roleless
+// approval: the free tier, byte-identical to before this existed.
+func (c *Client) ApproveArtifact(proposalID, role string) error {
 	c.mu.Lock()
 	id, ok := c.resolveProposalIDLocked(proposalID)
 	if !ok {
@@ -183,18 +222,30 @@ func (c *Client) ApproveArtifact(proposalID string) error {
 	}
 	prop := tp.prop
 	ready := c.rk != nil
+	cred := append([]byte(nil), c.selfCredential...)
 	c.mu.Unlock()
 	if !ready {
 		return errors.New("room key not established yet")
 	}
+	// Resolve the role BEFORE anything is sent: a refusal must leave the proposal
+	// exactly as it found it, with no frame on the wire.
+	role, err := c.approvalRole(role)
+	if err != nil {
+		return err
+	}
 
 	fpr := c.id.Fingerprint()
-	sig, err := c.id.Sign(protocol.ArtifactApprovalSigningBytes(prop.ProposalID, prop.ArtifactHash, fpr, prop.Nonce))
+	preimage := protocol.ArtifactApprovalSigningBytes(prop.ProposalID, prop.ArtifactHash, fpr, prop.Nonce)
+	if role != "" {
+		preimage = protocol.ArtifactApprovalSigningBytesV2(prop.ProposalID, prop.ArtifactHash, fpr, prop.Nonce, role)
+	}
+	sig, err := c.id.Sign(preimage)
 	if err != nil {
 		return err
 	}
 	body, _ := json.Marshal(protocol.ArtifactApprovalBody{
 		ProposalID: prop.ProposalID, ArtifactHash: prop.ArtifactHash, ApproverFpr: fpr, Sig: sig,
+		Attestation: cred, Role: role,
 	})
 	if err := c.sealAndSend(protocol.OpArtifactApproval, body); err != nil {
 		return err
@@ -210,8 +261,74 @@ func (c *Client) ApproveArtifact(proposalID string) error {
 	}
 	tp.approved = true
 	c.mu.Unlock()
-	c.countArtifactApproval(prop.ProposalID, c.name, capturedApproval{fpr: fpr, key: c.id.SignPub, sig: sig}, true)
+	c.countArtifactApproval(prop.ProposalID, c.name, capturedApproval{fpr: fpr, key: c.id.SignPub, sig: sig, att: cred, role: role}, true)
 	return nil
+}
+
+// approvalRole resolves the role this approval will be signed under, from the
+// operator's request and the roles their own carried attestation names. It is
+// the only place a role enters an approval, and every path out of it either
+// returns a role that credential names or returns nothing at all.
+//
+// It makes no judgement about what a role is good for. It answers one question —
+// did the issuer write this role into this operator's credential — and the
+// answer is a byte-for-byte comparison against signed bytes.
+func (c *Client) approvalRole(requested string) (string, error) {
+	c.mu.Lock()
+	carried := len(c.selfCredential) > 0
+	roles := append([]string(nil), c.selfCredentialRoles...)
+	c.mu.Unlock()
+
+	if !carried {
+		if requested != "" {
+			return "", fmt.Errorf("cannot approve as %q: a role has to be one your own attestation names, and this client carries none", requested)
+		}
+		return "", nil
+	}
+	if requested == "" {
+		switch len(roles) {
+		case 0:
+			// A well-formed attestation names at least one role, so this is a
+			// malformed credential rather than a state an issuer can express. It
+			// degrades to the roleless approval instead of blocking one.
+			return "", nil
+		case 1:
+			return roles[0], nil
+		default:
+			return "", fmt.Errorf("your attestation names %d roles (%s) — name the one you are acting under",
+				len(roles), strings.Join(roles, ", "))
+		}
+	}
+	for _, r := range roles {
+		if r == requested {
+			return requested, nil
+		}
+	}
+	return "", fmt.Errorf("%q is not one of the roles your attestation names (%s)", requested, strings.Join(roles, ", "))
+}
+
+// roleNamedByCredential reports whether role appears in the attestation carried
+// beside it, in a statement about the approver it is attributed to. A missing,
+// unparseable, or third-party credential all answer no, and all mean the same
+// thing to a reader: this role arrived with nothing carried that names it.
+//
+// It is a statement of fact about two fields of one frame, not a verdict. The
+// verdict needs an issuer key and an evaluation time, which live with whoever
+// reads the record.
+func roleNamedByCredential(role string, credential []byte, approverFpr string) bool {
+	if role == "" || len(credential) == 0 {
+		return false
+	}
+	a, err := attest.ParseIdentity(credential)
+	if err != nil || a.Subject != approverFpr {
+		return false
+	}
+	for _, r := range a.Roles {
+		if r == role {
+			return true
+		}
+	}
+	return false
 }
 
 // RejectArtifact discards a pending proposal and tells the room. No record entry is
@@ -300,6 +417,16 @@ func (c *Client) onArtifactProposal(senderName, senderFpr string, body protocol.
 }
 
 // onArtifactApproval verifies and counts an approval that arrived from a peer.
+//
+// THE ROLE IS SURFACED, NEVER ADJUDICATED. The preimage is chosen by body.Role —
+// the same content discriminator the record verifier uses — so a role that was
+// altered in flight fails the signature check and the approval is rejected as
+// forged, which is the only rejection this field can cause. A role that verifies
+// but is NOT named by the credential carried beside it is a different thing
+// entirely: the approver signed a claim their own carried statement does not
+// support. That is recorded on the emitted event and the approval still counts,
+// because whether a role claim is good for anything is the reader's question and
+// the reader holds the issuer key that Netherchat does not.
 func (c *Client) onArtifactApproval(senderName string, senderPub ed25519.PublicKey, body protocol.ArtifactApprovalBody) {
 	c.mu.Lock()
 	tp := c.proposals[body.ProposalID]
@@ -320,11 +447,21 @@ func (c *Client) onArtifactApproval(senderName string, senderPub ed25519.PublicK
 		return
 	}
 	preimage := protocol.ArtifactApprovalSigningBytes(prop.ProposalID, prop.ArtifactHash, body.ApproverFpr, prop.Nonce)
+	if body.Role != "" {
+		preimage = protocol.ArtifactApprovalSigningBytesV2(prop.ProposalID, prop.ArtifactHash, body.ApproverFpr, prop.Nonce, body.Role)
+	}
 	if len(senderPub) != ed25519.PublicKeySize || !ed25519.Verify(senderPub, preimage, body.Sig) {
 		c.emit(EvError{Err: fmt.Errorf("rejecting artifact approval from %s: invalid signature", senderName)})
 		return
 	}
-	c.countArtifactApproval(body.ProposalID, senderName, capturedApproval{fpr: signerFpr, key: append([]byte(nil), senderPub...), sig: append([]byte(nil), body.Sig...)}, false)
+	c.countArtifactApproval(body.ProposalID, senderName, capturedApproval{
+		fpr:      signerFpr,
+		key:      append([]byte(nil), senderPub...),
+		sig:      append([]byte(nil), body.Sig...),
+		att:      append([]byte(nil), body.Attestation...),
+		role:     body.Role,
+		unbacked: body.Role != "" && !roleNamedByCredential(body.Role, body.Attestation, body.ApproverFpr),
+	}, false)
 }
 
 // onArtifactRejection cancels a pending proposal seen on the wire.
@@ -384,6 +521,7 @@ func (c *Client) countArtifactApproval(proposalID, approverName string, proof ca
 		ProposalID: proposalID, ArtifactRef: prop.ArtifactRef, ArtifactHash: prop.ArtifactHash,
 		ApproverName: approverName, ApproverFpr: proof.fpr,
 		Count: count, Quorum: needed, Self: self, At: time.Now(),
+		Attestation: proof.att, Role: proof.role, RoleUnbacked: proof.unbacked,
 	})
 	if !reached {
 		return
@@ -425,7 +563,11 @@ func minFpr(fprs []string) string {
 // chain converges. AuthorID is the writer (the approving human), which equals
 // approver_fpr — so the entry's own signature proves that human approved this exact
 // artifact hash.
+//
+// The approvers' credentials go in FIRST, as typed identity entries, so a reader
+// meets the statements before the decision they accompany.
 func (c *Client) writeArtifactEntry(prop protocol.ArtifactProposalBody, approverFpr string) {
+	c.writeApproverCredentials(prop.ProposalID)
 	meta := record.ArtifactMeta{
 		Source:       prop.Source,
 		ArtifactRef:  prop.ArtifactRef,
@@ -447,6 +589,61 @@ func (c *Client) writeArtifactEntry(prop protocol.ArtifactProposalBody, approver
 	}
 	if err := c.appendRecord(record.KindArtifact, "", body); err != nil {
 		c.emit(EvError{Err: fmt.Errorf("artifact: write record entry: %w", err)})
+	}
+}
+
+// writeApproverCredentials places each approver's carried identity attestation
+// into the chain as a typed entry, in approval order, deduplicated.
+//
+// ONE WRITER, AND THAT IS THE WHOLE REASON THIS LIVES HERE. Every approver could
+// place its own credential instead, and two approvers acting within a round trip
+// of each other would then append at the same sequence number and one of the two
+// entries would be rejected as a chain fork. The designated writer already
+// exists for exactly this reason, is computed identically on every client, and
+// holds every approver's credential because the approval carried it. Placing
+// someone else's attestation proves only that it was placed: the binding's trust
+// is an issuer signature checked by a reader against a key this process never
+// holds.
+//
+// A credential whose subject is not the approver it arrived with is skipped. It
+// is still surfaced on the approval event — the room sees what arrived — but the
+// record is evidence, and a statement about a third party filed under someone
+// else's approval reads as a claim nobody made.
+func (c *Client) writeApproverCredentials(proposalID string) {
+	c.mu.Lock()
+	captured := append([]capturedApproval(nil), c.artifactProofs[proposalID]...)
+	entries := c.chain.Entries()
+	c.mu.Unlock()
+
+	// A second approval in the same room would otherwise re-file credentials the
+	// chain already holds. Verification deduplicates bindings anyway, so this is
+	// about the evidence reading cleanly rather than about correctness.
+	placed := map[string]bool{}
+	for _, e := range entries {
+		if !record.IsIdentityEntry(e) {
+			continue
+		}
+		if a, err := attest.ParseIdentity([]byte(e.Body)); err == nil {
+			placed[a.Subject+"\x00"+a.Serial] = true
+		}
+	}
+
+	for _, ca := range captured {
+		if len(ca.att) == 0 {
+			continue
+		}
+		att, err := attest.ParseIdentity(ca.att)
+		if err != nil || att.Subject != ca.fpr {
+			continue
+		}
+		key := att.Subject + "\x00" + att.Serial
+		if placed[key] {
+			continue
+		}
+		placed[key] = true
+		if err := c.AttestIdentity(att); err != nil {
+			c.emit(EvError{Err: fmt.Errorf("artifact: carry %s's attestation into the record: %w", ca.fpr, err)})
+		}
 	}
 }
 

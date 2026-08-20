@@ -21,7 +21,11 @@ import (
 // the canonical "vanishes in 4 hours" war-room example.
 const defaultBreakGlassTTL = 4 * time.Hour
 
-func buildCommands() *command.Set {
+// buildCommands registers every slash command. It takes the Model because one
+// completer — the approval role — offers values that live on the active room's
+// client rather than in this package: the roles an issuer signed into the
+// operator's own credential.
+func buildCommands(m *Model) *command.Set {
 	return command.New(
 		command.Command{Name: "help", Help: "list commands"},
 		command.Command{Name: "theme", Args: "<name>", Help: "switch color theme",
@@ -60,7 +64,8 @@ func buildCommands() *command.Set {
 		command.Command{Name: "action", Args: "@handle <text>", Help: "record an action item assigned to someone"},
 		command.Command{Name: "mark", Help: "promote the most recent message into the record as a note"},
 		command.Command{Name: "propose", Args: "--source <agent> --ref <ref> --hash <sha256> [--summary <line>]", Help: "propose an agent-produced artifact for human approval (NC-W1)"},
-		command.Command{Name: "approve-artifact", Args: "<proposal-id>", Help: "approve a pending artifact proposal (an agent can never self-approve)"},
+		command.Command{Name: "approve-artifact", Args: "<proposal-id> [role]", Help: "approve a pending artifact proposal (an agent can never self-approve); role is one your attestation names",
+			Complete: m.approvalRoleCompletions},
 		command.Command{Name: "reject-artifact", Args: "<proposal-id> [reason]", Help: "reject a pending artifact proposal; no record entry is written"},
 		command.Command{Name: "seal", Args: "[meaning]", Help: "seal the record: collect signatures, write record.json + minutes.md; optional meaning (authored|reviewed|approved|rejected) is signed in",
 			Complete: func(p string) []string {
@@ -896,19 +901,39 @@ func (m *Model) runPropose(r *room, arg string) {
 	}
 }
 
-// runApproveArtifact implements /approve-artifact <id> (NC-W1).
+// runApproveArtifact implements /approve-artifact <id> [role] (NC-W1).
+//
+// The role is optional at this surface and stays optional: an operator carrying
+// no attestation, or one naming a single role, never types it. It is asked for
+// only when the credential names more than one — and the asking is the client's
+// error, quoted verbatim, because the client is what holds the signed set.
 func (m *Model) runApproveArtifact(r *room, arg string) {
 	if !m.connected(r) {
 		return
 	}
-	id := strings.TrimSpace(arg)
-	if id == "" {
-		m.addError("usage: /approve-artifact <proposal-id>   (see the proposal notice)")
+	fields := strings.Fields(arg)
+	if len(fields) == 0 {
+		m.addError("usage: /approve-artifact <proposal-id> [role]   (see the proposal notice)")
 		return
 	}
-	if err := r.client.ApproveArtifact(id); err != nil {
+	id, role := fields[0], ""
+	if len(fields) > 1 {
+		role = strings.Join(fields[1:], " ")
+	}
+	if err := r.client.ApproveArtifact(id, role); err != nil {
 		m.addError(err.Error())
 	}
+}
+
+// approvalRoleCompletions offers the roles the active room's credential names,
+// so an operator who has to choose picks from the signed set rather than typing
+// into it. Empty when no credential is carried, which is most rooms.
+func (m *Model) approvalRoleCompletions(partial string) []string {
+	r := m.activeRoom()
+	if r == nil || r.client == nil {
+		return nil
+	}
+	return command.FilterPrefix(r.client.IdentityRoles(), partial)
 }
 
 // runRejectArtifact implements /reject-artifact <id> [reason] (NC-W1).

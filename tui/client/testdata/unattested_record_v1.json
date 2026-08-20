@@ -1,0 +1,35 @@
+{
+  "netherchat_record": "v2",
+  "room": "ops",
+  "sealed_at": "2026-08-20T02:24:34Z",
+  "sealed_by": "SHA256:H7CD+AHjKcPm+lurdKJHpfnOBbuQ/rfvzpN9iCnOkNk",
+  "entries": [
+    {
+      "seq": 0,
+      "ts": 1787192674,
+      "author_id": "SHA256:H7CD+AHjKcPm+lurdKJHpfnOBbuQ/rfvzpN9iCnOkNk",
+      "author_name": "alice",
+      "author_key": "J9o+p2jESC5jYlXdp8XlXHgGDfJHvGiRKf+MFNlxtzE=",
+      "kind": "artifact",
+      "body": "{\"source\":\"requirements-agent\",\"artifact_ref\":\"Q3-requirements\",\"artifact_hash\":\"fd6973ae5e22b44216af290f445de35f2634843d605895319c6e9e7dbf6537a2\",\"approver_fpr\":\"SHA256:H7CD+AHjKcPm+lurdKJHpfnOBbuQ/rfvzpN9iCnOkNk\",\"proposed_at\":\"2026-08-20T02:24:34Z\",\"approved_at\":\"2026-08-20T02:24:34Z\",\"proposal_id\":\"af620f04c3cd152c\",\"nonce\":\"ec73b94a2c84b2e8\",\"proposer_fpr\":\"SHA256:D1sphZEC0J8RLBV+ELfSKBcdCJFqmt6ylHHKAq7yMsc\"}",
+      "prev_hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "sig": "6QTaoCuuBJ6sqia+IEqRgbL6HzdHFsS+FhJ/skQqeAXdUh+1uJsPwAu2pxdvDohuyq9SLAAscRCVRPLIadXuAQ=="
+    }
+  ],
+  "head_hash": "fd8af5ca8190c4daaf1cb4f56cd5fd1b226efb8d035995540ac96553a3aac795",
+  "signatures": {
+    "SHA256:H7CD+AHjKcPm+lurdKJHpfnOBbuQ/rfvzpN9iCnOkNk": "l++3q6WwntLe9HOOzt5nrK3wrD38HtQXPRmN1XIGcKlBDt3FB3PDWIWXJRq12TisN7sTC1dFc7KXvXkBPA/JDw=="
+  },
+  "signer_keys": {
+    "SHA256:H7CD+AHjKcPm+lurdKJHpfnOBbuQ/rfvzpN9iCnOkNk": "J9o+p2jESC5jYlXdp8XlXHgGDfJHvGiRKf+MFNlxtzE="
+  },
+  "artifact_approvals": {
+    "af620f04c3cd152c": [
+      {
+        "approver_fpr": "SHA256:H7CD+AHjKcPm+lurdKJHpfnOBbuQ/rfvzpN9iCnOkNk",
+        "approver_key": "J9o+p2jESC5jYlXdp8XlXHgGDfJHvGiRKf+MFNlxtzE=",
+        "sig": "l8rO/f16Z2L+dhNlMNZLKpxejRIYH1224jbsEMXCJ3d8SQ0oEPMTPFfpbnue5JdTl3Ef7zbtTJKGNPzoNJQ1Bw=="
+      }
+    ]
+  }
+}

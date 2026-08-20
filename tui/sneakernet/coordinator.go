@@ -245,9 +245,19 @@ func (co *Coordinator) route(fromID string, env protocol.Envelope) {
 		protocol.OpRecordEntry, protocol.OpSealRequest, protocol.OpSealAck,
 		protocol.OpRosterRequest, protocol.OpRosterAck,
 		protocol.OpScuttleReceiptRequest, protocol.OpScuttleReceiptAck,
-		protocol.OpActionRequest, protocol.OpActionApproval, protocol.OpActionVeto:
+		protocol.OpActionRequest, protocol.OpActionApproval, protocol.OpActionVeto,
+		protocol.OpArtifactProposal, protocol.OpArtifactApproval, protocol.OpArtifactRejection:
 		// Opaque, sealed, Ed25519-signed Message envelopes: stamp the authenticated
 		// sender and fan out — identical to the relay, content never inspected.
+		//
+		// The three Agent-Decision Attestation ops (NC-W1) belong in this arm and
+		// were missing from it: they fell through to the default below, so pair mode
+		// carried no artifact approvals at all while every other coordination
+		// primitive crossed. Nothing about them needs a relay — they are the same
+		// shape as the Two-Person Rule frames beside them, and the relay's own
+		// fan-out arm has listed all three since they existed. The mode this
+		// coordinator serves is the one interop-live cannot reach, because
+		// interop-live runs a relay.
 		var m protocol.Message
 		if env.Decode(&m) != nil {
 			return

@@ -281,7 +281,7 @@ func TestAmendPreservesArtifactProofs(t *testing.T) {
 		t.Fatalf("propose: %v", err)
 	}
 	waitFor[EvArtifactProposed](t, alice, 5*time.Second)
-	if err := alice.ApproveArtifact(id); err != nil {
+	if err := alice.ApproveArtifact(id, ""); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	// The single approval reaches quorum: alice writes the artifact entry, and the
