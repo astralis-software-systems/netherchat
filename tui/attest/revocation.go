@@ -13,7 +13,7 @@ import (
 	"github.com/salehkreiner/netherchat/tui/internal/crypto"
 )
 
-// This file holds the revocation half of identity/v1: an issuer-signed statement
+// This file holds the revocation half of the identity layer: an issuer-signed statement
 // naming the serials it has withdrawn. Serial is the unit of revocation for a
 // reason — withdrawing a binding by naming the SUBJECT key would also withdraw
 // every other statement about that key, including a later, corrected one.

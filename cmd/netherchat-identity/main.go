@@ -1,10 +1,10 @@
 // Command netherchat-identity is the ISSUER-side tool for Netherchat's
-// identity/v1 attestations: it mints an issuing key, signs bindings of a key
+// identity/v2 attestations: it mints an issuing key, signs bindings of a key
 // fingerprint to a principal and roles, and signs revocation statements.
 //
 //	netherchat-identity keygen [--out <path>]
 //	netherchat-identity show   [--key <path>]
-//	netherchat-identity issue  --subject SHA256:… --principal alice@acme.example --type person --role qa
+//	netherchat-identity issue  --subject SHA256:… --principal alice@acme.example --display-name "Alice Reyes" --type person --role qa
 //	netherchat-identity revoke --statement-id acme-2026-08-19 --number 42 --serial <serial>
 //
 // # WHY THIS IS A SEPARATE BINARY
@@ -82,13 +82,14 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `netherchat-identity — issue and revoke identity/v1 attestations
+	fmt.Fprint(os.Stderr, `netherchat-identity — issue and revoke identity/v2 attestations
 
 usage:
   netherchat-identity keygen [--out <path>]        mint an issuing key (and its .pub)
   netherchat-identity show   [--key <path>]        print the issuer fingerprint to publish
   netherchat-identity issue  --subject <SHA256:…> --principal <id> --type <person|service|agent>
-                             --role <r> [--role <r>] [--valid 90d] [--out identity.json]
+                             --role <r> [--role <r>] [--display-name <name>] [--valid 90d]
+                             [--out identity.json]
   netherchat-identity revoke --statement-id <id> --number <n> --serial <s> [--serial <s>]
                              [--reason <text>] [--next-update 30d] [--out revocation.json]
 
@@ -241,6 +242,7 @@ func issueCmd(args []string) {
 	key := fs.String("key", "", "issuing key file (default: the per-user issuer directory)")
 	subject := fs.String("subject", "", "SHA256:… fingerprint of the subject's identity key (required)")
 	principal := fs.String("principal", "", "the identifier being bound: a UPN, an email, an employee id (required)")
+	displayName := fs.String("display-name", "", "the name this principal is known by, as a directory would show it (optional; signed either way)")
 	ptype := fs.String("type", "person", "principal type: person | service | agent (opaque; the library compares it to nothing)")
 	valid := fs.String("valid", "90d", "validity window from now: 90d, 12w, 720h")
 	serial := fs.String("serial", "", "issuer-unique id for this statement, the unit of revocation (default: generated)")
@@ -249,7 +251,7 @@ func issueCmd(args []string) {
 	var roles roleList
 	fs.Var(&roles, "role", "a role the issuer asserts for this principal (repeatable)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: netherchat-identity issue --subject SHA256:… --principal <id> --type person --role <r> [--valid 90d]")
+		fmt.Fprintln(os.Stderr, "usage: netherchat-identity issue --subject SHA256:… --principal <id> --type person --role <r> [--display-name <name>] [--valid 90d]")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
@@ -275,10 +277,19 @@ func issueCmd(args []string) {
 		sn = generateSerial()
 	}
 
+	// --display-name is optional and the tool does not invent one when it is
+	// omitted: an empty display name is this authority stating that it asserts no
+	// name, which is a different thing from asserting the principal as a name. It
+	// is signed either way — the preimage writes the field whether or not it is
+	// set — and it is passed through untouched, not trimmed and not case-folded,
+	// because a role is treated that way for the same reason and a name is more
+	// load-bearing than a role. What a consumer does when it is absent is the
+	// consumer's decision; this tool only records what the issuer said.
 	spec := sealedrecord.IdentitySpec{
 		Serial:        sn,
 		Subject:       *subject,
 		Principal:     *principal,
+		DisplayName:   *displayName,
 		PrincipalType: *ptype,
 		Roles:         roles,
 		ExpiresAt:     time.Now().UTC().Add(lifetime).Format(time.RFC3339),
@@ -304,8 +315,17 @@ func issueCmd(args []string) {
 		fatal(err)
 	}
 	fmt.Printf("issued %s\n", *out)
-	fmt.Printf("  serial:    %s\n  subject:   %s\n  principal: %s (%s)\n  roles:     %s\n",
-		att.Serial, att.Subject, att.Principal, att.PrincipalType, strings.Join(att.Roles, ", "))
+	fmt.Printf("  serial:    %s\n  subject:   %s\n  principal: %s (%s)\n",
+		att.Serial, att.Subject, att.Principal, att.PrincipalType)
+	// The display-name line is printed whether or not there is one. An absence an
+	// operator can see is a choice; an absence they cannot see is a surprise later,
+	// when a screen shows a UPN where a name was expected.
+	if att.DisplayName != "" {
+		fmt.Printf("  display:   %s\n", att.DisplayName)
+	} else {
+		fmt.Printf("  display:   (none — pass --display-name to sign one; consumers show the principal without it)\n")
+	}
+	fmt.Printf("  roles:     %s\n", strings.Join(att.Roles, ", "))
 	fmt.Printf("  window:    %s .. %s\n  issuer:    %s\n", att.IssuedAt, att.ExpiresAt, att.Issuer)
 	fmt.Print("\nThis file grants nothing. It is a statement ABOUT a key, and only the holder of\n" +
 		"that key can act as the subject, so it is safe to copy anywhere.\n")

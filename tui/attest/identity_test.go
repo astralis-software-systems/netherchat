@@ -381,7 +381,10 @@ func TestVerifyIdentityStructuralReasons(t *testing.T) {
 		reason IdentityReason
 		class  IdentityReasonClass
 	}{
-		{"version", func(a *IdentityAttestation) { a.Version = "v2" }, ReasonUnsupportedVersion, ClassMalformed},
+		// A version this build does not know. It was "v2" until Phase 2.5 made v2
+		// the current one; the PRIOR-version case now has its own test, with a real
+		// v1 signature over the real v1 preimage rather than a relabelled artifact.
+		{"version", func(a *IdentityAttestation) { a.Version = "v3" }, ReasonUnsupportedVersion, ClassMalformed},
 		{"algorithm", func(a *IdentityAttestation) { a.Algorithm = "p256" }, ReasonUnsupportedAlgorithm, ClassMalformed},
 		{"serial", func(a *IdentityAttestation) { a.Serial = "" }, ReasonMalformedSerial, ClassMalformed},
 		{"subject empty", func(a *IdentityAttestation) { a.Subject = "" }, ReasonMalformedSubject, ClassMalformed},
@@ -482,8 +485,8 @@ func TestParseIdentityRejectsUnknownAndTrailing(t *testing.T) {
 // verifier reconstructs.
 func TestIdentitySigningBytesWrapperDelegates(t *testing.T) {
 	is := newIssuer(t)
-	a := makeIdentity(t, is)
-	want := protocol.IdentitySigningBytes(a.Serial, a.Subject, a.Principal, a.PrincipalType,
+	a := makeNamedIdentity(t, is, "Rosa Alvarez") // named, so the display name is part of what delegates
+	want := protocol.IdentitySigningBytes(a.Serial, a.Subject, a.Principal, a.DisplayName, a.PrincipalType,
 		a.Roles, a.IssuedAt, a.ExpiresAt, a.Algorithm, a.Issuer)
 	if !bytes.Equal(IdentitySigningBytes(a), want) {
 		t.Fatal("the attest wrapper must produce exactly the protocol layout")

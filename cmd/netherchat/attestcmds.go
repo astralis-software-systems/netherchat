@@ -31,7 +31,7 @@ func verifyArtifact(path string, jsonMode bool, ident identityVerifyOpts) int {
 	kind := detectArtifact(b)
 	if (kind == "roster" || kind == "receipt") && ident.pinned() {
 		output.WriteError(jsonMode, fmt.Errorf(
-			"--issuer does not apply to a %s attestation: it carries no identity/v1 content, so a pinned issuer would check nothing", kind))
+			"--issuer does not apply to a %s attestation: it carries no identity content, so a pinned issuer would check nothing", kind))
 		return 2
 	}
 	switch kind {

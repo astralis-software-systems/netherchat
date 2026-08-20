@@ -6,17 +6,18 @@ import (
 )
 
 // IdentitySigningBytes returns the canonical, unambiguous byte sequence an
-// identity attestation's issuer signature covers (identity/v1): an authority
-// stating "this key fingerprint belongs to this principal, in these roles,
-// between these times." As with every other layout in this package, the bytes
-// are fixed here so the issuer and every verifier — including an offline
-// `netherchat verify` that was never in the room, and a reader opening a sealed
-// record years later — derive them identically.
+// identity attestation's issuer signature covers (identity/v2): an authority
+// stating "this key fingerprint belongs to this principal, who is known by this
+// name, in these roles, between these times." As with every other layout in this
+// package, the bytes are fixed here so the issuer and every verifier — including
+// an offline `netherchat verify` that was never in the room, and a reader opening
+// a sealed record years later — derive them identically.
 //
-// Layout (identity v1):
+// Layout (identity v2):
 //
-//	field("netherchat/identity/v1")
-//	  || field(serial) || field(subject) || field(principal) || field(principalType)
+//	field("netherchat/identity/v2")
+//	  || field(serial) || field(subject)
+//	  || field(principal) || field(displayName) || field(principalType)
 //	  || nroles_be64 || { field(role[i]) } for each role, in the order the artifact lists them
 //	  || field(issuedAt) || field(expiresAt)
 //	  || field(algorithm) || field(issuer)
@@ -26,6 +27,23 @@ import (
 // in RecordSigningBytesV2. Every variable field is length-prefixed, so the
 // encoding is injective; the count is signed too, so a role can be neither added
 // nor dropped without breaking the signature.
+//
+// displayName is the name a directory would show for this principal, and it sits
+// beside principal because that is what it is: the human-facing half of the same
+// identifier. An issuer may leave it out. It does not thereby leave the
+// signature — the field is written unconditionally, so the layout has a fixed
+// shape and the NUMBER of fields never depends on the data. An absent display
+// name and an empty one are ONE state, and it signs as field(""), eight zero
+// bytes, exactly as field(nextUpdate) does for an omitted next_update in
+// RevocationSigningBytes below. Making them one state is what keeps them from
+// being confusable: there is a single encoding for "this issuer named no display
+// name", so no artifact can be re-spelled into a different preimage.
+//
+// displayName is signed as the bytes the issuer wrote and is never trimmed,
+// case-folded, or normalized here — the same rule roles follow, for the same
+// reason. Normalizing would silently change what a signature means, and a
+// consumer matching or displaying the value would be looking at something no
+// authority ever signed.
 //
 // Role ORDER is signed and never normalized here. The constructor sorts once
 // (attest.NewIdentityAttestation, as NewRoster sorts members); verification emits
@@ -39,7 +57,12 @@ import (
 //
 // The version is not a field: it lives in the domain-separation tag, which is the
 // convention every layout here follows, and a verifier rejects an unrecognized
-// version before it ever builds a preimage.
+// version before it ever builds a preimage. The tag reads v2 because this layout
+// changed: v1 had no display name, so an artifact signed under it derives
+// different bytes here and its signature will not verify. That is a breaking
+// change, and the tag moving is how a v1 artifact is told apart from a forged v2
+// one — the verifier stops at the version and says so, instead of reaching a
+// signature check it was always going to fail.
 //
 // The layout binds no room and no record. An identity binding is the same
 // statement in every room, so scoping it to one would mean re-issuing per room;
@@ -51,13 +74,14 @@ import (
 // cannot be steered onto a different verification path by relabelling the file,
 // and the issuer is inside it so an attestation cannot be re-attributed to
 // another authority while keeping a signature that still verifies.
-func IdentitySigningBytes(serial, subject, principal, principalType string, roles []string,
+func IdentitySigningBytes(serial, subject, principal, displayName, principalType string, roles []string,
 	issuedAt, expiresAt, algorithm, issuer string) []byte {
 	var buf bytes.Buffer
-	writeField(&buf, []byte("netherchat/identity/v1")) // domain-separation tag
+	writeField(&buf, []byte("netherchat/identity/v2")) // domain-separation tag
 	writeField(&buf, []byte(serial))
 	writeField(&buf, []byte(subject))
 	writeField(&buf, []byte(principal))
+	writeField(&buf, []byte(displayName))
 	writeField(&buf, []byte(principalType))
 	var n [8]byte
 	binary.BigEndian.PutUint64(n[:], uint64(len(roles)))

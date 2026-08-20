@@ -8,7 +8,7 @@ import (
 	"github.com/salehkreiner/netherchat/tui/attest"
 )
 
-// This file carries identity/v1 attestations inside a sealed record, and
+// This file carries identity attestations inside a sealed record, and
 // surfaces what verified.
 //
 // An attestation travels as ONE ORDINARY TYPED ENTRY per attestation: Kind
@@ -81,7 +81,7 @@ func IdentityEntrySpec(att *attest.IdentityAttestation) (EntrySpec, error) {
 	return EntrySpec{Kind: KindTyped, Schema: attest.IdentitySchema, Body: string(body)}, nil
 }
 
-// IsIdentityEntry reports whether an entry carries an identity/v1 attestation.
+// IsIdentityEntry reports whether an entry carries an identity attestation.
 // It is the one place the schema tag is compared, so a consumer walking a chain
 // does not have to hold the string.
 func IsIdentityEntry(e Entry) bool {
@@ -108,9 +108,16 @@ func IsIdentityEntry(e Entry) bool {
 // caller's pinned keys actually verified a signature. Requiring them to be the
 // same would break issuer key rotation, which is what the plural signature maps
 // exist for. A consumer that cares compares them itself.
+// DisplayName is the name an issuer signed for this principal, and it is empty
+// when the issuer signed none. It is carried here so a consumer can render the
+// name a person is known by instead of the identifier a directory files them
+// under; Principal stays, because it is the identifier, and two people with one
+// name are still two people. What a surface does with the pair is that surface's
+// decision, not this struct's.
 type VerifiedIdentity struct {
 	Subject       string   `json:"subject"`
 	Principal     string   `json:"principal"`
+	DisplayName   string   `json:"display_name,omitempty"`
 	PrincipalType string   `json:"principal_type"`
 	Roles         []string `json:"roles"`
 	Issuer        string   `json:"issuer"`
@@ -249,6 +256,7 @@ func VerifyWithIdentity(r *SealedRecord, opts attest.IdentityOptions) (*VerifyRe
 		bindings[ires.Subject] = append(bindings[ires.Subject], VerifiedIdentity{
 			Subject:       ires.Subject,
 			Principal:     ires.Principal,
+			DisplayName:   ires.DisplayName,
 			PrincipalType: ires.PrincipalType,
 			Roles:         append([]string(nil), ires.Roles...),
 			Issuer:        ires.Issuer,

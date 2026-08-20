@@ -1,5 +1,5 @@
 // Structural guards for the two Netherchat-side seam rules that govern the
-// identity/v1 layer (roadmap §6 rules 1 and 2; identity spec §9.4). They sit
+// identity layer (roadmap §6 rules 1 and 2; identity spec §9.4). They sit
 // beside the blind-relay boundary guard and the relay egress guard because they
 // are the same kind of check: a property the documents assert, made mechanical.
 //
@@ -61,7 +61,7 @@ import (
 // identitySeamGuardFile is named in failure messages so the fix is one click away.
 const identitySeamGuardFile = "tui/e2e/identity_seam_test.go"
 
-// identitySymbols is the identity/v1 surface, by name. A file declaring any of
+// identitySymbols is the identity layer surface, by name. A file declaring any of
 // these — top-level, or as a struct field — is in scope for both guards below.
 //
 // The three the roadmap names explicitly (IdentityBindings, VerifiedIdentity,
@@ -267,7 +267,7 @@ func declaredNames(af *ast.File) map[string]bool {
 func TestIdentitySymbolsAreLive(t *testing.T) {
 	files, found := identityScope(t)
 	if len(files) == 0 {
-		t.Fatal("no file in the module declares any identity/v1 symbol; the seam guards are inspecting nothing")
+		t.Fatal("no file in the module declares any identity-layer symbol; the seam guards are inspecting nothing")
 	}
 	var missing []string
 	for _, s := range identitySymbols {
@@ -449,7 +449,7 @@ func TestIdentityLayerHasNoSufficiencyVocabulary(t *testing.T) {
 
 	if len(findings) > 0 {
 		sort.Strings(findings)
-		t.Fatalf("the identity/v1 layer uses sufficiency vocabulary in %d place(s):\n  %s\n\n"+
+		t.Fatalf("the identity layer uses sufficiency vocabulary in %d place(s):\n  %s\n\n"+
 			"Roadmap §6 seam rule 2: Netherchat's identity layer says what an issuer signed and\n"+
 			"what verified against a caller-supplied key. It does not say what that is enough for —\n"+
 			"that sentence belongs to the consumer. A denial reads fine (\"it never decides what a\n"+
@@ -532,7 +532,7 @@ func TestIdentityLayerHoldsNoTrustAnchors(t *testing.T) {
 
 	if len(findings) > 0 {
 		sort.Strings(findings)
-		t.Fatalf("the identity/v1 library holds or reads a trust anchor in %d place(s):\n  %s\n\n"+
+		t.Fatalf("the identity library holds or reads a trust anchor in %d place(s):\n  %s\n\n"+
 			"Roadmap §6 seam rule 1: issuer keys are parameters, never configuration. Netherchat\n"+
 			"reads no issuer file, has no issuer flag on connect, and ships no default key. A tool\n"+
 			"under cmd/ may take a key path from an operator; the library may not go looking.\n"+

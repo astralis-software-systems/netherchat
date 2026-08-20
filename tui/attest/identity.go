@@ -15,9 +15,10 @@ import (
 	"github.com/salehkreiner/netherchat/tui/internal/crypto"
 )
 
-// This file holds identity/v1: an issuer-signed, offline-verifiable statement
-// binding a key fingerprint to a principal and a set of roles, for a stated
-// window of time. It is the third trust mechanism in Netherchat and replaces
+// This file holds identity/v2: an issuer-signed, offline-verifiable statement
+// binding a key fingerprint to a principal, the name that principal is known by,
+// and a set of roles, for a stated window of time. It is the third trust
+// mechanism in Netherchat and replaces
 // neither of the other two — SAS peer verification answers "is this key the
 // human I already know?" from the operator's own side channel, and the roster
 // attestation answers "who held the room key at this epoch" while deliberately
@@ -36,7 +37,23 @@ import (
 // change. It doubles as the artifact-type discriminator: the JSON key
 // netherchat_identity is what a verifier sniffs to tell this file from a record,
 // a roster, or a receipt.
-const IdentityVersion = "v1"
+//
+// It reads v2 because adding display_name changed the bytes an issuer signs, and
+// that is the definition of a breaking change this contract was written against.
+// The alternative was to leave it at v1 on the grounds that the only v1
+// attestations in existence were disposable — which is an argument about what the
+// bump COSTS, not about what the version MEANS. What it means is visible in the
+// outcome: under v2 a v1 artifact stops here with unsupported_version, class
+// malformed, and an operator is told to replace the file; under a silent change
+// it would have travelled to the signature check and come back signature_invalid,
+// class forged, which is the format's word for an attack. A credential the
+// authority really issued must never be reported as one.
+//
+// The version lives in two places for two jobs and they move together: this value
+// is what the FILE says, and protocol's domain-separation tag is where the
+// version lives in the BYTES. A build that recognized one and not the other would
+// derive a preimage under a tag the artifact never claimed.
+const IdentityVersion = "v2"
 
 // AlgorithmEd25519 is the only signature algorithm this version verifies. It is
 // inside the signing preimage, so an attestation cannot be relabelled to steer a
@@ -45,6 +62,16 @@ const AlgorithmEd25519 = "ed25519"
 
 // IdentitySchema is the opaque record.Entry.Schema tag of an embedded
 // attestation entry — the exact string, and part of the entry's signed bytes.
+//
+// It stays at v1 while the artifact moved to v2, deliberately. This tag answers
+// one question — does this entry body carry an identity attestation — and that
+// answer did not change; the body's own netherchat_identity answers which
+// version, and one version marker means two markers can never disagree. Moving
+// this one as well would make an entry written before the change invisible to
+// IsIdentityEntry: skipped by the walk, reported by nothing, and so
+// indistinguishable from a record that never carried a credential at all. A v1
+// body found under this tag is parsed and comes back as unsupported_version,
+// which is the outcome somebody can act on.
 const IdentitySchema = "netherchat.identity/v1"
 
 // fingerprintPrefix and fingerprintBodyLen describe the SSH SHA-256 fingerprint
@@ -58,8 +85,8 @@ const (
 )
 
 // IdentityAttestation is an issuer's signed statement about one key (identity
-// v1): this fingerprint belongs to this principal, in these roles, between these
-// times.
+// v2): this fingerprint belongs to this principal, who is known by this name, in
+// these roles, between these times.
 //
 // Signatures and SignerKeys are both keyed by ISSUER fingerprint and do two
 // different jobs. Signatures is what gets checked. SignerKeys is what makes the
@@ -75,19 +102,34 @@ const (
 // issuance work: an attestation may carry the outgoing and the incoming
 // authority's signatures at once, and a verifier that has pinned either one is
 // satisfied.
+//
+// DISPLAY NAME AND PRINCIPAL ARE BOTH SIGNED, AND BOTH ARE THE ANSWER TO A
+// DIFFERENT QUESTION. A directory holds two names for a person: the identifier
+// that is unique and stable (userPrincipalName) and the name they are known by
+// (displayName). Principal is the first and DisplayName is the second. Both are
+// inside the issuer's signature, so a consumer may render the name a human reads
+// without falling back to a string the sender chose for themselves — and two
+// people called Jonathan Doe stay distinct, because Principal is still the
+// identifier and is still there.
+//
+// DisplayName is optional: an issuer that has no name to assert leaves it out.
+// Leaving it out does not take it out of the signature. The preimage writes the
+// field unconditionally, an absent display name and an empty one are one state,
+// and that state signs as eight zero bytes. See protocol.IdentitySigningBytes.
 type IdentityAttestation struct {
-	Version       string            `json:"netherchat_identity"` // IdentityVersion ("v1")
-	Serial        string            `json:"serial"`              // issuer-unique id for THIS statement; the unit of revocation
-	Subject       string            `json:"subject"`             // "SHA256:…" fingerprint of the subject's Ed25519 identity key
-	Principal     string            `json:"principal"`           // the enterprise-shaped identifier: a UPN, an email, an employee id
-	PrincipalType string            `json:"principal_type"`      // opaque; conventionally person | service | agent
-	Roles         []string          `json:"roles"`               // opaque role strings, byte-for-byte as the issuer wrote them
-	IssuedAt      string            `json:"issued_at"`           // RFC3339
-	ExpiresAt     string            `json:"expires_at"`          // RFC3339
-	Algorithm     string            `json:"algorithm"`           // AlgorithmEd25519
-	Issuer        string            `json:"issuer"`              // "SHA256:…" fingerprint of the issuing authority
-	Signatures    map[string]string `json:"signatures"`          // issuer fpr -> base64 Ed25519 sig over IdentitySigningBytes
-	SignerKeys    map[string]string `json:"signer_keys"`         // issuer fpr -> base64 Ed25519 public key
+	Version       string            `json:"netherchat_identity"`    // IdentityVersion ("v2")
+	Serial        string            `json:"serial"`                 // issuer-unique id for THIS statement; the unit of revocation
+	Subject       string            `json:"subject"`                // "SHA256:…" fingerprint of the subject's Ed25519 identity key
+	Principal     string            `json:"principal"`              // the enterprise-shaped identifier: a UPN, an email, an employee id
+	DisplayName   string            `json:"display_name,omitempty"` // the name a directory would show; optional, signed, byte-for-byte
+	PrincipalType string            `json:"principal_type"`         // opaque; conventionally person | service | agent
+	Roles         []string          `json:"roles"`                  // opaque role strings, byte-for-byte as the issuer wrote them
+	IssuedAt      string            `json:"issued_at"`              // RFC3339
+	ExpiresAt     string            `json:"expires_at"`             // RFC3339
+	Algorithm     string            `json:"algorithm"`              // AlgorithmEd25519
+	Issuer        string            `json:"issuer"`                 // "SHA256:…" fingerprint of the issuing authority
+	Signatures    map[string]string `json:"signatures"`             // issuer fpr -> base64 Ed25519 sig over IdentitySigningBytes
+	SignerKeys    map[string]string `json:"signer_keys"`            // issuer fpr -> base64 Ed25519 public key
 }
 
 // IdentitySpec is the unsigned input to NewIdentityAttestation: everything an
@@ -99,10 +141,13 @@ type IdentityAttestation struct {
 // else about them is touched: they are not trimmed, not case-folded, and not
 // checked against any vocabulary, because they are matched byte-for-byte
 // downstream and normalizing here would silently change what a signature means.
+// DisplayName follows the same rule for the same reason, and it may be left
+// empty — that is the issuer saying nothing, and it is signed as saying nothing.
 type IdentitySpec struct {
 	Serial        string
 	Subject       string
 	Principal     string
+	DisplayName   string // optional; the name a directory would show for this principal
 	PrincipalType string
 	Roles         []string
 	ExpiresAt     string // RFC3339; must not be empty — an unbounded binding can never be retired except by revocation
@@ -133,6 +178,7 @@ func NewIdentityAttestation(spec IdentitySpec, sigs, keys map[string][]byte) *Id
 		Serial:        spec.Serial,
 		Subject:       spec.Subject,
 		Principal:     spec.Principal,
+		DisplayName:   spec.DisplayName,
 		PrincipalType: spec.PrincipalType,
 		Roles:         roles,
 		IssuedAt:      nowRFC3339(),
@@ -167,7 +213,7 @@ func IdentitySigningBytes(a *IdentityAttestation) []byte {
 	if a == nil {
 		return nil
 	}
-	return protocol.IdentitySigningBytes(a.Serial, a.Subject, a.Principal, a.PrincipalType,
+	return protocol.IdentitySigningBytes(a.Serial, a.Subject, a.Principal, a.DisplayName, a.PrincipalType,
 		a.Roles, a.IssuedAt, a.ExpiresAt, a.Algorithm, a.Issuer)
 }
 
@@ -326,6 +372,7 @@ type IdentityResult struct {
 	Valid         bool                `json:"valid"`
 	Subject       string              `json:"subject"`
 	Principal     string              `json:"principal"`
+	DisplayName   string              `json:"display_name,omitempty"` // as the issuer wrote it; empty means the issuer named none
 	PrincipalType string              `json:"principal_type"`
 	Roles         []string            `json:"roles"`
 	Serial        string              `json:"serial"`
@@ -409,6 +456,7 @@ func VerifyIdentity(a *IdentityAttestation, opts IdentityOptions) (*IdentityResu
 	res := &IdentityResult{
 		Subject:       a.Subject,
 		Principal:     a.Principal,
+		DisplayName:   a.DisplayName,
 		PrincipalType: a.PrincipalType,
 		Roles:         append([]string(nil), a.Roles...),
 		Serial:        a.Serial,
@@ -444,6 +492,12 @@ func VerifyIdentity(a *IdentityAttestation, opts IdentityOptions) (*IdentityResu
 	if a.PrincipalType == "" {
 		return fail(res, ReasonMalformedPrincipalType, "principal_type must not be empty"), nil
 	}
+	// display_name is checked for nothing, and that is the decision rather than an
+	// omission. An empty one is the issuer naming no name, which is legal; a padded
+	// or oddly-cased one is what the issuer signed, and this package does not
+	// second-guess signed bytes any more than it does for roles. There is no
+	// malformed_display_name code, because a code no input can produce is a guard
+	// that has never failed.
 	if detail := rolesProblem(a.Roles); detail != "" {
 		return fail(res, ReasonMalformedRoles, detail), nil
 	}

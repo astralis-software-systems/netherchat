@@ -3,7 +3,13 @@
 # release CDNs (jsDelivr mirrors of the upstream GitHub releases). Run once.
 set -eu
 
-DEST="$(CDPATH= cd -- "$(dirname -- "$0")/../public/fonts" && pwd)"
+# Create the directory BEFORE resolving it. On a fresh checkout web/public/fonts
+# does not exist — that is the whole state this script is here to fix — so cd-ing
+# into it first made the script fail on line 1 of its job, on exactly the machine
+# that needed it. The .ps1 alongside always got this right (New-Item -Force), which
+# is why the gap survived unnoticed on Windows.
+WEB="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+DEST="$WEB/public/fonts"
 mkdir -p "$DEST"
 
 get() {

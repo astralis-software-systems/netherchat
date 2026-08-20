@@ -28,7 +28,7 @@ import (
 // whoever reads the record later, and this process has neither; and a carrier
 // that refused to carry a credential because the CARRIER had pinned no issuer
 // would make the evidence depend on the producer's configuration. Parsing is a
-// structural check — is this an identity/v1 artifact at all — not a verdict, and
+// structural check — is this an identity artifact at all — not a verdict, and
 // the output says so in as many words.
 //
 // The entries have to be in the chain before /seal. A record is sealed over its
@@ -81,8 +81,15 @@ func attestCmd(args []string) {
 		if err := c.AttestIdentity(a); err != nil {
 			fatal(fmt.Errorf("%s: %w", files[i], err))
 		}
+		// The principal is what identifies the binding, so it leads here; the signed
+		// name follows it when there is one. This line says what was CARRIED, not
+		// what verified, and the wording after it is what keeps those apart.
+		who := a.Principal
+		if a.DisplayName != "" {
+			who = fmt.Sprintf("%s (%s)", a.Principal, a.DisplayName)
+		}
 		fmt.Printf("carried attestation %s for %s (subject %s) — NOT verified here; a reader supplies the issuer key\n",
-			a.Serial, a.Principal, a.Subject)
+			a.Serial, who, a.Subject)
 	}
 	fmt.Printf("%d attestation(s) placed in the record for #%s — seal the record to make them evidence\n", len(atts), room0)
 	time.Sleep(*linger)
@@ -163,19 +170,20 @@ func verifyIdentityBytes(b []byte, jsonMode bool, opts identityVerifyOpts) int {
 	if !opts.pinned() {
 		if jsonMode {
 			_ = output.WriteJSON(struct {
-				Artifact  string   `json:"artifact"`
-				Checked   bool     `json:"checked"`
-				Reason    string   `json:"reason"`
-				Subject   string   `json:"subject"`
-				Principal string   `json:"principal"`
-				Roles     []string `json:"roles"`
-				NotBefore string   `json:"not_before"`
-				NotAfter  string   `json:"not_after"`
-				Issuer    string   `json:"issuer"`
-				SignedBy  []string `json:"signed_by"`
+				Artifact    string   `json:"artifact"`
+				Checked     bool     `json:"checked"`
+				Reason      string   `json:"reason"`
+				Subject     string   `json:"subject"`
+				Principal   string   `json:"principal"`
+				DisplayName string   `json:"display_name,omitempty"`
+				Roles       []string `json:"roles"`
+				NotBefore   string   `json:"not_before"`
+				NotAfter    string   `json:"not_after"`
+				Issuer      string   `json:"issuer"`
+				SignedBy    []string `json:"signed_by"`
 			}{
 				Artifact: "identity", Checked: false, Reason: "no_issuer_pinned",
-				Subject: a.Subject, Principal: a.Principal, Roles: a.Roles,
+				Subject: a.Subject, Principal: a.Principal, DisplayName: a.DisplayName, Roles: a.Roles,
 				NotBefore: a.IssuedAt, NotAfter: a.ExpiresAt,
 				Issuer: a.Issuer, SignedBy: sortedSigners(a),
 			})
@@ -183,8 +191,9 @@ func verifyIdentityBytes(b []byte, jsonMode bool, opts identityVerifyOpts) int {
 		}
 		output.WriteHuman("UNVERIFIED identity — no issuer key supplied (--issuer <file>)\n")
 		output.WriteHuman("  the fields below are what the FILE says, checked by nobody:\n")
-		output.WriteHuman("  subject: %s\n  principal: %s (%s)\n  roles: %s\n",
-			a.Subject, a.Principal, a.PrincipalType, strings.Join(a.Roles, ", "))
+		output.WriteHuman("  subject: %s\n  principal: %s (%s)\n", a.Subject, a.Principal, a.PrincipalType)
+		writeDisplayNameLine(a.DisplayName)
+		output.WriteHuman("  roles: %s\n", strings.Join(a.Roles, ", "))
 		output.WriteHuman("  window: %s .. %s\n  names issuer: %s\n", a.IssuedAt, a.ExpiresAt, a.Issuer)
 		for _, s := range sortedSigners(a) {
 			output.WriteHuman("  signed by: %s\n", s)
@@ -218,6 +227,7 @@ func verifyIdentityBytes(b []byte, jsonMode bool, opts identityVerifyOpts) int {
 		return 1
 	}
 	output.WriteHuman("VALID identity — %s (%s) as of %s\n", res.Principal, res.PrincipalType, res.EvaluatedAt)
+	writeDisplayNameLine(res.DisplayName)
 	output.WriteHuman("  subject: %s\n  roles: %s\n  window: %s .. %s\n",
 		res.Subject, strings.Join(res.Roles, ", "), res.NotBefore, res.NotAfter)
 	for _, s := range res.VerifiedBy {
@@ -227,6 +237,25 @@ func verifyIdentityBytes(b []byte, jsonMode bool, opts identityVerifyOpts) int {
 		output.WriteHuman("  note: %s\n", res.Detail)
 	}
 	return 0
+}
+
+// writeDisplayNameLine prints the issuer-signed display name, or nothing when
+// the issuer signed none.
+//
+// It is one function so the pinned and unpinned paths cannot drift, which is the
+// same lesson `resolve` was extracted for. Printing nothing rather than an empty
+// label is the only judgement here: a bare "display name:" would read as an
+// issuer having signed a blank name, which is not a thing that happened.
+//
+// This prints the field. It does NOT decide what the field is FOR. Which of the
+// two names leads, which one moves to a detail line, and what a surface does when
+// there is no signed name at all is one decision taken once across the TUI, the
+// browser client, and CipherSigil's Roster — not three times, and not here.
+func writeDisplayNameLine(display string) {
+	if display == "" {
+		return
+	}
+	output.WriteHuman("  display name: %s\n", display)
 }
 
 // sortedSigners lists the issuer fingerprints an artifact carries a signature

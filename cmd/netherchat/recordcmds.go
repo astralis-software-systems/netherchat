@@ -208,6 +208,13 @@ func writeIdentityBlock(res *record.VerifyResult, ev *identityEvaluation) {
 	for _, subject := range sortedBindingSubjects(res) {
 		for _, v := range res.IdentityBindings[subject] {
 			output.WriteHuman("    verified: %s (%s) — subject %s\n", v.Principal, v.PrincipalType, v.Subject)
+			// The signed display name, when the issuer signed one. Printed beside the
+			// principal rather than instead of it: this block is evidence about a
+			// record, and the identifier belongs in evidence. Which name a PERSON sees
+			// first is a rendering decision made once across three surfaces.
+			if v.DisplayName != "" {
+				output.WriteHuman("      display name: %s\n", v.DisplayName)
+			}
 			output.WriteHuman("      roles: %s\n      window: %s .. %s   serial: %s\n",
 				strings.Join(v.Roles, ", "), v.NotBefore, v.NotAfter, v.Serial)
 			for _, by := range v.VerifiedBy {
