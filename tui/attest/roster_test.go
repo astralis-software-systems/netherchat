@@ -71,7 +71,16 @@ func TestVerifyRosterValid(t *testing.T) {
 // listed members is rejected.
 func TestVerifyRosterTamperedSetHash(t *testing.T) {
 	r := makeRoster(t, "inc-3f9a", 3, 2)
-	r.SetHash = "00" + r.SetHash[2:] // corrupt the first byte
+	// Flip the first nibble rather than assign it: "00" + tail is not a change
+// when the hash already begins 00, which is 1 in 256 and made this test fail
+// 3 times in 2000. The sibling below gets this right with raw[0] ^= 0xff.
+flip := map[byte]byte{'0': '1'}
+first := r.SetHash[0]
+if to, ok := flip[first]; ok {
+r.SetHash = string(to) + r.SetHash[1:]
+} else {
+r.SetHash = "0" + r.SetHash[1:]
+}
 	res, err := VerifyRoster(r)
 	if err != nil {
 		t.Fatal(err)
