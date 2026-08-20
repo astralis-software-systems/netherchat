@@ -25,8 +25,8 @@ type TrustEntry struct {
 // @handle it shows that member's fingerprint and pin status, and (if a keys_url
 // is configured) kicks off a CLIENT-SIDE fetch to check the published keys.
 func (m *Model) runWhois(arg string) tea.Cmd {
-	handle := strings.TrimPrefix(strings.TrimSpace(arg), "@")
-	if handle == "" {
+	typed, _ := cutHandle(arg)
+	if typed == "" {
 		m.addSystem(m.whoisSelfText())
 		return nil
 	}
@@ -34,15 +34,22 @@ func (m *Model) runWhois(arg string) tea.Cmd {
 	if !m.connected(r) {
 		return nil
 	}
-	_, fpr, ok := r.client.LookupMember(handle)
-	if !ok {
-		m.addError("no member named @" + handle + " in this room")
+	// Either name gets here; only the wire handle leaves. The [[trust]] lookup
+	// below is keyed on it deliberately — an entry in the operator's own
+	// netherchat.toml must not be selected by a name an issuer chose.
+	mem, err := m.resolveHandle(r, typed)
+	if err != nil {
+		m.addError(err.Error())
 		return nil
 	}
+	handle, fpr := mem.name, mem.fpr
 	entry, has := m.trustFor(handle)
 
 	var b strings.Builder
 	b.WriteString("@" + handle + "\n")
+	if signed := mem.displayName(); signed != "" && signed != handle {
+		b.WriteString("  signed name: " + signed + "  (checked here; @" + handle + " is what you type)\n")
+	}
 	b.WriteString("  fingerprint: " + fpr + "\n")
 	b.WriteString("  pin:         " + pinStatus(entry, has, fpr))
 	if cred := m.whoisCredentialText(r, handle); cred != "" {

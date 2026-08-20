@@ -11,7 +11,7 @@ func TestRosterTextNoFile(t *testing.T) {
 	m := newModel("ws://localhost:3000", "me", "", "ops", "")
 	m.fingerprint = testFpr
 	r := m.activeRoom()
-	r.addMember("id1", "alice", "SHA256:aaaaaaaaaaaaaaaa")
+	m.admitMember(r, "id1", "alice", "SHA256:aaaaaaaaaaaaaaaa", nil, midWindow())
 
 	m.runRoster(r, "")
 

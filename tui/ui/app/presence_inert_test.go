@@ -1,10 +1,12 @@
 package app
 
 import (
+	"crypto/ed25519"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The presence surfaces, frozen twice.
@@ -114,4 +116,78 @@ func TestW1MovedOnlyTheMarks(t *testing.T) {
 
 func carriesAMark(s string) bool {
 	return strings.Contains(s, "✓") || strings.Contains(s, "unverified") || strings.Contains(s, "pinned")
+}
+
+// STANDALONE-INERT, RESTATED FOR D-L — AND IT IS NOW A STRONGER CLAIM.
+//
+// TestPresenceInertWithoutAttestation above compares the surfaces when nothing
+// is carried, which is the easy half: with no bytes on the wire there is nothing
+// for a verifier to be handed. The claim D-L has to make is the other one — a
+// room FULL of credentials, on a client that pinned no key, renders exactly what
+// it rendered before the pin existed. The verification path is compiled in, it
+// is reachable, and it stays dormant.
+//
+// testdata/presence_*_carried.txt was captured from a pristine `git archive
+// HEAD` extraction of 85a8ed5 — the post-3b, pre-D-L tree — by a throwaway
+// harness that was then deleted, so nothing this session did could have
+// contaminated it. It is a comparison against captured bytes; a test that
+// re-derives its own expectation cannot fail.
+//
+// The fixture is deterministic on purpose. A random issuer key would put a
+// different fingerprint in /whoami on every run, and a golden that has to be
+// regenerated to pass is not a golden.
+func carriedPresenceModel(t *testing.T, pin IssuerPin) (*Model, *room) {
+	t.Helper()
+	m := attributionModel(t)
+	m.usePin(pin)
+	r := m.activeRoom()
+	priv, pub, ifpr := issuerFixture(1)
+	nb, na := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	at := midWindow()
+
+	dave := signedBy(t, priv, pub, ifpr, inertFprDave, "svc-deploybot@acme.example", "", nb, na, "deployer")
+	m.admitMember(r, "id-d", "dave", inertFprDave, uiCredentialBytes(t, dave), at)
+	stolen := signedBy(t, priv, pub, ifpr, fprAlice, "ceo@acme.example", "Chief Executive", nb, na, "approver")
+	m.admitMember(r, "id-m", "mallory", inertFprMallory, uiCredentialBytes(t, stolen), at)
+	m.useCredential(signedBy(t, priv, pub, ifpr, m.fingerprint,
+		"rosa.alvarez@acme.example", "Rosa Alvarez", nb, na, "incident-commander"), at)
+	return m, r
+}
+
+const (
+	inertFprDave    = "SHA256:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"
+	inertFprMallory = "SHA256:MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
+)
+
+func TestPresenceInertWithCredentialsAndNoIssuerPinned(t *testing.T) {
+	m, r := carriedPresenceModel(t, IssuerPin{})
+	if m.pinnedIssuerKeys != nil {
+		t.Fatal("the inert fixture pinned a key; it is the unpinned case or it proves nothing")
+	}
+	for name, got := range map[string]string{
+		"presence_members_pane_carried": m.membersView(),
+		"presence_verifylist_carried":   m.verifyStatusText(),
+		"presence_whois_carried":        m.whoisCredentialText(r, "dave") + m.whoisCredentialText(r, "mallory"),
+		"presence_whoami_carried":       m.whoamiText(r),
+	} {
+		want := readGolden(t, name+".txt")
+		if got != want {
+			t.Errorf("%s moved on a client that pinned no issuer key. The pin path exists now and it "+
+				"is not staying out of the way.\n--- captured at 85a8ed5 (testdata/%s.txt) ---\n%s\n--- now ---\n%s",
+				name, name, want, got)
+		}
+	}
+}
+
+// The same model with a key pinned MUST move — otherwise the guard above is
+// measuring a surface that cannot change and is vacuous.
+func TestTheCarriedSurfacesDoMoveWhenAKeyIsPinned(t *testing.T) {
+	unpinned, _ := carriedPresenceModel(t, IssuerPin{})
+	before := unpinned.membersView()
+	_, pub, _ := issuerFixture(1)
+	pinned, _ := carriedPresenceModel(t, IssuerPin{Keys: []ed25519.PublicKey{pub}, Source: "acme-ca.pub"})
+	if after := pinned.membersView(); after == before {
+		t.Fatalf("pinning the issuer that signed every credential in the room changed nothing on "+
+			"screen; the inert guard beside this one is comparing a surface with no other state:\n%s", before)
+	}
 }

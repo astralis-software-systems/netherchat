@@ -84,29 +84,64 @@ func main() {
 	}
 }
 
-func connectCmd(args []string) {
+// connectUsageLine is the one-line synopsis, hoisted out of fs.Usage so a test
+// can assert that a flag which works is also a flag an operator can find.
+const connectUsageLine = "usage: netherchat connect [ws://host:port] [--room <name>] [--name <you>] " +
+	"[--identity <path>] [--attestation <identity.json>] [--issuer <file>] [--invite <token>] " +
+	"[--tor [--tor-proxy 127.0.0.1:9050]] [--web-url <url>] [--config <toml>] [--notify <cmd>]"
+
+// connectFlags is one parsed `connect` command line.
+type connectFlags struct {
+	room, name, identity, notify, invite, webURL, configPath string
+	attestation, issuer, torProxy                            string
+	useTor                                                   bool
+}
+
+func newConnectFlagSet(f *connectFlags) *flag.FlagSet {
 	fs := flag.NewFlagSet("connect", flag.ExitOnError)
-	room := fs.String("room", "general", "room to join")
-	name := fs.String("name", defaultName(), "display name")
-	identity := fs.String("identity", "", "identity key: an OpenSSH/age key file (default: ssh-agent → ~/.ssh/id_ed25519 → generated)")
-	notify := fs.String("notify", "", "shell command to run on each new message (env: NETHERCHAT_ROOM/FROM/TEXT)")
-	invite := fs.String("invite", "", "one-time invite token for an invite-only room")
-	webURL := fs.String("web-url", "", "base URL of the browser join client for /break-glass links (default: derived from the server URL)")
-	configPath := fs.String("config", "", "netherchat.toml for trust pinning and [action.*] quorum policy (default: ./netherchat.toml if present)")
+	if f == nil {
+		f = &connectFlags{}
+	}
+	fs.StringVar(&f.room, "room", "general", "room to join")
+	fs.StringVar(&f.name, "name", defaultName(), "display name")
+	fs.StringVar(&f.identity, "identity", "", "identity key: an OpenSSH/age key file (default: ssh-agent → ~/.ssh/id_ed25519 → generated)")
+	fs.StringVar(&f.notify, "notify", "", "shell command to run on each new message (env: NETHERCHAT_ROOM/FROM/TEXT)")
+	fs.StringVar(&f.invite, "invite", "", "one-time invite token for an invite-only room")
+	fs.StringVar(&f.webURL, "web-url", "", "base URL of the browser join client for /break-glass links (default: derived from the server URL)")
+	fs.StringVar(&f.configPath, "config", "", "netherchat.toml for trust pinning and [action.*] quorum policy (default: ./netherchat.toml if present)")
 	// A credential about your own key, not a trust anchor: it names who an issuer
 	// says you are and which roles you may act under, and it carries no key anyone
-	// verifies against. Netherchat has no issuer flag and reads no issuer file.
-	attestation := fs.String("attestation", "", "your identity attestation (identity.json), so an artifact approval carries the credential you act under")
-	useTor := fs.Bool("tor", false, "dial the relay through a local Tor SOCKS5 proxy (for ws://<addr>.onion relays)")
-	torProxy := fs.String("tor-proxy", client.DefaultTorProxy, "Tor SOCKS5 proxy address (Tor Browser uses 127.0.0.1:9150)")
+	// verifies against. It goes out on the wire identically whether or not
+	// --issuer below is given.
+	fs.StringVar(&f.attestation, "attestation", "", "your identity attestation (identity.json), so an artifact approval carries the credential you act under")
+	// The READ-SIDE issuer pin (D-L). It decides what this client can SAY about
+	// the credentials other people carry, and it changes nothing this client
+	// sends: records, rosters and approvals are byte-identical with it and
+	// without it, and each is checked by whoever reads it with their own key.
+	//
+	// There is deliberately no companion --at. `netherchat verify` takes one,
+	// because a record carries signed timestamps and re-reading it at a stated
+	// time is the point. A room carries none: presence is now, so the evaluation
+	// time is the clock, and a flag that let an operator choose it would let them
+	// choose a time at which an expired credential renders as checked.
+	fs.StringVar(&f.issuer, "issuer", "", "issuer public keys to CHECK carried credentials against, one per line (read-side only: changes what this screen shows, never what this client sends)")
+	fs.BoolVar(&f.useTor, "tor", false, "dial the relay through a local Tor SOCKS5 proxy (for ws://<addr>.onion relays)")
+	fs.StringVar(&f.torProxy, "tor-proxy", client.DefaultTorProxy, "Tor SOCKS5 proxy address (Tor Browser uses 127.0.0.1:9150)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: netherchat connect [ws://host:port] [--room <name>] [--name <you>] [--identity <path>] [--attestation <identity.json>] [--invite <token>] [--tor [--tor-proxy 127.0.0.1:9050]] [--web-url <url>] [--config <toml>] [--notify <cmd>]")
+		fmt.Fprintln(os.Stderr, connectUsageLine)
 		fs.PrintDefaults()
 	}
-	// The server URL is an optional leading positional; peel it off before parsing
-	// the flags, or Go's flag parser stops at it and silently ignores --room/--name
-	// (so they fall back to defaults — the same reason sendCmd peels its positional
-	// room first). This is what made --name lose to defaultName() ($USER).
+	return fs
+}
+
+// parseConnectFlags peels the optional leading server URL and parses the rest.
+//
+// The URL comes off FIRST, or Go's flag parser stops at it and silently ignores
+// --room/--name so they fall back to defaults — the same reason sendCmd peels
+// its positional room first. This is what made --name lose to $USER.
+func parseConnectFlags(args []string) (connectFlags, string) {
+	var f connectFlags
+	fs := newConnectFlagSet(&f)
 	var url string
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		url, args = args[0], args[1:]
@@ -115,30 +150,73 @@ func connectCmd(args []string) {
 	if url == "" {
 		url = "ws://localhost:3000"
 	}
-	torDial := ""
-	if *useTor {
-		torDial = *torProxy
-		if torDial == "" {
-			torDial = client.DefaultTorProxy
+	return f, url
+}
+
+// connectOpts is everything the flags produce, resolved: files read, keys
+// parsed, the Tor dial address settled.
+type connectOpts struct {
+	url, name, identity, room, notify, invite, webURL, torDial string
+	credential                                                 *attest.IdentityAttestation
+	issuer                                                     app.IssuerPin
+}
+
+// connectOptions turns a parsed command line into what the TUI runs on.
+//
+// It is a separate function because the flag is the surface a user touches and
+// a test has to start there (roadmap §8) — the defect that rule is written from
+// is `--issuer` and `--at` being parsed and dropped on the record branch of
+// `netherchat verify`, which stayed green through CI because every test began
+// below the flag parse. --issuer arrived here in D-L, and it is the same shape.
+//
+// Both file-reading flags are FAIL-CLOSED, for the same reason --config is: an
+// operator who named a file asked for it. A broken --issuer is the worse of the
+// two to swallow — the session would render every credential as an unchecked
+// claim while the person at the keyboard believed they were looking at checked
+// ones, which is a quieter failure than not having the flag at all.
+func connectOptions(f connectFlags, url string, cfg config.Config) (connectOpts, error) {
+	o := connectOpts{
+		url: url, name: f.name, identity: f.identity, room: f.room,
+		notify: f.notify, invite: f.invite, webURL: f.webURL,
+	}
+	if f.useTor {
+		o.torDial = f.torProxy
+		if o.torDial == "" {
+			o.torDial = client.DefaultTorProxy
 		}
 	}
-	cfg, source, cerr := loadClientConfig(*configPath)
+	if f.attestation != "" {
+		a, err := readAttestation(f.attestation)
+		if err != nil {
+			return connectOpts{}, fmt.Errorf("--attestation: %w", err)
+		}
+		o.credential = a
+	}
+	if f.issuer != "" {
+		keys, err := loadIssuerKeys(f.issuer)
+		if err != nil {
+			return connectOpts{}, fmt.Errorf("--issuer: %w", err)
+		}
+		o.issuer = app.IssuerPin{Keys: keys, Source: f.issuer}
+	}
+	_ = cfg // the config contributes trust pins and quorum policy, read by the caller
+	return o, nil
+}
+
+func connectCmd(args []string) {
+	f, url := parseConnectFlags(args)
+	cfg, source, cerr := loadClientConfig(f.configPath)
 	if cerr != nil {
 		fatal(cerr) // fail closed: a requested/present config that will not load is an error
 	}
-	// Same fail-closed posture as the config above, for the same reason: an
-	// operator who named an attestation asked for it, and a broken one is a
-	// mistake rather than a reason to run quietly without it.
-	var credential *attest.IdentityAttestation
-	if *attestation != "" {
-		a, aerr := readAttestation(*attestation)
-		if aerr != nil {
-			fatal(aerr)
-		}
-		credential = a
+	o, err := connectOptions(f, url, cfg)
+	if err != nil {
+		fatal(err)
 	}
 	fmt.Fprintln(os.Stderr, configProvenanceLine(cfg, source))
-	if err := app.Run(url, *name, *identity, *room, *notify, *invite, *webURL, torDial, trustOf(cfg), actionQuorums(cfg), beaconTokens(cfg), cfg.Notify.On, cfg.Macros, credential); err != nil {
+	if err := app.Run(o.url, o.name, o.identity, o.room, o.notify, o.invite, o.webURL, o.torDial,
+		trustOf(cfg), actionQuorums(cfg), beaconTokens(cfg), cfg.Notify.On, cfg.Macros,
+		o.credential, o.issuer); err != nil {
 		fatal(err)
 	}
 }

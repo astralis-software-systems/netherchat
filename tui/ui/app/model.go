@@ -6,6 +6,7 @@ package app
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"os"
@@ -51,9 +52,40 @@ type Model struct {
 
 	// credential is this operator's own identity attestation, supplied by
 	// --attestation and handed to every room's client so an artifact approval
-	// carries it. It is a statement about the local key, not a trust anchor: no
-	// issuer key or evaluation time enters the TUI, and nothing here verifies it.
+	// carries it. It is a statement about the local key, not a trust anchor —
+	// and it is carried on the wire exactly the same way whether or not this
+	// client pinned an issuer, because what a client SENDS may not depend on
+	// what it configured.
 	credential *attest.IdentityAttestation
+
+	// ownIdentity is what this client can say about its own credential, decided
+	// at the same moments a peer's is (see recheckIdentities). /whoami renders it
+	// so an operator sees an expired credential before they act rather than after
+	// somebody reads the record.
+	ownIdentity  attest.IdentityDisplay
+	ownRecheckAt time.Time
+
+	// pinnedIssuerKeys are the trust anchors from `connect --issuer <file>`, and
+	// issuerSource is the path the operator named so /issuer can say what it is
+	// checking against (D-L).
+	//
+	// READ IN EXACTLY ONE FUNCTION — attribute, in issuerpin.go, which is the
+	// only source of an IdentityResult in this program. That is the mechanical
+	// form of roadmap §6 rule 1 as revised: no issuer configuration on any path
+	// that produces evidence. TestTheIssuerPinIsReadByOneFunction fails on a
+	// second reader, wherever it is under tui/.
+	pinnedIssuerKeys []ed25519.PublicKey
+	issuerSource     string
+	// issuerFprs are those keys' fingerprints, derived once in usePin. Rendering
+	// surfaces read these and never the keys, which is what keeps the guard above
+	// able to say "two functions" rather than "two functions and whoever wanted a
+	// length".
+	issuerFprs []string
+
+	// lastCheckedAt is when the most recent attribution decision was made, for
+	// /issuer to report. A live surface has no signed time to evaluate against,
+	// so the one it used is worth being able to ask for.
+	lastCheckedAt time.Time
 
 	cmds     *command.Set
 	theme    theme.Theme
@@ -92,9 +124,17 @@ type Model struct {
 // when non-empty, routes every room's dial through that Tor SOCKS5 proxy so a
 // ws://<addr>.onion relay is reachable (§1.5). trust holds the client-side
 // identity pins parsed from netherchat.toml.
-func Run(url, name, identityPath, room, notifyCmd, invite, webURL, torProxy string, trust []TrustEntry, actionQuorum map[string]int, beaconTokens map[string]string, notifyOn []string, macros map[string]string, credential *attest.IdentityAttestation) error {
+//
+// issuer is the read-side pin from `connect --issuer` (D-L). It decides what
+// this client can SAY about a credential and changes nothing it sends; an empty
+// IssuerPin is the ordinary case and leaves every surface as it was.
+func Run(url, name, identityPath, room, notifyCmd, invite, webURL, torProxy string, trust []TrustEntry, actionQuorum map[string]int, beaconTokens map[string]string, notifyOn []string, macros map[string]string, credential *attest.IdentityAttestation, issuer IssuerPin) error {
 	m := newModel(url, name, identityPath, room, notifyCmd)
-	m.credential = credential
+	m.usePin(issuer)
+	// The subject join needs a fingerprint the BYO-key cascade has not resolved
+	// yet, so this is the first of two: it makes /whoami answerable before a
+	// connect, and handleRoomEvent redoes it once the key is known.
+	m.useCredential(credential, time.Now().UTC())
 	m.initialInvite = invite
 	m.webURL = webURL
 	m.torProxy = torProxy
@@ -308,6 +348,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				changed = true
 			}
 		}
+		// A credential's window is the one thing about an attribution that the
+		// clock can change, and this is the only place the clock is consulted for
+		// it. The evaluation time is the tick's own timestamp, so a row records
+		// when it was decided rather than when it was drawn. See recheckIdentities.
+		if m.recheckIdentities(now.UTC()) {
+			changed = true
+		}
 		if changed {
 			m.syncViewport()
 		}
@@ -445,6 +492,10 @@ func (m *Model) onRoomConnected(msg roomConnectedMsg) tea.Cmd {
 	if m.fingerprint == "" {
 		m.fingerprint = msg.c.Fingerprint()
 		m.source = msg.c.Source()
+		// The key the BYO cascade resolved is only known now, and the subject join
+		// is a comparison against it. Re-deciding here is what lets /whoami show ◆
+		// for the operator's own credential when an issuer is pinned.
+		m.useCredential(m.credential, time.Now().UTC())
 	}
 	return listenRoom(msg.name, msg.c)
 }
@@ -463,8 +514,9 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 		if e.TTLSeconds > 0 {
 			r.ttl = time.Duration(e.TTLSeconds) * time.Second
 		}
+		now := time.Now().UTC()
 		for _, mem := range e.Members {
-			r.addMemberWithCredential(mem.ID, mem.Name, mem.Fingerprint, mem.Attestation)
+			m.admitMember(r, mem.ID, mem.Name, mem.Fingerprint, mem.Attestation, now)
 		}
 		if len(e.Members) == 0 {
 			r.appendSystem("connected — you are the first one here")
@@ -501,7 +553,7 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 		}
 
 	case client.EvMemberJoined:
-		r.addMemberWithCredential(e.ID, e.Name, e.Fingerprint, e.Attestation)
+		m.admitMember(r, e.ID, e.Name, e.Fingerprint, e.Attestation, time.Now().UTC())
 		r.appendSystem(e.Name + " joined")
 
 	case client.EvMemberLeft:
@@ -1368,7 +1420,7 @@ func (m *Model) membersView() string {
 		lines = append(lines, m.icMark(icSelf)+dot+m.user(m.name)+m.st(m.theme.Muted).Render(" (you)"))
 		for _, id := range r.order {
 			mem := r.members[id]
-			row := m.icMark(!icSelf && icFpr != "" && mem.fpr == icFpr) + dot + m.user(mem.displayName()) +
+			row := m.icMark(!icSelf && icFpr != "" && mem.fpr == icFpr) + dot + m.user(m.paneName(mem)) +
 				m.trustMark(mem.name, mem.fpr)
 			lines = append(lines, row)
 		}
@@ -1384,6 +1436,27 @@ func (m *Model) membersView() string {
 		}
 	}
 	return m.pane(m.membersW, strings.Join(lines, "\n"))
+}
+
+// paneName is the name the participants panel draws for a member: D-I's answer,
+// clipped to the column when — and only when — it is not the name the sender
+// chose.
+//
+// The column was sized for handles. D-I's verified_unnamed row puts a PRINCIPAL
+// there instead ("svc-deploybot@acme.example"), which is routinely wider than
+// the pane and wraps across three lines, detaching the mark from the name it
+// belongs to. That row only exists once an issuer is pinned, so the clipping is
+// scoped to it: a client that pinned nothing draws exactly the bytes it drew
+// before, by construction rather than by measurement.
+//
+// The full principal is on /whois and /roster, which have the width for it.
+func (m *Model) paneName(mem memberView) string {
+	name := mem.displayName()
+	if name == mem.name {
+		return name
+	}
+	// "● " plus the widest mark (◇✗) plus its leading space.
+	return truncate(name, m.membersW-5)
 }
 
 // icMark returns the incident-commander prefix: a ⚡ for the holder, a blank slot

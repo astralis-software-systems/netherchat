@@ -9,7 +9,21 @@ const (
 	fprAlice = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	fprBob   = "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
 	fprCarol = "SHA256:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+	fprRosa  = "SHA256:RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR"
 )
+
+// memberByHandle finds a member by the name the sender chose. It is the blunt
+// lookup, for tests that already know exactly who they admitted; production
+// resolution goes through resolveHandle, which also answers to a signed name and
+// refuses a collision.
+func (m *Model) memberByHandle(r *room, handle string) memberView {
+	for _, id := range r.order {
+		if mem := r.members[id]; mem.name == handle {
+			return mem
+		}
+	}
+	return memberView{}
+}
 
 // attributionModel is a room with one SAS-verified peer, one [[trust]]-pinned
 // peer, and one peer this client can say nothing about.
@@ -28,9 +42,11 @@ func attributionModel(t *testing.T) *Model {
 
 	r := m.activeRoom()
 	r.connected, r.keyReady = true, true
-	r.addMember("id-a", "alice", fprAlice)
-	r.addMember("id-b", "bob", fprBob)
-	r.addMember("id-c", "carol", fprCarol)
+	// Through admitMember, the one function that resolves a member's attribution,
+	// so these tests start where a Member frame lands rather than beside it.
+	m.admitMember(r, "id-a", "alice", fprAlice, nil, midWindow())
+	m.admitMember(r, "id-b", "bob", fprBob, nil, midWindow())
+	m.admitMember(r, "id-c", "carol", fprCarol, nil, midWindow())
 	m.verified[fprAlice] = &verifyEntry{handle: "alice", verified: true}
 	return m
 }

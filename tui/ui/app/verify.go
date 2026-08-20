@@ -33,17 +33,27 @@ func (m *Model) isVerified(fpr string) bool {
 //	/verify @bob      → the 5-word SAS to read to bob over a trusted side channel
 //	/verify @bob ok   → mark bob SAS-verified for this session
 func (m *Model) runVerify(arg string) tea.Cmd {
-	fields := strings.Fields(arg)
-	if len(fields) == 0 {
+	typed, rest := cutHandle(arg)
+	if typed == "" {
 		m.addSystem(m.verifyStatusText())
 		return nil
 	}
-	handle := strings.TrimPrefix(fields[0], "@")
 	r := m.activeRoom()
 	if !m.connected(r) {
 		return nil
 	}
-	if len(fields) >= 2 && strings.EqualFold(fields[1], "ok") {
+	// A person points at what they can see, and what they can see may be a name
+	// an issuer signed. resolveHandle answers to either and refuses a string that
+	// fits two people; everything below it addresses the member by the name on
+	// their wire frame, which is what the relay routes on and what the SAS is
+	// computed from.
+	mem, err := m.resolveHandle(r, typed)
+	if err != nil {
+		m.addError(err.Error())
+		return nil
+	}
+	handle := mem.name
+	if strings.EqualFold(rest, "ok") {
 		m.markVerified(handle)
 		return nil
 	}
@@ -108,9 +118,13 @@ func (m *Model) verifyStatusText() string {
 		b.WriteString("  (no other members)")
 		return b.String()
 	}
+	// The ADDRESSABLE handle leads here, not the D-I name the panes draw: the
+	// next thing a reader of this list types is a command, and it takes the name
+	// on the wire. trustWords names the signed name beside the mark when the two
+	// differ, so one line carries both.
 	for _, id := range r.order {
 		mem := r.members[id]
-		b.WriteString(fmt.Sprintf("  @%-14s %s\n", mem.displayName(), m.trustWords(mem.name, mem.fpr)))
+		b.WriteString(fmt.Sprintf("  @%-14s %s\n", mem.name, m.trustWords(mem)))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

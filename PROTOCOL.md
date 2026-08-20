@@ -150,12 +150,22 @@ it would degrade a name to unattested and could not forge one — the artifact's
 issuer signature is what makes it worth anything, and that is checked by whoever
 pinned the issuer, not here.
 
-**Nothing on this path verifies it.** Netherchat holds no issuer keys and has no
-issuer flag on `connect`, so a credential arriving on presence is an unchecked
-claim in every client that receives it. Clients render the name the sender chose
-and mark the claim as present-and-unchecked; they do not render its `display_name`
-as the participant's name. See §17 for what a relay operator and a room member
-each learn.
+**Nothing on this path verifies it, and whether the RECEIVER does is the
+receiver's business alone.** The wire carries the artifact and no more: no client
+verifies a credential in order to send, relay, store or accept a frame, and none
+refuses one it cannot check. What a receiver then renders is a local decision
+made with local configuration — `netherchat connect --issuer <file>` gives a
+terminal operator trust anchors from their own filesystem, and a client started
+without it renders every carried credential as an unchecked claim, under the name
+the sender chose, exactly as before the flag existed. **A browser client cannot be
+the first kind of reader**: its bundle is served by the relay, so a key configured
+into that page is a key the relay chose.
+
+No client ever renders a credential's `display_name` as a participant's name
+without having checked the credential against a key of its own AND compared the
+credential's `subject` to the fingerprint the frame arrived on — an attestation is
+not a secret, so possession of one proves nothing. See §17 for what a relay
+operator and a room member each learn.
 
 ## 5. Room keys and epochs
 

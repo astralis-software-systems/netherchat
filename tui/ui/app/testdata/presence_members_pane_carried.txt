@@ -1,0 +1,20 @@
+members               
+ ● me (you)           
+ ● alice ✓✓           
+ ● bob                
+ ● carol ✓            
+ ● dave ◇             
+ ● mallory ◇✗         
+                      
+                      
+                      
+                      
+                      
+                      
+                      
+                      
+                      
+                      
+                      
+                      
+                      

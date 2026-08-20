@@ -1,0 +1,6 @@
+verification status:
+  @alice          ✓✓ SAS-verified
+  @bob            unverified
+  @carol          ✓ [[trust]]-pinned
+  @dave           ◇ carries a credential, not checked here
+  @mallory        ◇✗ credential is about a different key

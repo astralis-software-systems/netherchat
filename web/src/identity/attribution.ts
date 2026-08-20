@@ -16,10 +16,15 @@
 // the vocabulary is shared and a mark table with holes in it is a mark table
 // that gets re-decided, not because this file will ever return them.
 //
-// That is not a browser limitation to be worked around. It is the same state the
-// terminal client is in (tui/ui/app/attribution.go), for the same reason, and
-// see the D-J note in join/main.ts for why a browser participant additionally
-// cannot HOLD an attested key.
+// The terminal client is no longer in this state and this one still is (D-L).
+// `netherchat connect --issuer <file>` gives a TERMINAL operator a trust anchor
+// from their own filesystem, so a Go room can reach ◆. A join link cannot carry
+// the equivalent: this bundle is served BY THE RELAY, so a key configured into
+// this page is a key the relay chooses, and a "pin" the relay supplies checks
+// nothing. That is a structural difference between the two clients and not a
+// gap to be closed here — see the D-J note in join/main.ts for the same shape of
+// reasoning about why a browser participant additionally cannot HOLD an attested
+// key.
 
 import { fromB64 } from "../crypto/base64";
 

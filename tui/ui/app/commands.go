@@ -76,6 +76,7 @@ func buildCommands(m *Model) *command.Set {
 		command.Command{Name: "peers", Help: "list room members and the transport (relay or direct, §1.1)"},
 		command.Command{Name: "pair", Help: "connect without a relay — how to start a Sneakernet session (§1.1)"},
 		command.Command{Name: "whois", Args: "[@handle]", Help: "show an identity's fingerprint, pin status, and published-key match"},
+		command.Command{Name: "issuer", Help: "report the issuer key this client pins and when it last checked against it (D-L)"},
 		command.Command{Name: "verify", Args: "[@handle [ok]]", Help: "out-of-band verify a peer via a 5-word SAS read over a side channel"},
 		command.Command{Name: "join", Args: "<room>", Help: "join another room"},
 		command.Command{Name: "leave", Help: "leave the current room"},
@@ -194,6 +195,8 @@ func (m *Model) runCommand(input string) tea.Cmd {
 		m.runSeal(r, arg)
 	case "roster":
 		m.runRoster(r, arg)
+	case "issuer":
+		m.runIssuer(arg)
 	case "whois":
 		return m.runWhois(arg)
 	case "verify":
@@ -367,7 +370,7 @@ func (m *Model) rosterText(r *room) string {
 	fmt.Fprintf(&b, "  %-16s %s  (you)\n", m.name, m.fingerprint)
 	for _, id := range r.order {
 		mem := r.members[id]
-		fmt.Fprintf(&b, "  %-16s %s  %s\n", mem.displayName(), mem.fpr, m.trustWords(mem.name, mem.fpr))
+		fmt.Fprintf(&b, "  %-16s %s  %s\n", mem.name, mem.fpr, m.trustWords(mem))
 	}
 	b.WriteString("  (run /roster --signed to write a co-signed attestation)")
 	return b.String()

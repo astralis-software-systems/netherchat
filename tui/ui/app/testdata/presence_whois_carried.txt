@@ -1,0 +1,13 @@
+  credential:  svc-deploybot@acme.example
+    roles:     deployer
+    issuer:    SHA256:eVkCKHnc5RjanBduU2vmOecbFl3M9wOgHdk24INJytY
+    ◇ carried on this connection; not checked here — this client pins no issuer key.
+      A reader with one checks it: netherchat verify <record> --issuer <key>
+  ◇✗ this credential is about a DIFFERENT key — whatever it claims below says
+     nothing about this person.
+     this credential is about SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA and arrived on SHA256:MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+  credential:  ceo@acme.example  (Chief Executive)
+    roles:     approver
+    issuer:    SHA256:eVkCKHnc5RjanBduU2vmOecbFl3M9wOgHdk24INJytY
+    ◇ carried on this connection; not checked here — this client pins no issuer key.
+      A reader with one checks it: netherchat verify <record> --issuer <key>

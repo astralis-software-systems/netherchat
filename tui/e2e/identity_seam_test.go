@@ -83,6 +83,14 @@ var identitySymbols = []string{
 	// to police, so its file has to be in scope.
 	"IdentityDisplay", "IdentityDisplayState", "IdentityDisplayFor",
 	"IdentityDisplayForBytes", "IdentityDisplayMark",
+	// The read-side issuer pin (D-L). Its file is prose about what a pinned
+	// issuer key means on a screen — which is where "a verified credential is
+	// enough to do X" would get written if it were going to be — so it belongs
+	// in scope for seam rule 2 for the same reason IdentityDisplay does. It
+	// stays OUT of the trust-anchor guard's library scope only by living under a
+	// name the anchor pattern does not match; it reads no file and declares no
+	// flag, and the guard checks that rather than assuming it.
+	"IssuerPin",
 	"RevocationStatement", "RevocationSpec", "RevokedSerial", "RevocationResult",
 	"RevocationCheck", "RevocationVersion",
 	"NewRevocation", "ParseRevocation", "VerifyRevocation",
@@ -538,9 +546,13 @@ func TestIdentityLayerHoldsNoTrustAnchors(t *testing.T) {
 	if len(findings) > 0 {
 		sort.Strings(findings)
 		t.Fatalf("the identity library holds or reads a trust anchor in %d place(s):\n  %s\n\n"+
-			"Roadmap §6 seam rule 1: issuer keys are parameters, never configuration. Netherchat\n"+
-			"reads no issuer file, has no issuer flag on connect, and ships no default key. A tool\n"+
-			"under cmd/ may take a key path from an operator; the library may not go looking.\n"+
+			"Roadmap §6 seam rule 1, as revised by D-L: no issuer configuration on any path that\n"+
+			"produces evidence. Issuer keys are parameters to this library, never configuration of\n"+
+			"it: it reads no issuer file, holds no default key, and declares no flag. A command\n"+
+			"under cmd/ may take a key path from an operator — `verify --issuer` always could, and\n"+
+			"`connect --issuer` now does, read-side, for what a screen renders — but the library\n"+
+			"may not go looking, because a library that went looking would make what a client\n"+
+			"PRODUCES a function of its own configuration.\n"+
 			"Guard: %s", len(findings), strings.Join(findings, "\n  "), identitySeamGuardFile)
 	}
 	t.Logf("scanned %d package-qualified selector(s) across %d in-scope library file(s)", selectors, len(library))
