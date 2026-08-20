@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/internal/crypto"
 )
 
@@ -91,11 +90,10 @@ func RunLAN(opts Options) error {
 // hostHere connects the host's own client over the loopback (first member, mints
 // the key) and runs the session, accepting peers that /pair in.
 func hostHere(co *Coordinator, id *crypto.Identity, opts Options) error {
-	c, err := client.NewWithIdentity(directPlaceholderURL, opts.Room, opts.Name, id)
+	c, err := newSessionClient(opts, id)
 	if err != nil {
 		return err
 	}
-	c.SetActionQuorum(opts.ActionQuorum) // relay-less: a scuttle with quorum >= 2 fails closed (§3.2)
 	if err := c.ConnectWith(co.Loopback()); err != nil {
 		return err
 	}
@@ -117,11 +115,10 @@ func joinPeer(p Peer, id *crypto.Identity, opts Options) error {
 	if err != nil {
 		return fmt.Errorf("pair with %s: %w", p.Fpr, err)
 	}
-	c, err := client.NewWithIdentity(directPlaceholderURL, opts.Room, opts.Name, id)
+	c, err := newSessionClient(opts, id)
 	if err != nil {
 		return err
 	}
-	c.SetActionQuorum(opts.ActionQuorum) // relay-less: a scuttle with quorum >= 2 fails closed (§3.2)
 	if err := c.ConnectWith(dt); err != nil {
 		return err
 	}

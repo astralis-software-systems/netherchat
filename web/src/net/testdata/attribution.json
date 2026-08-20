@@ -1,0 +1,129 @@
+{
+  "_comment": "D-I rendering vectors. Each case is one input and the two outcomes it has: what a reader WITH the issuer key pinned renders, and what a reader WITHOUT one renders. A browser client and a live Netherchat room can only ever be the second reader.",
+  "_generator": "GEN_INTEROP=1 go test ./tui/e2e -run TestGenAttributionVectors -v",
+  "_source": "tui/e2e/attribution_vectors_test.go, via tui/attest.IdentityDisplayForBytes",
+  "issuerKeyB64": "JUO5L/EJVRFHatyDadtt3JM2ZaEZeN2hQE7hBmypVZ0=",
+  "evaluatedAt": "2030-06-01T12:00:00Z",
+  "fingerprintVectors": [
+    {
+      "publicKeyB64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "fingerprint": "SHA256:kmYcvdi2GkPeWxB6XLjrZB8JHsy2Hm8luHMFp9GMvqk"
+    },
+    {
+      "publicKeyB64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "fingerprint": "SHA256:ZkAslGjFiUHdGf/WUL8rQvkib4PTvQatUV0OUQSncCA"
+    },
+    {
+      "publicKeyB64": "AAIEBggKDA4QEhQWGBocHiAiJCYoKiwuMDI0Njg6PD4=",
+      "fingerprint": "SHA256:lUAVjIAtTEoF/xvUlRp6bC30oeDv0GTY90mk7XgWeas"
+    },
+    {
+      "publicKeyB64": "AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl0=",
+      "fingerprint": "SHA256:fFAy/6TZiMaHuKai4jMok2uUUtVMxL8VHhSjOC0b6v4"
+    }
+  ],
+  "cases": [
+    {
+      "name": "attested_with_display_name",
+      "why": "D-I row 1: a pinned issuer signed a display name, so the display name is the name.",
+      "assertedName": "rosa",
+      "subjectFingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "attestationB64": "ewogICJuZXRoZXJjaGF0X2lkZW50aXR5IjogInYyIiwKICAic2VyaWFsIjogImFjbWUtdmVjdG9yLUFBQUEiLAogICJzdWJqZWN0IjogIlNIQTI1NjpBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIiwKICAicHJpbmNpcGFsIjogInJvc2EuYWx2YXJlekBhY21lLmV4YW1wbGUiLAogICJkaXNwbGF5X25hbWUiOiAiUm9zYSBBbHZhcmV6IiwKICAicHJpbmNpcGFsX3R5cGUiOiAicGVyc29uIiwKICAicm9sZXMiOiBbCiAgICAiaW5jaWRlbnQtY29tbWFuZGVyIgogIF0sCiAgImlzc3VlZF9hdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAwWiIsCiAgImV4cGlyZXNfYXQiOiAiMjAzNi0wMS0wMVQwMDowMDowMFoiLAogICJhbGdvcml0aG0iOiAiZWQyNTUxOSIsCiAgImlzc3VlciI6ICJTSEEyNTY6dkZxTkR6aGE1OTNjZ1I4SVBiNWtBaUw2OTlRZHBoODh0TE50Sko1MFpCUSIsCiAgInNpZ25hdHVyZXMiOiB7CiAgICAiU0hBMjU2OnZGcU5EemhhNTkzY2dSOElQYjVrQWlMNjk5UWRwaDg4dExOdEpKNTBaQlEiOiAicW5aeTBRL2hKRm1yaGQ1cTFrYTFTWUxmcFBHUGd2OGw4YW5Td21WMWdueFRxb0publB3Y05WYmJDWWdkOHRiR2JHb1ltY2x1WFM2TlVIZ052VnF4REE9PSIKICB9LAogICJzaWduZXJfa2V5cyI6IHsKICAgICJTSEEyNTY6dkZxTkR6aGE1OTNjZ1I4SVBiNWtBaUw2OTlRZHBoODh0TE50Sko1MFpCUSI6ICJKVU81TC9FSlZSRkhhdHlEYWR0dDNKTTJaYUVaZU4yaFFFN2hCbXlwVlowPSIKICB9Cn0=",
+      "withIssuerPinned": {
+        "state": "verified_named",
+        "name": "Rosa Alvarez",
+        "mark": "◆"
+      },
+      "withNoIssuerPinned": {
+        "state": "carried",
+        "name": "rosa",
+        "mark": "◇"
+      }
+    },
+    {
+      "name": "attested_no_display_name",
+      "why": "D-I row 2, the third VERIFIED path: the credential verified and the issuer named no name, so the principal is the name. Not a fallback and not the asserted state.",
+      "assertedName": "deploybot",
+      "subjectFingerprint": "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      "attestationB64": "ewogICJuZXRoZXJjaGF0X2lkZW50aXR5IjogInYyIiwKICAic2VyaWFsIjogImFjbWUtdmVjdG9yLUJCQkIiLAogICJzdWJqZWN0IjogIlNIQTI1NjpCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCIiwKICAicHJpbmNpcGFsIjogInN2Yy1kZXBsb3lib3RAYWNtZS5leGFtcGxlIiwKICAicHJpbmNpcGFsX3R5cGUiOiAicGVyc29uIiwKICAicm9sZXMiOiBbCiAgICAiZGVwbG95ZXIiCiAgXSwKICAiaXNzdWVkX2F0IjogIjIwMjYtMDEtMDFUMDA6MDA6MDBaIiwKICAiZXhwaXJlc19hdCI6ICIyMDM2LTAxLTAxVDAwOjAwOjAwWiIsCiAgImFsZ29yaXRobSI6ICJlZDI1NTE5IiwKICAiaXNzdWVyIjogIlNIQTI1Njp2RnFORHpoYTU5M2NnUjhJUGI1a0FpTDY5OVFkcGg4OHRMTnRKSjUwWkJRIiwKICAic2lnbmF0dXJlcyI6IHsKICAgICJTSEEyNTY6dkZxTkR6aGE1OTNjZ1I4SVBiNWtBaUw2OTlRZHBoODh0TE50Sko1MFpCUSI6ICJNakJMUTJLcTliMVpMbVZ0R3crNDlDK2JtbjA0elRuMXFlWWRXSnFVaHU4SVVNQjJKc1RveTlSWUxjNlBjVW9DZVJkaHNJZTF6VUJSc3dmMlFMNFNBZz09IgogIH0sCiAgInNpZ25lcl9rZXlzIjogewogICAgIlNIQTI1Njp2RnFORHpoYTU5M2NnUjhJUGI1a0FpTDY5OVFkcGg4OHRMTnRKSjUwWkJRIjogIkpVTzVML0VKVlJGSGF0eURhZHR0M0pNMlphRVplTjJoUUU3aEJteXBWWjA9IgogIH0KfQ==",
+      "withIssuerPinned": {
+        "state": "verified_unnamed",
+        "name": "svc-deploybot@acme.example",
+        "mark": "◆"
+      },
+      "withNoIssuerPinned": {
+        "state": "carried",
+        "name": "deploybot",
+        "mark": "◇"
+      }
+    },
+    {
+      "name": "carried_signed_by_an_unpinned_authority",
+      "why": "A well-formed credential whose signature the pinned key did not make. Unanchored: a statement about the trust relationship, never about the subject.",
+      "assertedName": "mallory",
+      "subjectFingerprint": "SHA256:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+      "attestationB64": "ewogICJuZXRoZXJjaGF0X2lkZW50aXR5IjogInYyIiwKICAic2VyaWFsIjogImFjbWUtdmVjdG9yLUNDQ0MiLAogICJzdWJqZWN0IjogIlNIQTI1NjpDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDIiwKICAicHJpbmNpcGFsIjogImNlb0BhY21lLmV4YW1wbGUiLAogICJkaXNwbGF5X25hbWUiOiAiQ2hpZWYgRXhlY3V0aXZlIiwKICAicHJpbmNpcGFsX3R5cGUiOiAicGVyc29uIiwKICAicm9sZXMiOiBbCiAgICAiYXBwcm92ZXIiCiAgXSwKICAiaXNzdWVkX2F0IjogIjIwMjYtMDEtMDFUMDA6MDA6MDBaIiwKICAiZXhwaXJlc19hdCI6ICIyMDM2LTAxLTAxVDAwOjAwOjAwWiIsCiAgImFsZ29yaXRobSI6ICJlZDI1NTE5IiwKICAiaXNzdWVyIjogIlNIQTI1Njp2RnFORHpoYTU5M2NnUjhJUGI1a0FpTDY5OVFkcGg4OHRMTnRKSjUwWkJRIiwKICAic2lnbmF0dXJlcyI6IHsKICAgICJTSEEyNTY6dkZxTkR6aGE1OTNjZ1I4SVBiNWtBaUw2OTlRZHBoODh0TE50Sko1MFpCUSI6ICJaZzhOeGEva2hUeElBN2dEeithNXJhVXdqbW9wdm5KM1FoUlNZU3RPaERTK21FVHpocGFJcFVXVVVHWlJuVzNlVTJuUzNOQkNoNnJLeEpaa3Btb2NCZz09IgogIH0sCiAgInNpZ25lcl9rZXlzIjogewogICAgIlNIQTI1Njp2RnFORHpoYTU5M2NnUjhJUGI1a0FpTDY5OVFkcGg4OHRMTnRKSjUwWkJRIjogIkpVTzVML0VKVlJGSGF0eURhZHR0M0pNMlphRVplTjJoUUU3aEJteXBWWjA9IgogIH0KfQ==",
+      "withIssuerPinned": {
+        "state": "carried",
+        "name": "mallory",
+        "mark": "◇"
+      },
+      "withNoIssuerPinned": {
+        "state": "carried",
+        "name": "mallory",
+        "mark": "◇"
+      }
+    },
+    {
+      "name": "credential_about_another_key",
+      "why": "Rosa's real, valid, issuer-signed credential, replayed onto Mallory's key. An attestation is not a secret (§2.3), so anyone who has seen one can attach it; the verifier answers 'did the issuer sign this statement about subject X' and only the caller knows whether X is the key in front of it. Carried, never verified, in BOTH readers.",
+      "assertedName": "mallory",
+      "subjectFingerprint": "SHA256:MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+      "attestationB64": "ewogICJuZXRoZXJjaGF0X2lkZW50aXR5IjogInYyIiwKICAic2VyaWFsIjogImFjbWUtdmVjdG9yLUFBQUEiLAogICJzdWJqZWN0IjogIlNIQTI1NjpBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIiwKICAicHJpbmNpcGFsIjogInJvc2EuYWx2YXJlekBhY21lLmV4YW1wbGUiLAogICJkaXNwbGF5X25hbWUiOiAiUm9zYSBBbHZhcmV6IiwKICAicHJpbmNpcGFsX3R5cGUiOiAicGVyc29uIiwKICAicm9sZXMiOiBbCiAgICAiaW5jaWRlbnQtY29tbWFuZGVyIgogIF0sCiAgImlzc3VlZF9hdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAwWiIsCiAgImV4cGlyZXNfYXQiOiAiMjAzNi0wMS0wMVQwMDowMDowMFoiLAogICJhbGdvcml0aG0iOiAiZWQyNTUxOSIsCiAgImlzc3VlciI6ICJTSEEyNTY6dkZxTkR6aGE1OTNjZ1I4SVBiNWtBaUw2OTlRZHBoODh0TE50Sko1MFpCUSIsCiAgInNpZ25hdHVyZXMiOiB7CiAgICAiU0hBMjU2OnZGcU5EemhhNTkzY2dSOElQYjVrQWlMNjk5UWRwaDg4dExOdEpKNTBaQlEiOiAicW5aeTBRL2hKRm1yaGQ1cTFrYTFTWUxmcFBHUGd2OGw4YW5Td21WMWdueFRxb0publB3Y05WYmJDWWdkOHRiR2JHb1ltY2x1WFM2TlVIZ052VnF4REE9PSIKICB9LAogICJzaWduZXJfa2V5cyI6IHsKICAgICJTSEEyNTY6dkZxTkR6aGE1OTNjZ1I4SVBiNWtBaUw2OTlRZHBoODh0TE50Sko1MFpCUSI6ICJKVU81TC9FSlZSRkhhdHlEYWR0dDNKTTJaYUVaZU4yaFFFN2hCbXlwVlowPSIKICB9Cn0=",
+      "withIssuerPinned": {
+        "state": "carried",
+        "name": "mallory",
+        "mark": "◇"
+      },
+      "withNoIssuerPinned": {
+        "state": "carried",
+        "name": "mallory",
+        "mark": "◇"
+      }
+    },
+    {
+      "name": "carrier_is_not_an_artifact",
+      "why": "Bytes that do not parse. Carried, not asserted: something arrived, and saying otherwise hides it.",
+      "assertedName": "dave",
+      "subjectFingerprint": "SHA256:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "attestationB64": "e25vdCBhbiBpZGVudGl0eSBhcnRpZmFjdA==",
+      "withIssuerPinned": {
+        "state": "carried",
+        "name": "dave",
+        "mark": "◇"
+      },
+      "withNoIssuerPinned": {
+        "state": "carried",
+        "name": "dave",
+        "mark": "◇"
+      }
+    },
+    {
+      "name": "nothing_carried",
+      "why": "The oldest state and still the common one.",
+      "assertedName": "alice",
+      "subjectFingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "attestationB64": "",
+      "withIssuerPinned": {
+        "state": "asserted",
+        "name": "alice",
+        "mark": ""
+      },
+      "withNoIssuerPinned": {
+        "state": "asserted",
+        "name": "alice",
+        "mark": ""
+      }
+    }
+  ]
+}

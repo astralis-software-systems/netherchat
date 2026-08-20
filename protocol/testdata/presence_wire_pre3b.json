@@ -1,0 +1,8 @@
+{
+  "hello": "{\"protocol_version\":3,\"room\":\"ops\",\"name\":\"alice\",\"identity_key\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\",\"kx_key\":\"gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp8=\"}",
+  "hello_with_invite": "{\"protocol_version\":3,\"room\":\"ops\",\"name\":\"alice\",\"identity_key\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\",\"kx_key\":\"gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp8=\",\"invite_token\":\"tok\"}",
+  "key_request": "{\"for_member\":{\"id\":\"id-a\",\"name\":\"alice\",\"identity_key\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\",\"kx_key\":\"gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp8=\"}}",
+  "member": "{\"id\":\"id-a\",\"name\":\"alice\",\"identity_key\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\",\"kx_key\":\"gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp8=\"}",
+  "member_joined": "{\"member\":{\"id\":\"id-a\",\"name\":\"alice\",\"identity_key\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\",\"kx_key\":\"gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp8=\"}}",
+  "welcome_empty": "{\"protocol_version\":3,\"your_id\":\"id-a\",\"room\":\"ops\",\"members\":[],\"you_are_first\":true,\"policy\":{\"invite_only\":false,\"webhook\":false}}"
+}

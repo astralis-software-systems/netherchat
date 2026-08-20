@@ -78,3 +78,73 @@ func TestLANFlagIsNotDisabledByConfig(t *testing.T) {
 		t.Error("neither flag nor config set must leave advertising off")
 	}
 }
+
+// THE PAIR COMMAND COULD NOT PROVISION A CREDENTIAL AT ALL.
+//
+// `connect` has taken --attestation since Phase 3a; `pair` never did. The wire
+// carries the field in both modes now, and Phase 3a routed the artifact ops
+// through the coordinator, but an operator in relay-less mode had no way to put
+// a credential on either — so pair mode was structurally credential-free while
+// every layer beneath it was ready. That is the shape roadmap §8 names: the test
+// has to start above the surface a user touches, and the surface is the flag.
+
+func TestPairAcceptsAnAttestation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "identity.json")
+	writeTestAttestation(t, path)
+
+	opts, mode, err := pairOptions([]string{"--manual", "--attestation", path}, config.Default())
+	if err != nil {
+		t.Fatalf("pairOptions: %v", err)
+	}
+	if mode != pairModeHost {
+		t.Fatalf("mode = %q, want %q", mode, pairModeHost)
+	}
+	if opts.Credential == nil {
+		t.Fatal("--attestation parsed and was dropped: sneakernet.Options.Credential is nil, so the " +
+			"relay-less Hello would carry nothing")
+	}
+	if opts.Credential.Principal != "rosa.alvarez@acme.example" {
+		t.Errorf("Credential.Principal = %q, want the artifact's", opts.Credential.Principal)
+	}
+}
+
+func TestPairWithoutAnAttestationCarriesNone(t *testing.T) {
+	opts, _, err := pairOptions([]string{"--manual"}, config.Default())
+	if err != nil {
+		t.Fatalf("pairOptions: %v", err)
+	}
+	if opts.Credential != nil {
+		t.Errorf("no --attestation produced a credential: %+v", opts.Credential)
+	}
+}
+
+// A broken --attestation is fatal rather than a quiet join without it, matching
+// `connect`: an operator who named one asked for it.
+func TestPairRefusesABrokenAttestation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "broken.json")
+	if err := os.WriteFile(path, []byte("{not an artifact"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := pairOptions([]string{"--manual", "--attestation", path}, config.Default()); err == nil {
+		t.Fatal("a broken --attestation was accepted; pair would have joined carrying nothing")
+	}
+	if _, _, err := pairOptions([]string{"--manual", "--attestation", filepath.Join(dir, "absent.json")}, config.Default()); err == nil {
+		t.Fatal("a missing --attestation file was accepted")
+	}
+}
+
+// writeTestAttestation writes a signed artifact to path, using the same builder
+// the identity command's tests use.
+func writeTestAttestation(t *testing.T, path string) {
+	t.Helper()
+	a, _ := mkAttestation(t)
+	b, err := a.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

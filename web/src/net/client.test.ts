@@ -377,3 +377,73 @@ describe("a frame the client cannot process", () => {
     expect(events.map((e) => e.t)).toEqual(["error", "connected", "keyReady"]);
   });
 });
+
+// --- Harness C: relay frames carrying an attestation -------------------------
+//
+// The same discipline as Harness B, for the field Phase 3b added. These bytes
+// came off a real relay that was handed a real identity artifact
+// (tui/e2e/presence_frames_gen_test.go; regenerate with `GEN_INTEROP=1 go test
+// ./tui/e2e -run TestGenPresenceFrames -v`). frames.json above is untouched and
+// still passing, which is the backward-compatibility half: a relay that predates
+// this field is still a relay this bundle joins.
+
+function presenceFrames(): Record<string, string> {
+  const path = fileURLToPath(new URL("./testdata/presence-frames.json", import.meta.url));
+  const parsed = JSON.parse(readFileSync(path, "utf8")) as FramesFile;
+  return parsed.frames;
+}
+
+describe("captured relay frames carrying an attestation", () => {
+  it("has a fixture for the Welcome, the MemberJoined, and the unattested control", () => {
+    expect(Object.keys(presenceFrames()).sort()).toEqual([
+      "memberJoinedAttested",
+      "welcomeEmptyRoomUnattested",
+      "welcomeWithAttestedMember",
+    ]);
+  });
+
+  it("accepts a Welcome listing an attested member and surfaces the credential unread", () => {
+    const { socket, events } = bareClient();
+    expect(() => {
+      socket.deliverRaw(presenceFrames().welcomeWithAttestedMember);
+    }).not.toThrow();
+
+    const connected = events.find((e) => e.t === "connected");
+    expect(connected?.t === "connected" && connected.members.map((m) => m.name)).toEqual(["rosa"]);
+    const member = connected?.t === "connected" ? connected.members[0] : undefined;
+    expect(member?.attestation).toBeTypeOf("string");
+    // Unread: the client hands over the bytes the relay sent and forms no opinion.
+    const artifact = JSON.parse(atob(member!.attestation!)) as Record<string, unknown>;
+    expect(artifact.netherchat_identity).toBe("v2");
+    expect(artifact.principal).toBe("rosa.alvarez@acme.example");
+  });
+
+  it("accepts a MemberJoined carrying an attestation with no display name", () => {
+    const { socket, events } = bareClient();
+    socket.deliverRaw(presenceFrames().welcomeEmptyRoomUnattested);
+    expect(() => {
+      socket.deliverRaw(presenceFrames().memberJoinedAttested);
+    }).not.toThrow();
+
+    const joined = events.find((e) => e.t === "memberJoined");
+    expect(joined?.t === "memberJoined" && joined.name).toBe("deploybot");
+    const b64 = joined?.t === "memberJoined" ? joined.attestation : undefined;
+    expect(b64).toBeTypeOf("string");
+    const artifact = JSON.parse(atob(b64!)) as Record<string, unknown>;
+    // The third verified path's input: a perfectly valid binding with no name.
+    expect(artifact.principal).toBe("svc-deploybot@acme.example");
+    expect(artifact.display_name).toBeUndefined();
+  });
+
+  it("reports undefined, not an empty string, when a real relay sends no attestation", () => {
+    const { socket, events } = bareClient();
+    socket.deliverRaw(presenceFrames().welcomeEmptyRoomUnattested);
+    const connected = events.find((e) => e.t === "connected");
+    expect(connected?.t === "connected" && connected.members).toEqual([]);
+    // And the pre-3b fixture, which no relay can produce again, still works.
+    const older = bareClient();
+    older.socket.deliverRaw(capturedFrames().welcomeNonEmptyRoom);
+    const c = older.events.find((e) => e.t === "connected");
+    expect(c?.t === "connected" && c.members[0].attestation).toBeUndefined();
+  });
+});

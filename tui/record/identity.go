@@ -147,12 +147,17 @@ type IdentityOutcome struct {
 // does not parse as an identity artifact at all.
 //
 // It is an addition to the outcome codes the format specification enumerates,
-// and it is here because that list assumes a parsed artifact while this walk
-// cannot: an entry body is an opaque signed string, so "the bytes in this entry
-// are not an identity.json" is a state only the carrier can reach. It classes as
-// malformed, which is what it is: the file is broken or from a shape this
-// version does not know.
-const ReasonMalformedArtifact attest.IdentityReason = "malformed_artifact"
+// because that list assumes a parsed artifact while a carrier cannot: an entry
+// body is an opaque signed string, so "the bytes in this entry are not an
+// identity.json" is a state only a carrier reaches. It classes as malformed,
+// which is what it is: the file is broken or from a shape this version does not
+// know.
+//
+// The definition moved to attest when the wire carrier arrived and there were
+// two carriers able to reach it. This name stays, and delegates, so every
+// existing reader of record.ReasonMalformedArtifact keeps working and there is
+// still exactly one place the code is decided.
+const ReasonMalformedArtifact = attest.ReasonMalformedArtifact
 
 // VerifyWithIdentity verifies a sealed record and, when the caller has pinned an
 // issuer, additionally surfaces the identity bindings its attestation entries

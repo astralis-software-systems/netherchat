@@ -45,6 +45,9 @@ func (m *Model) runWhois(arg string) tea.Cmd {
 	b.WriteString("@" + handle + "\n")
 	b.WriteString("  fingerprint: " + fpr + "\n")
 	b.WriteString("  pin:         " + pinStatus(entry, has, fpr))
+	if cred := m.whoisCredentialText(r, handle); cred != "" {
+		b.WriteString("\n" + strings.TrimRight(cred, "\n"))
+	}
 	m.addSystem(b.String())
 
 	if has && entry.KeysURL != "" {

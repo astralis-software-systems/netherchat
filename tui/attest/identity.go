@@ -256,6 +256,26 @@ const (
 	ReasonRevoked                IdentityReason = "revoked"                   // the serial appears in a supplied, verified revocation statement
 	ReasonUnsupportedVersion     IdentityReason = "unsupported_version"       // netherchat_identity is not IdentityVersion
 	ReasonUnsupportedAlgorithm   IdentityReason = "unsupported_algorithm"     // algorithm is not ed25519
+	// ReasonSubjectMismatch: the artifact is about a different key than the one it
+	// arrived attached to. It is the only outcome here that is about the CARRIER
+	// rather than the artifact — the signature may be perfect and the window open,
+	// and the statement still be about somebody else.
+	//
+	// It exists because an attestation is not a secret (§2.3): it grants nothing
+	// and is safe to hand around, so anyone who has seen one can attach it to
+	// their own key. VerifyIdentity answers "did this issuer sign this statement
+	// about subject X"; only the caller knows whether X is the key in front of it,
+	// and a caller that does not make that join has not established anything about
+	// the participant it is rendering.
+	ReasonSubjectMismatch IdentityReason = "subject_mismatch"
+	// ReasonMalformedArtifact: the bytes a carrier handed over are not an
+	// identity artifact at all. Every other code below describes a field inside a
+	// parsed artifact; this one is reached before parsing succeeds, so only a
+	// CARRIER can produce it — a record entry body, or an attestation that
+	// arrived on a Member/Hello. It lives here rather than beside one of those
+	// carriers because there are now two of them and a code with two definitions
+	// is a code that drifts.
+	ReasonMalformedArtifact      IdentityReason = "malformed_artifact"
 	ReasonMalformedSerial        IdentityReason = "malformed_serial"
 	ReasonMalformedSubject       IdentityReason = "malformed_subject"
 	ReasonMalformedPrincipal     IdentityReason = "malformed_principal"
@@ -325,6 +345,14 @@ func ClassOf(r IdentityReason) IdentityReasonClass {
 		return ClassUnanchored
 	case ReasonNotYetValid, ReasonExpired, ReasonRevoked:
 		return ClassLifecycle
+	case ReasonSubjectMismatch:
+		// Malformed, and the class is the interesting part. Not forged: nobody
+		// faked a signature, and reporting it as an attack would be a claim about
+		// the issuer that nothing supports. Not unanchored either: the trust
+		// relationship is fine. What is broken is the join between the artifact
+		// and the key, so as a statement about THIS participant its fields mean
+		// nothing, which is what malformed says.
+		return ClassMalformed
 	case ReasonSignatureInvalid, ReasonRevocationUnverifiable:
 		return ClassForged
 	default:

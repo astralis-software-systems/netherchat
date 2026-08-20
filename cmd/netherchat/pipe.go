@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/eventlog"
 	"github.com/salehkreiner/netherchat/tui/output"
@@ -185,10 +186,15 @@ func tailCmd(args []string) {
 	name := fs.String("name", defaultName(), "display name")
 	identity := fs.String("identity", "", "identity file path")
 	invite := fs.String("invite", "", "one-time invite token")
+	// A tail is a room MEMBER: it appears in everyone's participant list and its
+	// presence is announced like anyone else's. So it can carry the credential its
+	// operator acts under, for the same reason `connect` can — and without this it
+	// was the one long-lived participant that structurally could not.
+	attestation := fs.String("attestation", "", "your identity attestation (identity.json), carried with your presence")
 	jsonMode := fs.Bool("json", false, "emit the structured ndjson event stream (metadata only)")
 	includeBodies := fs.Bool("include-bodies", false, "with --json, include decrypted message bodies (creates a local content record)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: netherchat tail <room> [--json] [--include-bodies] [--server ws://...]")
+		fmt.Fprintln(os.Stderr, "usage: netherchat tail <room> [--json] [--include-bodies] [--attestation <identity.json>] [--server ws://...]")
 		fs.PrintDefaults()
 	}
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
@@ -198,7 +204,17 @@ func tailCmd(args []string) {
 	room := strings.TrimPrefix(args[0], "#")
 	_ = fs.Parse(args[1:])
 
-	c, err := dialErr(*url, room, *name, *identity, *invite, 15*time.Second)
+	// Fatal rather than a quiet join without it, matching `connect` and `pair`.
+	var credential *attest.IdentityAttestation
+	if *attestation != "" {
+		a, aerr := readAttestation(*attestation)
+		if aerr != nil {
+			output.Fatal(*jsonMode, aerr)
+		}
+		credential = a
+	}
+
+	c, err := dialErr(*url, room, *name, *identity, *invite, 15*time.Second, credential)
 	if err != nil {
 		output.Fatal(*jsonMode, err)
 	}

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/internal/crypto"
 	"github.com/salehkreiner/netherchat/tui/qr"
@@ -36,9 +37,39 @@ type Options struct {
 	// than burning unilaterally; quorum <= 1 keeps instant relay-less scuttle. nil =
 	// single-actor (the pair command surfaces this loudly at startup).
 	ActionQuorum map[string]int
-	In           io.Reader
-	Out          io.Writer
-	Log          *slog.Logger
+	// Credential is this operator's own identity attestation, from --attestation.
+	// It rides on the Hello, so a relay-less peer sees it beside the name, and it
+	// accompanies any artifact approval this session sends. nil is the ordinary
+	// case and changes nothing on the wire.
+	//
+	// It is a statement ABOUT the local key, never a trust anchor: no issuer key
+	// and no evaluation time enter this package, and nothing here verifies it.
+	Credential *attest.IdentityAttestation
+	In         io.Reader
+	Out        io.Writer
+	Log        *slog.Logger
+}
+
+// newSessionClient builds the session's client and provisions it, in the order
+// the wire forces: UseIdentity before any Connect, because connecting is what
+// enqueues the Hello.
+//
+// All four Sneakernet entry points go through it — RunHost, RunJoin, and both
+// halves of RunLAN. Four field-by-field copies of this sequence is exactly the
+// shape of omission the Member literal at coordinator.go:179 already represents,
+// and one function is cheaper than a fourth guard.
+func newSessionClient(opts Options, id *crypto.Identity) (*client.Client, error) {
+	c, err := client.NewWithIdentity(directPlaceholderURL, opts.Room, opts.Name, id)
+	if err != nil {
+		return nil, err
+	}
+	if opts.Credential != nil {
+		if err := c.UseIdentity(opts.Credential); err != nil {
+			return nil, err
+		}
+	}
+	c.SetActionQuorum(opts.ActionQuorum) // relay-less: a scuttle with quorum >= 2 fails closed (§3.2)
+	return c, nil
 }
 
 func (o *Options) fill() {
@@ -80,11 +111,10 @@ func RunHost(opts Options) error {
 	_, portStr, _ := net.SplitHostPort(addr)
 	addrs := localAddrs(portStr)
 
-	c, err := client.NewWithIdentity(directPlaceholderURL, opts.Room, opts.Name, id)
+	c, err := newSessionClient(opts, id)
 	if err != nil {
 		return err
 	}
-	c.SetActionQuorum(opts.ActionQuorum) // relay-less: a scuttle with quorum >= 2 fails closed (§3.2)
 	if err := c.ConnectWith(co.Loopback()); err != nil {
 		return err
 	}
@@ -146,11 +176,10 @@ func RunJoin(opts Options) error {
 		fmt.Fprintf(opts.Out, "\nYour answer (share with the host so they can confirm your identity):\n%s\n\n", answer.Armor("answer"))
 	}
 
-	c, err := client.NewWithIdentity(directPlaceholderURL, opts.Room, opts.Name, id)
+	c, err := newSessionClient(opts, id)
 	if err != nil {
 		return err
 	}
-	c.SetActionQuorum(opts.ActionQuorum) // relay-less: a scuttle with quorum >= 2 fails closed (§3.2)
 	dt, err := dialAny(offer.Addrs, id, offer.Fpr)
 	if err != nil {
 		return fmt.Errorf("connect to host (it must be reachable at one of %v): %w", offer.Addrs, err)

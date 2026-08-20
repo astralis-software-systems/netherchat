@@ -78,6 +78,11 @@ var identitySymbols = []string{
 	"IdentityAttestation", "IdentitySpec", "IdentityOptions", "IdentityResult",
 	"IdentityReason", "IdentityReasonClass", "IdentityVersion", "IdentitySchema",
 	"NewIdentityAttestation", "ParseIdentity", "VerifyIdentity",
+	// The D-I rendering decision (roadmap §2, Phase 3b). It is prose about what a
+	// verified binding LOOKS like, which is exactly the prose seam rule 2 exists
+	// to police, so its file has to be in scope.
+	"IdentityDisplay", "IdentityDisplayState", "IdentityDisplayFor",
+	"IdentityDisplayForBytes", "IdentityDisplayMark",
 	"RevocationStatement", "RevocationSpec", "RevokedSerial", "RevocationResult",
 	"RevocationCheck", "RevocationVersion",
 	"NewRevocation", "ParseRevocation", "VerifyRevocation",

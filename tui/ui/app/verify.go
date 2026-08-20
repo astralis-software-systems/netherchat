@@ -110,11 +110,7 @@ func (m *Model) verifyStatusText() string {
 	}
 	for _, id := range r.order {
 		mem := r.members[id]
-		status := "unverified"
-		if m.isVerified(mem.fpr) {
-			status = "✓ verified"
-		}
-		b.WriteString(fmt.Sprintf("  @%-14s %s\n", mem.name, status))
+		b.WriteString(fmt.Sprintf("  @%-14s %s\n", mem.displayName(), m.trustWords(mem.name, mem.fpr)))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

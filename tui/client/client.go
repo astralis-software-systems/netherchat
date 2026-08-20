@@ -36,6 +36,12 @@ type memberInfo struct {
 	name    string
 	signPub ed25519.PublicKey
 	kxPub   [32]byte
+
+	// attestation is whatever this member put on their Hello, kept unparsed and
+	// unjudged. Nothing in this package reads it: parsing is a structural check a
+	// surface does, and verification takes an issuer key and an evaluation time
+	// that live with whoever pinned one. Nil for a member who carried none.
+	attestation []byte
 }
 
 // Client is a single connection to a Netherchat server, scoped to one room.
@@ -326,6 +332,12 @@ func (c *Client) ConnectWith(t Transport) error {
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 
 	go c.writeLoop()
+	// The credential UseIdentity provisioned, or nil. Read under the lock because
+	// UseIdentity writes it, and read HERE because this is the last moment before
+	// the Hello is enqueued: provisioning after this point provisions nothing.
+	c.mu.Lock()
+	credential := c.selfCredential
+	c.mu.Unlock()
 	c.enqueue(protocol.OpHello, protocol.Hello{
 		ProtocolVersion: protocol.Version,
 		Room:            c.room,
@@ -333,6 +345,7 @@ func (c *Client) ConnectWith(t Transport) error {
 		IdentityKey:     c.id.SignPub,
 		KXKey:           c.id.KXPub[:],
 		InviteToken:     c.inviteToken,
+		Attestation:     credential,
 	})
 	go c.readLoop(recvCh)
 	return nil
@@ -739,7 +752,7 @@ func (c *Client) Members() []ConnMember {
 	defer c.mu.Unlock()
 	out := make([]ConnMember, 0, len(c.members))
 	for id, m := range c.members {
-		out = append(out, ConnMember{ID: id, Name: m.name, Fingerprint: crypto.Fingerprint(m.signPub)})
+		out = append(out, ConnMember{ID: id, Name: m.name, Fingerprint: crypto.Fingerprint(m.signPub), Attestation: m.attestation})
 	}
 	return out
 }
@@ -1119,7 +1132,7 @@ func (c *Client) onWelcome(env protocol.Envelope) {
 	for _, m := range w.Members {
 		c.addMemberLocked(m)
 		c.order = append(c.order, m.ID)
-		members = append(members, ConnMember{ID: m.ID, Name: m.DisplayName, Fingerprint: fingerprintOf(m.IdentityKey)})
+		members = append(members, ConnMember{ID: m.ID, Name: m.DisplayName, Fingerprint: fingerprintOf(m.IdentityKey), Attestation: m.Attestation})
 	}
 	c.order = append(c.order, w.YourID)
 	c.ic = c.oldestHolderLocked() // first member of the room implicitly holds IC
@@ -1156,7 +1169,7 @@ func (c *Client) onMemberJoined(env protocol.Envelope) {
 	c.addMemberLocked(mj.Member)
 	c.order = append(c.order, mj.Member.ID)
 	c.mu.Unlock()
-	c.emit(EvMemberJoined{ID: mj.Member.ID, Name: mj.Member.DisplayName, Fingerprint: fingerprintOf(mj.Member.IdentityKey)})
+	c.emit(EvMemberJoined{ID: mj.Member.ID, Name: mj.Member.DisplayName, Fingerprint: fingerprintOf(mj.Member.IdentityKey), Attestation: mj.Member.Attestation})
 }
 
 // fingerprintOf returns the ssh fingerprint of an identity key from the wire, or
@@ -1532,7 +1545,7 @@ func (c *Client) addMemberLocked(m protocol.Member) {
 	if err1 != nil || err2 != nil {
 		return
 	}
-	c.members[m.ID] = memberInfo{name: m.DisplayName, signPub: signPub, kxPub: kxPub}
+	c.members[m.ID] = memberInfo{name: m.DisplayName, signPub: signPub, kxPub: kxPub, attestation: m.Attestation}
 }
 
 func (c *Client) enqueue(op protocol.Op, payload any) {

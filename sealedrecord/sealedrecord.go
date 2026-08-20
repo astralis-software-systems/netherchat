@@ -175,6 +175,14 @@ type (
 	RevokedSerial       = attest.RevokedSerial
 	RevocationResult    = attest.RevocationResult
 	RevocationCheck     = attest.RevocationCheck
+
+	// D-I, the one rendering decision this format takes: which name a surface
+	// puts where a person's name goes. It is on the façade because the decision
+	// is meant to be taken ONCE across every surface that shows a participant,
+	// and a consumer that re-implemented it would be the second implementation
+	// this whole design exists to prevent.
+	IdentityDisplay      = attest.IdentityDisplay
+	IdentityDisplayState = attest.IdentityDisplayState
 )
 
 // The on-disk schema versions, the typed-entry schema tag, and the algorithm the
@@ -198,12 +206,25 @@ const (
 	ClassForged       = attest.ClassForged
 )
 
+// The four rows of D-I. verified_named and verified_unnamed are PEERS, not a
+// state and its fallback: an issuer may sign a binding and name no display name,
+// and rendering the principal there is a verified outcome. Collapsing it into
+// the unattested case would erase the difference between "an authority signed
+// this identifier" and "the sender typed this string".
+const (
+	IdentityDisplayVerifiedNamed   = attest.IdentityDisplayVerifiedNamed
+	IdentityDisplayVerifiedUnnamed = attest.IdentityDisplayVerifiedUnnamed
+	IdentityDisplayCarried         = attest.IdentityDisplayCarried
+	IdentityDisplayAsserted        = attest.IdentityDisplayAsserted
+)
+
 // Every outcome code the identity verifier can report. They are listed rather
 // than hidden behind an accessor because this façade mirrors the implementation
 // packages one-for-one, and because a consumer switching on an outcome wants the
 // compiler to tell it when a case disappears.
 const (
 	ReasonNoIssuerPinned         = attest.ReasonNoIssuerPinned
+	ReasonSubjectMismatch        = attest.ReasonSubjectMismatch
 	ReasonNoPinnedIssuerVerified = attest.ReasonNoPinnedIssuerVerified
 	ReasonNotYetValid            = attest.ReasonNotYetValid
 	ReasonExpired                = attest.ReasonExpired
@@ -240,4 +261,11 @@ var (
 	ParseRevocation        = attest.ParseRevocation
 	VerifyRevocation       = attest.VerifyRevocation
 	RevocationSigningBytes = attest.RevocationSigningBytes
+
+	// D-I's renderer and its mark table. IdentityDisplayFor takes the verification
+	// RESULT rather than performing one, so a surface cannot reach a verified row
+	// without having pinned an issuer key and chosen an evaluation time itself.
+	IdentityDisplayFor      = attest.IdentityDisplayFor
+	IdentityDisplayForBytes = attest.IdentityDisplayForBytes
+	IdentityDisplayMark     = attest.IdentityDisplayMark
 )

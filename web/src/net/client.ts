@@ -40,14 +40,20 @@ import {
   type RoomKey,
   type OpenedMessage,
 } from "../crypto/group";
-import type { Identity } from "../crypto/identity";
+import { sshFingerprint, type Identity } from "../crypto/identity";
 
 export type ClientEvent =
   | {
       t: "connected";
       selfID: string;
       youAreFirst: boolean;
-      members: { id: string; name: string }[];
+      // `attestation` is the member's credential exactly as it arrived, base64,
+      // or undefined. Handed over unread; see MemberRec. `fingerprint` is the
+      // SSH SHA-256 fingerprint of their identity key — the value an
+      // attestation's `subject` is written in, so a surface can ask whether a
+      // credential is even about the key it arrived on. "" when the key was
+      // malformed, which is the same thing as "no key to compare against".
+      members: { id: string; name: string; fingerprint: string; attestation?: string }[];
       policy: RoomPolicy;
     }
   | { t: "keyReady"; epoch: number }
@@ -67,7 +73,7 @@ export type ClientEvent =
   | { t: "control"; action: string; byName?: string; self?: boolean; ttlSeconds?: number }
   | { t: "execResult"; command: string; allowed: boolean; output?: string; error?: string }
   | { t: "invite"; room: string; token: string; expires?: number }
-  | { t: "memberJoined"; id: string; name: string }
+  | { t: "memberJoined"; id: string; name: string; fingerprint: string; attestation?: string }
   | { t: "memberLeft"; id: string; name: string }
   // `fatal` marks an error the client could not recover from within one frame:
   // the frame was not processed at all, so this client's state is whatever the
@@ -82,6 +88,13 @@ interface MemberRec {
   name: string;
   signPub: Uint8Array;
   kxPub: Uint8Array;
+  /**
+   * The credential this member put on their Hello, base64, or undefined. Kept
+   * unparsed and unjudged here: parsing is a structural check a surface does,
+   * and verifying takes an issuer key this page does not have and cannot get
+   * (identity/attribution.ts).
+   */
+  attestation?: string;
 }
 
 export class NetherClient {
@@ -264,7 +277,7 @@ export class NetherClient {
 
   private onWelcome(w: Welcome): void {
     this.selfID = w.your_id;
-    const members: { id: string; name: string }[] = [];
+    const members: { id: string; name: string; fingerprint: string; attestation?: string }[] = [];
     // `?? []` is not defensive padding. A Go relay marshals an empty `[]Member`
     // slice as JSON `null`, so a relay that predates the fix in
     // server/internal/hub sends `"members":null` to precisely the first joiner —
@@ -273,8 +286,8 @@ export class NetherClient {
     // never found a room. PROTOCOL.md admits relays across [MinVersion, Version]
     // and operators pin their own, so this bundle will meet older ones.
     for (const m of w.members ?? []) {
-      this.addMember(m.id, m.name, m.identity_key, m.kx_key);
-      members.push({ id: m.id, name: m.name });
+      this.addMember(m.id, m.name, m.identity_key, m.kx_key, m.attestation);
+      members.push({ id: m.id, name: m.name, fingerprint: subjectOf(m.identity_key), attestation: m.attestation });
     }
     let minted: RoomKey | null = null;
     if (w.you_are_first) {
@@ -293,8 +306,8 @@ export class NetherClient {
 
   private onMemberJoined(mj: MemberJoined): void {
     const m = mj.member;
-    this.addMember(m.id, m.name, m.identity_key, m.kx_key);
-    this.onEvent({ t: "memberJoined", id: m.id, name: m.name });
+    this.addMember(m.id, m.name, m.identity_key, m.kx_key, m.attestation);
+    this.onEvent({ t: "memberJoined", id: m.id, name: m.name, fingerprint: subjectOf(m.identity_key), attestation: m.attestation });
   }
 
   private onMemberLeft(ml: MemberLeft): void {
@@ -420,12 +433,12 @@ export class NetherClient {
     if (this.rk) this.rk = ratchet(this.rk);
   }
 
-  private addMember(id: string, name: string, identityKeyB64: string, kxKeyB64: string): void {
+  private addMember(id: string, name: string, identityKeyB64: string, kxKeyB64: string, attestation?: string): void {
     try {
       const signPub = fromB64(identityKeyB64);
       const kxPub = fromB64(kxKeyB64);
       if (signPub.length !== 32 || kxPub.length !== 32) return; // skip malformed
-      this.members.set(id, { name, signPub, kxPub });
+      this.members.set(id, { name, signPub, kxPub, attestation });
     } catch {
       // skip malformed
     }
@@ -433,5 +446,20 @@ export class NetherClient {
 
   private sendRaw(s: string): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(s);
+  }
+}
+
+/**
+ * The SSH SHA-256 fingerprint of a base64 wire key, or "" when the key is not a
+ * key. "" is the honest answer and a surface treats it as "no key to compare
+ * against" — never as a match.
+ */
+function subjectOf(identityKeyB64: string): string {
+  try {
+    const pub = fromB64(identityKeyB64);
+    if (pub.length !== 32) return "";
+    return sshFingerprint(pub);
+  } catch {
+    return "";
   }
 }

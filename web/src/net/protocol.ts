@@ -40,6 +40,21 @@ export interface WireMember {
   name: string;
   identity_key: string; // base64 Ed25519 public (32)
   kx_key: string; // base64 X25519 public (32)
+  /**
+   * The member's identity attestation, base64 of the standalone artifact's own
+   * bytes — exactly what a `identity.json` file holds, not a wire-specific
+   * shape. Absent when they carried none, which is the ordinary case.
+   *
+   * Optional on BOTH sides of the skew, and that is the whole additive claim:
+   * a relay older than this bundle never sends the key and `attestation` is
+   * `undefined`; a relay newer than a bundle that has never heard of it sends
+   * the key and `JSON.parse` drops it, because these interfaces are structural
+   * types over parsed JSON and nothing here rejects an unknown key. Declaring
+   * it `?: string` rather than `string` is what keeps the first case
+   * expressible — the same lesson `members?: WireMember[] | null` records
+   * three fields up.
+   */
+  attestation?: string; // base64 of (*IdentityAttestation).Marshal()
 }
 
 export interface Hello {
@@ -49,6 +64,14 @@ export interface Hello {
   identity_key: string;
   kx_key: string;
   invite_token?: string;
+  /**
+   * The joiner's own attestation, same bytes and same encoding as
+   * WireMember.attestation. The browser client never sets it: keys here are
+   * generated fresh per tab and no issuer can have signed one (D-J), so it is
+   * declared for completeness of the wire type and for a client that is not
+   * this one.
+   */
+  attestation?: string;
 }
 
 export interface RoomPolicy {

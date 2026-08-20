@@ -255,10 +255,20 @@ func defaultName() string {
 // dialErr connects a client core for the non-interactive modes, returning an
 // error rather than exiting — callers that support --json render the error as
 // JSON. An empty identity path means "use the BYO-key cascade".
-func dialErr(url, room, name, identity, invite string, timeout time.Duration) (*client.Client, error) {
+//
+// credential is the operator's own attestation, or nil. It is provisioned BEFORE
+// Connect because Connect enqueues the Hello, which is what carries it; and the
+// check it performs (is this statement about the key I resolved?) can only run
+// once the BYO-key cascade has decided which key that is.
+func dialErr(url, room, name, identity, invite string, timeout time.Duration, credential *attest.IdentityAttestation) (*client.Client, error) {
 	c, err := client.New(url, room, name, identity)
 	if err != nil {
 		return nil, err
+	}
+	if credential != nil {
+		if err := c.UseIdentity(credential); err != nil {
+			return nil, err
+		}
 	}
 	if invite != "" {
 		c.UseInviteToken(invite)
@@ -276,7 +286,7 @@ func dialErr(url, room, name, identity, invite string, timeout time.Duration) (*
 // in the plain-text path only — dialErr stays clean so --json/machine-readable
 // callers are unaffected. Same error line and exit code as fatal(), plus the hint.
 func dial(url, room, name, identity, invite string, timeout time.Duration) *client.Client {
-	c, err := dialErr(url, room, name, identity, invite, timeout)
+	c, err := dialErr(url, room, name, identity, invite, timeout, nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "netherchat: "+err.Error())
 		fmt.Fprintln(os.Stderr, "netherchat: no relay reachable — self-host one (docs/self-hosting.md) or go relay-less: netherchat pair --lan")

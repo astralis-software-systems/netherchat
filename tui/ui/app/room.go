@@ -3,6 +3,7 @@ package app
 import (
 	"time"
 
+	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/ui/render"
 )
@@ -49,6 +50,30 @@ type line struct {
 type memberView struct {
 	name string
 	fpr  string
+
+	// identity is the D-I attribution for this member, resolved once when they
+	// join rather than on every frame the pane redraws. It is always an
+	// unverified state here — see attribution.go on why a live room cannot reach
+	// a verified one — and holding it as an attest.IdentityDisplay rather than as
+	// raw bytes is what keeps the pane from re-deciding the question.
+	identity attest.IdentityDisplay
+}
+
+// displayName is the name D-I says to draw for this member: the signed one when
+// an issuer's statement about their key was checked here, the one they chose
+// otherwise. Today the two are always the same string, because no live surface
+// holds an issuer key (attribution.go). The call is routed through the decision
+// anyway so that the day one appears, the panes already ask the right question.
+//
+// The ADDRESSABLE handle stays `name` — /verify @bob, /whois @bob and the
+// [[trust]] lookup all key on what the sender chose, because that is what is on
+// the wire. If a signed name ever renders here they can differ, and deciding
+// what an operator types then is part of D-L rather than of this change.
+func (v memberView) displayName() string {
+	if v.identity.Name != "" {
+		return v.identity.Name
+	}
+	return v.name
 }
 
 // room is the per-room client + view state. The TUI holds one client core per
@@ -122,10 +147,30 @@ func newRoom(name string) *room {
 }
 
 func (r *room) addMember(id, name, fpr string) {
+	r.addMemberWithCredential(id, name, fpr, nil)
+}
+
+// addMemberWithCredential records a member and resolves their attribution once.
+// carried is whatever rode on their Member frame, or nil.
+func (r *room) addMemberWithCredential(id, name, fpr string, carried []byte) {
 	if _, ok := r.members[id]; !ok {
 		r.order = append(r.order, id)
 	}
-	r.members[id] = memberView{name: name, fpr: fpr}
+	r.members[id] = memberView{name: name, fpr: fpr, identity: parseCarried(name, fpr, carried)}
+}
+
+// parseCarried resolves the D-I attribution for a member of a live room.
+//
+// The nil verification result is the whole story of this surface: it is the
+// verification result, and there is never one here. Netherchat holds no trust
+// anchors (roadmap §6 rule 1) and has no issuer flag on connect (identity spec
+// §9.4), so a room can say a credential ARRIVED and can show what it claims, and
+// cannot say anything about whether it is true. Passing nil rather than
+// inventing a local check is what keeps that honest, and routing through
+// IdentityDisplayForBytes rather than reading the artifact directly is what
+// makes the day an issuer key exists a change in one function.
+func parseCarried(assertedName, fpr string, carried []byte) attest.IdentityDisplay {
+	return attest.IdentityDisplayForBytes(assertedName, fpr, carried, nil)
 }
 
 func (r *room) removeMember(id string) string {

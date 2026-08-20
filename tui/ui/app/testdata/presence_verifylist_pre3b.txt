@@ -1,0 +1,4 @@
+verification status:
+  @alice          ✓ verified
+  @bob            unverified
+  @carol          unverified

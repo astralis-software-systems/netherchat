@@ -149,6 +149,18 @@ type Member struct {
 	DisplayName string `json:"name"`         // cosmetic only; not authenticated
 	IdentityKey []byte `json:"identity_key"` // Ed25519 public key (32 bytes) — signature verification + fingerprint
 	KXKey       []byte `json:"kx_key"`       // X25519 public key (32 bytes) — recipient of wrapped room keys
+
+	// Attestation is whatever the member sent on their Hello, forwarded verbatim
+	// and unread: exactly the bytes (*attest.IdentityAttestation).Marshal()
+	// produces, which is exactly what a standalone identity.json holds. Absent
+	// when the member carried none, which is the ordinary case.
+	//
+	// It is []byte for the same reason IdentityKey and KXKey are: the relay moves
+	// it and cannot open it. Nothing on the wire path parses this, and the
+	// blind-relay boundary guard keeps the relay unable to link the code that
+	// could. What a reader does with it takes an issuer key and an evaluation
+	// time, neither of which exists on a connect path in this program.
+	Attestation []byte `json:"attestation,omitempty"`
 }
 
 // Hello is the first frame a client sends after the WebSocket opens.
@@ -159,6 +171,11 @@ type Hello struct {
 	IdentityKey     []byte `json:"identity_key"`
 	KXKey           []byte `json:"kx_key"`
 	InviteToken     string `json:"invite_token,omitempty"` // required to join an invite-only room
+
+	// Attestation is the joiner's own identity attestation, or absent. Same bytes
+	// as Member.Attestation, travelling in the other direction: the sender puts
+	// it here and the relay copies it onto the Member it announces to the room.
+	Attestation []byte `json:"attestation,omitempty"`
 }
 
 // RoomPolicy is the server-advertised capability set for a room, sent in Welcome

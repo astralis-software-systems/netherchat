@@ -464,7 +464,7 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 			r.ttl = time.Duration(e.TTLSeconds) * time.Second
 		}
 		for _, mem := range e.Members {
-			r.addMember(mem.ID, mem.Name, mem.Fingerprint)
+			r.addMemberWithCredential(mem.ID, mem.Name, mem.Fingerprint, mem.Attestation)
 		}
 		if len(e.Members) == 0 {
 			r.appendSystem("connected — you are the first one here")
@@ -501,7 +501,7 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 		}
 
 	case client.EvMemberJoined:
-		r.addMember(e.ID, e.Name, e.Fingerprint)
+		r.addMemberWithCredential(e.ID, e.Name, e.Fingerprint, e.Attestation)
 		r.appendSystem(e.Name + " joined")
 
 	case client.EvMemberLeft:
@@ -1368,10 +1368,8 @@ func (m *Model) membersView() string {
 		lines = append(lines, m.icMark(icSelf)+dot+m.user(m.name)+m.st(m.theme.Muted).Render(" (you)"))
 		for _, id := range r.order {
 			mem := r.members[id]
-			row := m.icMark(!icSelf && icFpr != "" && mem.fpr == icFpr) + dot + m.user(mem.name)
-			if m.isVerified(mem.fpr) {
-				row += m.st(m.theme.Success).Render(" ✓")
-			}
+			row := m.icMark(!icSelf && icFpr != "" && mem.fpr == icFpr) + dot + m.user(mem.displayName()) +
+				m.trustMark(mem.name, mem.fpr)
 			lines = append(lines, row)
 		}
 		// A running quorum count per active ack tag (§2.2).
@@ -1462,23 +1460,17 @@ func (m *Model) renderBody(r *room, header, body string, baseID int) (string, in
 	return m.wrap(header) + "\n" + out, blocks
 }
 
-// badge returns the trust indicator drawn after a message sender's name (§3.3):
+// badge returns the trust indicator drawn after a message sender's name (§3.3).
 //
-//	✓✓  signed + SAS-verified (you read the words out of band)
-//	✓   signed + trust-pinned (fingerprint matches a [[trust]] pin)
-//	(none) signed but neither pinned nor verified — signed is the baseline
-//	?   unsigned (legacy / pre-v3 sender)
+// Signedness is a property of the FRAME and is settled here — `?` says this
+// particular message carried no signature. Everything after it is a property of
+// the PEER and comes from trustMark, which the participants panel calls too;
+// attribution.go holds the vocabulary and the reason it is one function.
 func (m *Model) badge(l line) string {
 	if !l.signed {
 		return m.st(m.theme.Warn).Render(" ?")
 	}
-	if m.isVerified(l.fpr) {
-		return m.st(m.theme.Success).Bold(true).Render(" ✓✓")
-	}
-	if m.isPinned(l.from, l.fpr) {
-		return m.st(m.theme.Success).Render(" ✓")
-	}
-	return ""
+	return m.trustMark(l.from, l.fpr)
 }
 
 // isPinned reports whether fpr matches a [[trust]] pin for the given handle.

@@ -4,6 +4,39 @@
 // this visit only; closing the tab discards it. The crypto and wire protocol are
 // byte-identical to the Go TUI (see ../crypto, ../net), so a browser guest and a
 // terminal user share the same war room transparently.
+//
+// # D-J: CAN A BROWSER PARTICIPANT HOLD AN ATTESTED KEY? NO, AND IT IS STRUCTURAL
+//
+// An attestation binds a SUBJECT — the SHA-256 fingerprint of one Ed25519 public
+// key — inside the issuer's signature. The key therefore has to exist before the
+// issuer signs. This client calls newEphemeralIdentity() inside startChat, so
+// the key is minted after the tab opens and no issuer can ever have seen it. A
+// browser joiner is unattested BY CONSTRUCTION, not by omission, and the roster
+// says so: no mark, and a tooltip reading "what the sender typed. It is not
+// proven."
+//
+// Three ways it could hold one, and what each costs:
+//
+//  1. Persist a key per browser profile — a non-extractable WebCrypto key in
+//     IndexedDB, enrolled once out of band — and store the attestation beside it.
+//     Cost: "keys are generated fresh in your browser and never leave it, close
+//     the tab and you're gone" stops being true, which is the headline promise of
+//     the gate screen. It also makes a shared or kiosk browser a credential
+//     holder with no OS keychain to put anything in, and this bundle is served by
+//     the relay, so a compromised relay would gain reach over a key that today
+//     dies with the tab.
+//  2. Carry a credential in — the user supplies identity.json AND the matching
+//     private key. Cost: the same loss of ephemerality, plus a long-lived private
+//     key through a text field, and anyone who HAS a key file has a terminal.
+//  3. Enrol live — the tab mints a key, shows its fingerprint, and an issuer
+//     signs it during the session. Cost: an issuer service online and in the loop
+//     at join time, which is the identity provider this whole design exists
+//     without.
+//
+// Decided: none of them here. The link-join client stays unattested, and the
+// absence is rendered rather than hidden. If an attested browser participant is
+// ever needed it is option 1 in a DIFFERENT client, with the ephemerality promise
+// explicitly withdrawn on that surface — not a flag added to this one.
 
 import "../styles/tokens.css";
 import "../styles/fonts.css";
@@ -11,6 +44,7 @@ import "./join.css";
 import { NetherClient, type ClientEvent } from "../net/client";
 import { pageRelay } from "../net/protocol";
 import { newEphemeralIdentity } from "../crypto/identity";
+import { identityDisplayFor, identityDisplayMark, identityDisplayLabel } from "../identity/attribution";
 
 const app = document.getElementById("app")!;
 
@@ -130,6 +164,8 @@ const NO_KEY_ADVICE =
 
 function startChat(roomName: string, name: string): void {
   const ui = renderChat(roomName);
+  ui.selfName = name;
+  renderRoster(ui); // "just you", before the socket has said anything
 
   const client = new NetherClient(
     relay.url,
@@ -178,6 +214,18 @@ function clearKeyDeadline(ui: ChatUI): void {
   }
 }
 
+/** One person in the roster, as this page knows them. */
+interface RosterEntry {
+  id: string;
+  name: string;
+  /** SSH SHA-256 fingerprint of their identity key: the value an attestation's
+   * `subject` names, so the roster can ask whether a credential is about the key
+   * it arrived on. Empty for you, whose key is not on the wire from anyone. */
+  fingerprint: string;
+  /** base64 of their identity artifact, or undefined. Never verified here. */
+  attestation?: string;
+}
+
 interface ChatUI {
   form: HTMLFormElement;
   input: HTMLInputElement;
@@ -185,6 +233,10 @@ interface ChatUI {
   status: HTMLElement;
   statusText: HTMLElement;
   count: HTMLElement;
+  /** The named roster (D-I), in join order, excluding you. */
+  roster: HTMLElement;
+  people: RosterEntry[];
+  selfName: string;
   members: number;
   /** Whether the one-time "what unsigned means" note has been shown. */
   explainedUnsigned: boolean;
@@ -214,6 +266,15 @@ function renderChat(roomName: string): ChatUI {
   head.appendChild(count);
   chat.appendChild(head);
 
+  // The roster. Before this the header said "3 here" and nothing else — a count
+  // with no names, which is the same gap /roster --signed has in the TUI. It is
+  // its own strip rather than a sidebar because this client is one column on a
+  // phone as often as not.
+  const roster = div("nc-roster");
+  roster.setAttribute("role", "list");
+  roster.setAttribute("aria-label", "people in this room");
+  chat.appendChild(roster);
+
   const messages = div("nc-messages");
   chat.appendChild(messages);
 
@@ -234,7 +295,60 @@ function renderChat(roomName: string): ChatUI {
 
   app.appendChild(chat);
 
-  return { form, input, messages, status, statusText, count, members: 0, explainedUnsigned: false };
+  return {
+    form, input, messages, status, statusText, count, roster,
+    people: [], selfName: "", members: 0, explainedUnsigned: false,
+  };
+}
+
+/**
+ * Redraw the roster. D-I, in a browser (web/src/identity/attribution.ts):
+ *
+ *   - the name drawn is `entry.name`, the name the sender chose, because this
+ *     page cannot check any other one. It holds no issuer key, has no way to be
+ *     given one, and a credential's own display_name is a string a sender put
+ *     in a JSON object.
+ *   - a peer carrying a credential gets ◇ — a claim arrived and nobody checked
+ *     it — never ✓ and never ◆.
+ *   - the claim itself is in the tooltip and the accessible name, so a glyph is
+ *     never the only carrier of the meaning.
+ *
+ * Every string here goes through textContent or a property assignment. Names,
+ * principals and issuer fingerprints are all attacker-influenced.
+ */
+function renderRoster(ui: ChatUI): void {
+  ui.roster.replaceChildren();
+  const entries: RosterEntry[] = [{ id: "", name: ui.selfName, fingerprint: "" }, ...ui.people];
+  for (const e of entries) {
+    const chip = div("nc-person");
+    chip.setAttribute("role", "listitem");
+
+    // The decision FIRST, and the name comes out of it. Drawing e.name and then
+    // asking the decision only for a mark would give the right answer today by
+    // coincidence — identityDisplayFor cannot reach a verified state here, so
+    // display.name is always e.name — and the wrong one on the day a surface can
+    // verify. It also makes the guard vacuous: a version of this file that
+    // promoted an unchecked display_name passed the live browser test, because
+    // nothing on screen was reading the decision's name at all.
+    const display = identityDisplayFor(e.name, e.fingerprint, e.attestation);
+    const label = span("nc-person-name", display.name);
+    label.style.color = nameColor(display.name);
+    chip.appendChild(label);
+    if (e.id === "") {
+      chip.appendChild(span("nc-person-you", " (you)"));
+    }
+    const mark = identityDisplayMark(display.state);
+    if (mark) {
+      const glyph = span("nc-person-mark", mark);
+      glyph.title = identityDisplayLabel(display);
+      glyph.setAttribute("aria-label", identityDisplayLabel(display));
+      chip.appendChild(glyph);
+    } else {
+      chip.title = identityDisplayLabel(display);
+    }
+    ui.roster.appendChild(chip);
+  }
+  setMembers(ui, entries.length);
 }
 
 // --- event handling ---------------------------------------------------------
@@ -242,7 +356,8 @@ function renderChat(roomName: string): ChatUI {
 function onEvent(ui: ChatUI, e: ClientEvent): void {
   switch (e.t) {
     case "connected":
-      setMembers(ui, e.members.length + 1);
+      ui.people = e.members.map((m) => ({ id: m.id, name: m.name, fingerprint: m.fingerprint, attestation: m.attestation }));
+      renderRoster(ui);
       // In the room, no key yet. This state is the one the client was missing, and
       // its absence is what made two different defects look identical on screen: a
       // Welcome that threw before emitting anything left the pill at "connecting…",
@@ -276,11 +391,13 @@ function onEvent(ui: ChatUI, e: ClientEvent): void {
       }
       break;
     case "memberJoined":
-      setMembers(ui, ui.members + 1);
+      ui.people = [...ui.people, { id: e.id, name: e.name, fingerprint: e.fingerprint, attestation: e.attestation }];
+      renderRoster(ui);
       addLine(ui, "nc-sys", `${e.name} joined`);
       break;
     case "memberLeft":
-      setMembers(ui, Math.max(0, ui.members - 1));
+      ui.people = ui.people.filter((m) => m.id !== e.id);
+      renderRoster(ui);
       addLine(ui, "nc-sys", `${e.name} left`);
       break;
     case "error":

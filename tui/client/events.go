@@ -16,6 +16,14 @@ type ConnMember struct {
 	ID          string
 	Name        string
 	Fingerprint string // ssh-keygen-format fingerprint of the member's identity key
+
+	// Attestation is the credential this member put on their Hello, exactly as it
+	// arrived — the standalone identity artifact's bytes — or nil when they
+	// carried none. It is handed over unread, for the reason
+	// EvArtifactApproved.Attestation gives: a surface that wants a name parses it,
+	// and only a reader holding an issuer key can say whether it is worth
+	// anything. Name above is still the string the sender chose.
+	Attestation []byte
 }
 
 // EvConnected is emitted once, after the server's Welcome is processed.
@@ -512,8 +520,13 @@ type EvMessage struct {
 	At       time.Time
 }
 
-// EvMemberJoined / EvMemberLeft track room membership.
-type EvMemberJoined struct{ ID, Name, Fingerprint string }
+// EvMemberJoined / EvMemberLeft track room membership. Attestation is the
+// arriving member's credential as it arrived, or nil; see ConnMember for what it
+// is and is not.
+type EvMemberJoined struct {
+	ID, Name, Fingerprint string
+	Attestation           []byte
+}
 type EvMemberLeft struct{ ID, Name string }
 
 // EvError is a non-fatal error (e.g. a single message failed to decrypt).

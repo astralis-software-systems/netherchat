@@ -176,7 +176,10 @@ func (co *Coordinator) serveMember(fc *frameConn, peerPub ed25519.PublicKey) {
 	}()
 
 	m := &coMember{
-		info:  protocol.Member{ID: id, DisplayName: hello.DisplayName, IdentityKey: hello.IdentityKey, KXKey: hello.KXKey},
+		// The third construction site (identity spec §4.6). It is field by field like
+		// the relay's, and it is the one interop-live cannot reach, because
+		// interop-live runs a relay and this path exists precisely to have none.
+		info:  protocol.Member{ID: id, DisplayName: hello.DisplayName, IdentityKey: hello.IdentityKey, KXKey: hello.KXKey, Attestation: hello.Attestation},
 		send:  send,
 		close: closeConn,
 	}

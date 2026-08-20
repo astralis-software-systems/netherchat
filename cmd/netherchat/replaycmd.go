@@ -78,7 +78,7 @@ func replayCmd(args []string) {
 		output.Fatal(*jsonMode, fmt.Errorf("refusing to replay a record that does not verify: %s", res.Reason))
 	}
 
-	c, err := dialErr(*url, room, *name, *identity, *invite, *timeout)
+	c, err := dialErr(*url, room, *name, *identity, *invite, *timeout, nil)
 	if err != nil {
 		output.Fatal(*jsonMode, err)
 	}

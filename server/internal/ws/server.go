@@ -148,6 +148,9 @@ func (s *Server) serve(ctx context.Context, c *websocket.Conn) {
 			DisplayName: hello.DisplayName,
 			IdentityKey: hello.IdentityKey,
 			KXKey:       hello.KXKey,
+			// Copied, not read. The relay moves these bytes to the room exactly as it
+			// moves the two public keys above, and parses none of them.
+			Attestation: hello.Attestation,
 		},
 		Send:  cn.send,
 		Close: func() { _ = c.Close(websocket.StatusNormalClosure, "closed by server") },

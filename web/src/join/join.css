@@ -294,3 +294,40 @@
   flex: 1;
   font-family: var(--font-mono);
 }
+
+/* ---------- roster (D-I) ---------- */
+
+/* Who is here, by name. The header count answered "how many"; this answers
+   "who", which is the question a war room actually has. A strip rather than a
+   sidebar because this client is one narrow column as often as not. */
+.nc-roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+.nc-person {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+.nc-person-name {
+  font-weight: 600;
+}
+.nc-person-you {
+  color: var(--muted);
+}
+
+/* ◇ — a credential arrived and this page did not check it. Muted, never the
+   success colour: colour carries meaning here and nothing has succeeded. It is
+   deliberately not a ✓, which in this product means "this client checked
+   something itself"; see src/identity/attribution.ts. The words are on the
+   title and the aria-label, so the glyph is never the only carrier. */
+.nc-person-mark {
+  color: var(--muted);
+  cursor: help;
+}

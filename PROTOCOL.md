@@ -116,6 +116,47 @@ client                          server
 
 The server then broadcasts `member_joined{member}` to the existing members.
 
+### `attestation` — the identity carrier on presence (NC-W1)
+
+`hello` and `member` both carry an OPTIONAL `attestation`: base64 of the standalone
+identity artifact's own bytes, exactly what `(*IdentityAttestation).Marshal()`
+produces and exactly what an `identity.json` file holds. One format, one parser,
+one verifier, three transports (a file, a record entry, and this) — there is no
+wire-specific shape.
+
+```json
+// hello                                    // member (in welcome.members, member_joined, key_request)
+{ "protocol_version": 3, "room": "ops",     { "id": "9d6dfbc91466e685",
+  "name": "rosa",                             "name": "rosa",
+  "identity_key": "<base64>",                 "identity_key": "<base64>",
+  "kx_key": "<base64>",                       "kx_key": "<base64>",
+  "attestation": "<base64 identity.json>" }   "attestation": "<base64 identity.json>" }
+```
+
+The relay copies the field from the `hello` onto the `member` it announces and
+never parses it, exactly as it already does for `identity_key` and `kx_key`. The
+Sneakernet coordinator (§1.1) does the same, so presence attribution does not
+depend on which transport a room is running on.
+
+**Additive both ways.** The key is `omitempty`, so a client carrying no credential
+produces frames byte-identical to one built before the field existed. An older
+peer receiving the key ignores it — every wire struct decodes with a plain
+`json.Unmarshal` and `DisallowUnknownFields` appears on no wire type in either
+implementation, and the TypeScript interfaces are structural types over
+`JSON.parse`. A newer peer receiving an older frame gets an absent value, which is
+"carried none", not an error. Unlike the approval field (§17), **no signature
+covers this one**: `attestation` is not in any preimage, so a relay that stripped
+it would degrade a name to unattested and could not forge one — the artifact's own
+issuer signature is what makes it worth anything, and that is checked by whoever
+pinned the issuer, not here.
+
+**Nothing on this path verifies it.** Netherchat holds no issuer keys and has no
+issuer flag on `connect`, so a credential arriving on presence is an unchecked
+claim in every client that receives it. Clients render the name the sender chose
+and mark the claim as present-and-unchecked; they do not render its `display_name`
+as the participant's name. See §17 for what a relay operator and a room member
+each learn.
+
 ## 5. Room keys and epochs
 
 A room has a 32-byte symmetric **room key** for the current **epoch**. Epoch 0 is
@@ -491,6 +532,36 @@ could. One honest consequence: a credential carried this way states an
 enterprise-shaped principal, and a relay operator sees that opaque blob go past —
 the attestation is not a secret and grants nothing, but a self-hosted relay is
 doing real work in that sentence.
+
+**What presence exposes is larger than what approval exposes, and it is worth
+stating separately.** §4's `attestation` on `hello`/`member` is a different
+disclosure from the sentence above, in three ways:
+
+- **It is broadcast, not incidental.** An approval's credential goes past a relay
+  operator once, when somebody approves something. A presence credential goes to
+  **every member of the room, at join time, every time anyone joins** — and to
+  every member already present, in their `welcome`. Nobody has to do anything to
+  disclose it; joining is the disclosure.
+- **What a relay operator learns:** for every attested participant, at join time,
+  in cleartext — the principal (a UPN, an email, an employee id), the signed
+  display name, the role list, the validity window, the serial, and the issuing
+  authority's fingerprint and public key. Not the room's messages, not any key
+  material, and nothing it can verify. Correlation is the real change: the relay
+  already knew *"a key with this fingerprint was in room #incident-4432 at 03:47"*
+  and now knows *whose* key, by an identifier that resolves in the organization's
+  directory. **Attestations are not secrets and grant nothing, and a room roster
+  keyed to real names is still a different artifact from a room roster keyed to
+  fingerprints.** Anyone deploying this should read it as: the relay operator
+  learns who was in which room and when. Self-hosting is what that sentence rests
+  on.
+- **What a room member learns:** the same fields, for every other participant —
+  which is the point, since a name beside a person is the feature. A member also
+  learns them about people they never interact with, and a member is not
+  necessarily the same trust level as the relay operator.
+
+**A participant who carries no credential discloses exactly what they did
+before.** Absence is the default and produces byte-identical frames, so this is
+opt-in per participant, per session, by supplying `--attestation`.
 
 **Netherchat holds no issuer keys and never decides whether a role is enough.** A
 role is only ever a selection from the set an issuer signed into the approver's own

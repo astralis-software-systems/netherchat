@@ -1,0 +1,11 @@
+fingerprint: SHA256:MEMEMEMEMEMEMEMEMEMEMEMEMEMEMEMEMEMEMEMEMEM
+identity:    key file (~/.ssh/id_ed25519)
+name:        me
+transport:   relay ws://localhost:3000 (connecting…)
+governance:  single-actor (no [action.*] quorum > 1)
+notifications: off
+mouse:       off
+room:        #ops
+encryption:  end-to-end encrypted (NaCl: X25519 + XChaCha20-Poly1305)
+verified:    1 of 3 peers (SAS)
+policy:      open

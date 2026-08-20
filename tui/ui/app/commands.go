@@ -367,11 +367,7 @@ func (m *Model) rosterText(r *room) string {
 	fmt.Fprintf(&b, "  %-16s %s  (you)\n", m.name, m.fingerprint)
 	for _, id := range r.order {
 		mem := r.members[id]
-		status := "unverified"
-		if m.isVerified(mem.fpr) {
-			status = "✓ verified"
-		}
-		fmt.Fprintf(&b, "  %-16s %s  %s\n", mem.name, mem.fpr, status)
+		fmt.Fprintf(&b, "  %-16s %s  %s\n", mem.displayName(), mem.fpr, m.trustWords(mem.name, mem.fpr))
 	}
 	b.WriteString("  (run /roster --signed to write a co-signed attestation)")
 	return b.String()
@@ -1160,6 +1156,10 @@ func (m *Model) whoamiText(r *room) string {
 	b.WriteString("name:        " + m.name + "\n")
 	b.WriteString("transport:   " + m.transportLabel(r) + "\n")
 	b.WriteString("governance:  " + m.governanceSummary() + "\n")
+	// Absent when nothing is provisioned: a bare "credential:" reads as an issuer
+	// having signed a blank, which is not a state that exists (§9.3), and it
+	// would move a surface that must not move on an unprovisioned client.
+	b.WriteString(m.ownCredentialText())
 	b.WriteString("notifications: " + m.notifier.Summary() + "\n")
 	b.WriteString("mouse:       " + mouseState(m.mouseOn) + "\n")
 	if r != nil {

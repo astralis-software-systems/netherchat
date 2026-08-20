@@ -7,6 +7,9 @@ import { newEphemeralIdentity, fingerprint } from "../src/crypto/identity";
 import { signingBytes } from "../src/crypto/signing";
 import { deriveBeaconKey, openBeacon } from "../src/crypto/beacon";
 import { parseBeaconLink } from "../src/beacon/link";
+import { identityDisplayFor, identityDisplayMark } from "../src/identity/attribution";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 // Protocol v3 vector (room-bound signature) from protocol's TestGenInteropVector.
 const VECTOR = {
@@ -154,5 +157,38 @@ const BEACON = {
   check("query-string key is refused", !legacy.ok && legacy.problem === "key-in-query");
 }
 
+
+// 12. D-I attribution: the Go-generated vectors, replayed through the browser
+// implementation. Same file the vitest suite uses; this runner exists so a
+// restricted environment can still prove the two languages agree.
+{
+  const path = fileURLToPath(new URL("../src/net/testdata/attribution.json", import.meta.url));
+  const vectors = JSON.parse(readFileSync(path, "utf8")) as {
+    cases: {
+      name: string;
+      assertedName: string;
+      subjectFingerprint: string;
+      attestationB64: string;
+      withIssuerPinned: { state: string; name: string; mark: string };
+      withNoIssuerPinned: { state: string; name: string; mark: string };
+    }[];
+  };
+  let agree = 0;
+  let promoted = 0;
+  for (const c of vectors.cases) {
+    const got = identityDisplayFor(c.assertedName, c.subjectFingerprint, c.attestationB64 || undefined);
+    const mine = { state: got.state as string, name: got.name, mark: identityDisplayMark(got.state) };
+    if (JSON.stringify(mine) === JSON.stringify(c.withNoIssuerPinned)) agree++;
+    // A browser must never render a credential's own display_name as the name.
+    if (got.name !== c.assertedName) promoted++;
+  }
+  check(`agrees with Go on all ${vectors.cases.length} attribution vectors`, agree === vectors.cases.length && vectors.cases.length >= 5);
+  check("never promotes an unchecked credential's name", promoted === 0);
+  check(
+    "the vectors carry rows that verify under a pinned issuer this client cannot be",
+    vectors.cases.filter((c) => c.withIssuerPinned.mark === "◆").length >= 2 &&
+      vectors.cases.every((c) => c.withNoIssuerPinned.mark !== "◆"),
+  );
+}
 console.log(failures === 0 ? "\nALL INTEROP CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
