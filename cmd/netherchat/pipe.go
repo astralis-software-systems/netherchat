@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/salehkreiner/netherchat/internal/cliargs"
 	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/client"
 	"github.com/salehkreiner/netherchat/tui/eventlog"
@@ -34,9 +35,53 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 //
 //	netherchat send --file heap.prof --room ops --server ws://host:3000
 func sendCmd(args []string) {
+	a, fs := parseSendArgs(args)
+	if a.room == "" {
+		fs.Usage()
+		os.Exit(2)
+	}
+
+	if a.file != "" {
+		c := dial(a.url, a.room, a.name, a.identity, a.invite, a.timeout)
+		defer c.Close()
+		if err := sendFileAfterKey(c, a.file, a.timeout); err != nil {
+			fatal(err)
+		}
+		return
+	}
+
+	msg := a.msg
+	if msg == "" {
+		b, _ := io.ReadAll(os.Stdin)
+		b = bytes.TrimPrefix(b, utf8BOM)
+		msg = strings.TrimRight(string(b), "\r\n")
+	}
+	if msg == "" {
+		fatal(errors.New("nothing to send (give a message argument, pipe it via stdin, or use --file)"))
+	}
+
+	c := dial(a.url, a.room, a.name, a.identity, a.invite, a.timeout)
+	defer c.Close()
+	if err := sendAfterKey(c, msg, a.timeout); err != nil {
+		fatal(err)
+	}
+}
+
+// sendArgs is one `netherchat send` command line, resolved.
+type sendArgs struct {
+	url, room, name, identity, invite, file, msg string
+	timeout                                      time.Duration
+}
+
+// parseSendArgs turns argv into what sendCmd runs on. It is a separate function
+// because the flag is the surface a user touches and a test has to start there
+// (roadmap §8) — the same split `runVerify` and `parseConnectFlags` already
+// carry, and for the same reason: a flag parsed here and not passed on is
+// invisible to a test that begins below this line.
+func parseSendArgs(args []string) (sendArgs, *flag.FlagSet) {
 	fs := flag.NewFlagSet("send", flag.ExitOnError)
 	url := fs.String("server", "ws://localhost:3000", "server URL")
-	roomFlag := fs.String("room", "", "room (use this with --file, where there is no positional room)")
+	roomFlag := fs.String("room", "", "room (use this with --file, where there is no positional room; with it, every positional is message text)")
 	name := fs.String("name", defaultName(), "display name")
 	identity := fs.String("identity", "", "identity file path")
 	invite := fs.String("invite", "", "one-time invite token")
@@ -49,47 +94,45 @@ func sendCmd(args []string) {
 		fs.PrintDefaults()
 	}
 
-	// The room is the first positional (message form) or --room (file form, where
-	// the first argument is a flag and Go's parser would stop at it).
+	// `send` is the one command with more than one positional — a room and then
+	// the message words — and that is what made it the worst case of the
+	// flags-after-positionals class. Peeling the leading room and calling
+	// fs.Parse on the rest left the parser stopped at the message, so
+	//
+	//	send airgap "relay is on a LAN" --server ws://192.168.0.203:3000
+	//
+	// parsed no --server, dialled the DEFAULT relay, and joined the flags into
+	// the message — encrypting an --identity path, or a one-time --invite token,
+	// into a room as chat text. cliargs.Parse takes the flags wherever they were
+	// typed and hands back only the positionals.
+	//
+	// One consequence, stated because it is a real behaviour change: a message
+	// WORD that begins with "-" is now parsed as a flag and rejected instead of
+	// being sent. The first such word already was (fs.Parse ran straight into
+	// it), so this extends an existing rule rather than inventing one, and "--"
+	// passes anything through verbatim: send ops -- --not-a-flag.
+	pos := cliargs.Parse(fs, args)
+
+	// The room is --room, or the first positional when --room is absent. The
+	// flag is checked FIRST and consumes no positional: --room exists for the
+	// form that has no positional room (--file), so when it is given, every
+	// positional is message text. Taking pos[0] as the room first and letting
+	// --room overwrite it would silently drop a message word into nothing, which
+	// is the failure this whole change is about.
 	var room string
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		room = strings.TrimPrefix(args[0], "#")
-		_ = fs.Parse(args[1:])
-	} else {
-		_ = fs.Parse(args)
-	}
-	if *roomFlag != "" {
+	switch {
+	case *roomFlag != "":
 		room = strings.TrimPrefix(*roomFlag, "#")
-	}
-	if room == "" {
-		fs.Usage()
-		os.Exit(2)
-	}
-
-	if *file != "" {
-		c := dial(*url, room, *name, *identity, *invite, *timeout)
-		defer c.Close()
-		if err := sendFileAfterKey(c, *file, *timeout); err != nil {
-			fatal(err)
-		}
-		return
+	case len(pos) > 0:
+		room = strings.TrimPrefix(pos[0], "#")
+		pos = pos[1:]
 	}
 
-	msg := strings.Join(fs.Args(), " ")
-	if msg == "" {
-		b, _ := io.ReadAll(os.Stdin)
-		b = bytes.TrimPrefix(b, utf8BOM)
-		msg = strings.TrimRight(string(b), "\r\n")
-	}
-	if msg == "" {
-		fatal(errors.New("nothing to send (give a message argument, pipe it via stdin, or use --file)"))
-	}
-
-	c := dial(*url, room, *name, *identity, *invite, *timeout)
-	defer c.Close()
-	if err := sendAfterKey(c, msg, *timeout); err != nil {
-		fatal(err)
-	}
+	return sendArgs{
+		url: *url, room: room, name: *name, identity: *identity,
+		invite: *invite, file: *file, timeout: *timeout,
+		msg: strings.Join(pos, " "),
+	}, fs
 }
 
 // sendFileAfterKey waits for the room key, starts a secure artifact transfer, and
@@ -197,12 +240,11 @@ func tailCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: netherchat tail <room> [--json] [--include-bodies] [--attestation <identity.json>] [--server ws://...]")
 		fs.PrintDefaults()
 	}
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+	room := strings.TrimPrefix(parseFlags1("netherchat tail", fs, args), "#")
+	if room == "" {
 		fs.Usage()
 		os.Exit(2)
 	}
-	room := strings.TrimPrefix(args[0], "#")
-	_ = fs.Parse(args[1:])
 
 	// Fatal rather than a quiet join without it, matching `connect` and `pair`.
 	var credential *attest.IdentityAttestation

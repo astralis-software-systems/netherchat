@@ -48,7 +48,7 @@ func attestCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: netherchat attest --room <room> --file <identity.json> [--file <another>] [--server ws://...]")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(args)
+	parseFlags("netherchat attest", fs, args)
 
 	if *room == "" || len(files) == 0 {
 		fs.Usage()

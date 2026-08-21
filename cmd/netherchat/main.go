@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/salehkreiner/netherchat/internal/cliargs"
 	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/tui/attest"
@@ -134,23 +135,47 @@ func newConnectFlagSet(f *connectFlags) *flag.FlagSet {
 	return fs
 }
 
-// parseConnectFlags peels the optional leading server URL and parses the rest.
+// parseConnectFlags parses one `connect` command line and returns the flags and
+// the relay URL, which is the command's single optional positional.
 //
-// The URL comes off FIRST, or Go's flag parser stops at it and silently ignores
-// --room/--name so they fall back to defaults — the same reason sendCmd peels
-// its positional room first. This is what made --name lose to $USER.
+// It used to peel a LEADING positional URL and parse what followed, because
+// Go's flag parser stops at the first non-flag argument and would otherwise
+// silently ignore --room/--name — the bug that made --name lose to $USER. That
+// peel fixed one order and left the other live: `connect --room ops
+// ws://relay:3000` put the URL after a flag, nothing peeled it, fs.Args() was
+// discarded, and the client connected to ws://localhost:3000 while the operator
+// watched a room they did name appear on a relay they did not.
+//
+// cliargs.Parse parses flags wherever they appear, so both orders work and
+// neither drops anything. A second positional is refused rather than ignored.
 func parseConnectFlags(args []string) (connectFlags, string) {
 	var f connectFlags
 	fs := newConnectFlagSet(&f)
-	var url string
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		url, args = args[0], args[1:]
-	}
-	_ = fs.Parse(args)
+	url := parseFlags1("netherchat connect", fs, args)
 	if url == "" {
 		url = "ws://localhost:3000"
 	}
 	return f, url
+}
+
+// parseFlags parses a subcommand's flags — wherever on the line they appear —
+// and refuses a positional argument the command has nothing to do with. name is
+// the command as an operator types it, because that is what they will search
+// for when they read the refusal.
+//
+// The exit status is 2, matching flag.ExitOnError: an argument the command
+// cannot use is a malformed command line, the same class as an unknown flag,
+// and not the class of a runtime failure (fatal, exit 1).
+func parseFlags(name string, fs *flag.FlagSet, args []string) {
+	cliargs.MustParse(name, fs, args, 0)
+}
+
+// parseFlags1 is parseFlags for a command that takes one positional — a room, a
+// record path, an engagement directory. It returns that positional, or "" when
+// none was given: absence is an error for `verify` and legitimate for `send`
+// (which also accepts --room), so the caller decides.
+func parseFlags1(name string, fs *flag.FlagSet, args []string) string {
+	return cliargs.First(cliargs.MustParse(name, fs, args, 1))
 }
 
 // connectOpts is everything the flags produce, resolved: files read, keys

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/salehkreiner/netherchat/connector"
+	"github.com/salehkreiner/netherchat/internal/cliargs"
 	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/slack"
 	"github.com/salehkreiner/netherchat/tui/client"
@@ -169,7 +170,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "\nusage:\n  netherchat-slack-notify --room ops --webhook <slack-url> --on open,seal,scuttle --server ws://...")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(os.Args[1:])
+	// No positional arguments: a stray one used to make every flag after it
+	// invisible (internal/cliargs). Refuse it rather than start on defaults.
+	cliargs.MustParse("netherchat-slack-notify", fs, os.Args[1:], 0)
 
 	cfg := loadConfig(*configPath)
 	room0 := strings.TrimPrefix(connector.FirstNonEmpty(*room, cfg.Room), "#")

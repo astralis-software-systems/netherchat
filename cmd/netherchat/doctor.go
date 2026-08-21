@@ -79,7 +79,7 @@ func doctorCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: netherchat doctor [--paranoid] [--server ws://...] [--json]")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(args)
+	parseFlags("netherchat doctor", fs, args)
 
 	var (
 		rep *doctorReport

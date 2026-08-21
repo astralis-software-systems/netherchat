@@ -33,7 +33,7 @@ func proposeCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: netherchat propose --room <room> --source <agent> --ref <ref> --hash <sha256> [--summary <line>] [--server ws://...]")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(args)
+	parseFlags("netherchat propose", fs, args)
 
 	if *room == "" || *source == "" || *ref == "" || *hash == "" {
 		fs.Usage()
@@ -83,7 +83,7 @@ func approveArtifactCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: netherchat approve-artifact --room <room> [--proposal <id>] [--attestation <identity.json> [--role <role>]] [--seal --out record.json] [--server ws://...]")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(args)
+	parseFlags("netherchat approve-artifact", fs, args)
 
 	if *room == "" {
 		fs.Usage()

@@ -47,6 +47,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -54,6 +55,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/salehkreiner/netherchat/internal/cliargs"
 	"github.com/salehkreiner/netherchat/sealedrecord"
 	"golang.org/x/crypto/ssh"
 )
@@ -136,13 +138,13 @@ const issuerKeyComment = "Netherchat ISSUING key. Everyone who pins this authori
 // radius, and moving it is scheduled work elsewhere; this tool does not inherit
 // it, because a CA key is the one key where roaming is indefensible.
 func defaultIssuerDir() (string, error) {
-	if runtime.GOOS == "windows" {
-		if d := os.Getenv("LOCALAPPDATA"); d != "" {
+	if goos == "windows" {
+		if d := getenv("LOCALAPPDATA"); d != "" {
 			return filepath.Join(d, "netherchat", "issuer"), nil
 		}
 		return "", errors.New("LOCALAPPDATA is not set; pass --out explicitly")
 	}
-	if d := os.Getenv("XDG_DATA_HOME"); d != "" {
+	if d := getenv("XDG_DATA_HOME"); d != "" {
 		return filepath.Join(d, "netherchat", "issuer"), nil
 	}
 	home, err := os.UserHomeDir()
@@ -160,11 +162,34 @@ func defaultKeyPath() (string, error) {
 	return filepath.Join(dir, "issuer.json"), nil
 }
 
+// goos, getenv and stdout are the three things keygen's advisory depends on
+// that a test cannot otherwise choose. They are variables so the WINDOWS branch
+// is drivable from Linux and the LINUX branch from Windows: roadmap §8 records
+// that WSL is structurally blind to OS-conditional behaviour on the platform
+// that ships, and a message that only one gate can read is a message only one
+// gate can catch being wrong.
+var (
+	goos             = runtime.GOOS
+	getenv           = os.Getenv
+	stdout io.Writer = os.Stdout
+)
+
+// keygenCmd runs runKeygen and exits on its code. The split is runVerify's, for
+// runVerify's reason: everything from argv to the printed advisory has to be
+// reachable from a test, and a refusal that calls os.Exit is not.
 func keygenCmd(args []string) {
+	if code := runKeygen(args); code != 0 {
+		os.Exit(code)
+	}
+}
+
+func runKeygen(args []string) int {
 	fs := flag.NewFlagSet("keygen", flag.ExitOnError)
 	out := fs.String("out", "", "where to write the issuing key (default: the per-user issuer directory)")
 	force := fs.Bool("force", false, "overwrite an existing key file")
-	_ = fs.Parse(args)
+	allowNetwork := fs.Bool("allow-network-path", false,
+		"write the issuing key to a path this tool can tell is on another host (a UNC share); refused without it")
+	cliargs.MustParse("netherchat-identity keygen", fs, args, 0)
 
 	path := *out
 	if path == "" {
@@ -173,6 +198,15 @@ func keygenCmd(args []string) {
 			fatal(err)
 		}
 		path = p
+	}
+	// Before os.Stat, and before any key material exists: a stat of a UNC path
+	// already reaches the host, and the whole point of the refusal is that
+	// nothing about this key touches a machine that is not this one.
+	if !*allowNetwork {
+		if msg := networkPathRefusal(path); msg != "" {
+			fmt.Fprint(os.Stderr, "netherchat-identity: "+msg)
+			return 1
+		}
 	}
 	if _, err := os.Stat(path); err == nil && !*force {
 		fatal(fmt.Errorf("%s already exists — refusing to overwrite an issuing key without --force", path))
@@ -206,25 +240,169 @@ func keygenCmd(args []string) {
 		fatal(err)
 	}
 
-	fmt.Printf("issuing key written to %s\n", path)
-	fmt.Printf("public key written to %s\n", pubPath)
-	fmt.Printf("fingerprint: %s\n\n", kf.Fingerprint)
-	fmt.Print("Publish the .pub line. Verifiers pin the PUBLIC key, and pinning is the only\n" +
-		"thing that makes an attestation mean anything: an unpinned issuer's signature is\n" +
+	fmt.Fprintf(stdout, "issuing key written to %s\n", path)
+	fmt.Fprintf(stdout, "public key written to %s\n", pubPath)
+	fmt.Fprintf(stdout, "fingerprint: %s\n\n", kf.Fingerprint)
+	fmt.Fprint(stdout, "Publish the .pub line. Verifiers pin the PUBLIC key, and pinning is the only\n"+
+		"thing that makes an attestation mean anything: an unpinned issuer's signature is\n"+
 		"never examined. Keep the key file to this machine.\n")
-	if runtime.GOOS == "windows" {
-		fmt.Print("\nThis path is under %LOCALAPPDATA%, not %APPDATA%. On a domain-joined machine\n" +
-			"%APPDATA% roams to a file server at logon and logoff, which would put a copy of\n" +
-			"this key — and of every backup of that server — outside this machine.\n")
+	if a := localityAdvisory(path); a != "" {
+		fmt.Fprint(stdout, "\n"+a)
 	}
-	fmt.Print("\nFile permissions are set to 0600. On Windows that is advisory: NTFS ACLs are\n" +
+	fmt.Fprint(stdout, "\nFile permissions are set to 0600. On Windows that is advisory: NTFS ACLs are\n"+
 		"what actually restrict the file, and this tool does not set them.\n")
+	return 0
+}
+
+// localityAdvisory returns the paragraph keygen prints about WHERE the key now
+// lives, and it is a function of the PATH rather than of the operating system.
+//
+// It used to be the second of those. The paragraph asserted "This path is under
+// %LOCALAPPDATA%, not %APPDATA%" whenever GOOS was windows, whatever --out
+// said, so every explicit destination — including the roaming profile the
+// paragraph exists to warn about, and a file server — was told the key had
+// landed somewhere safe. That is roadmap §8's reassurance defect, and the first
+// instance of it found in a runtime message rather than a doc comment
+// (docs/phase5-self-hosting-doc-2026-08-21.md §7.3).
+//
+// The three branches are the three things this tool actually knows, and the
+// third is the load-bearing one: an arbitrary path might be a mapped drive or a
+// synced folder, and saying nothing there would re-make the same defect one
+// level up, where silence reads as safety.
+func localityAdvisory(path string) string {
+	if goos != "windows" {
+		// %APPDATA% and %LOCALAPPDATA% do not exist elsewhere, and a claim
+		// invented for another platform would be a new instance of the defect
+		// rather than a fix for it. The locality question is real on POSIX too
+		// (an --out under an NFS mount is the same hazard) and answering it
+		// needs a mount table, which is work this session did not do.
+		return ""
+	}
+	switch {
+	case underDir(path, getenv("LOCALAPPDATA")):
+		return "This path is under %LOCALAPPDATA%, not %APPDATA%. On a domain-joined machine\n" +
+			"%APPDATA% roams to a file server at logon and logoff, which would put a copy of\n" +
+			"this key — and of every backup of that server — outside this machine.\n"
+	case underDir(path, getenv("APPDATA")):
+		return "This path is under %APPDATA%, which is the ROAMING profile. On a domain-joined\n" +
+			"machine %APPDATA% is copied to a file server at logon and logoff, which would put\n" +
+			"a copy of this key — and of every backup of that server — outside this machine.\n" +
+			"Move it under %LOCALAPPDATA% before you log off; the default location\n" +
+			"(keygen with no --out) is already there.\n"
+	default:
+		return "The key is at " + path + ", which is where you asked for it.\n" +
+			"This tool cannot tell whether that stays on this machine: a mapped network drive,\n" +
+			"a folder a sync client watches, and an ordinary local directory look identical\n" +
+			"from here. If it is either of the first two, a copy of this key is already\n" +
+			"elsewhere. The default location (keygen with no --out) is under %LOCALAPPDATA%,\n" +
+			"which does not roam.\n"
+	}
+}
+
+// underDir reports whether path is dir or sits inside it, comparing the strings
+// the operator actually gave rather than resolving them. Resolution would need
+// a filesystem that may not be reachable — the UNC case is refused precisely
+// because touching it is the harm — and the question here is only which
+// documented profile directory the operator named.
+func underDir(path, dir string) bool {
+	if dir == "" {
+		return false
+	}
+	norm := func(s string) string {
+		s = strings.ReplaceAll(s, `\`, "/")
+		if goos == "windows" {
+			s = strings.ToLower(s)
+		}
+		return strings.TrimRight(s, "/")
+	}
+	p, d := norm(path), norm(dir)
+	return p == d || strings.HasPrefix(p, d+"/")
+}
+
+// networkPathReason is uncReason bound to this process's OS. It is a variable so
+// a test can drive the OVERRIDE path without a writable UNC share.
+var networkPathReason = func(path string) string { return uncReason(path, goos) }
+
+// uncReason names the host when path is a UNC share, and returns "" when it is
+// not — or when this tool cannot tell, which is most of the time.
+//
+// The rule is deliberately narrow, and its narrowness is why the advisory above
+// still has to be honest about the paths this does not catch. A leading double
+// BACKSLASH is a UNC path on Windows and is never a path a person types on
+// purpose on POSIX, so it is classified the same way on both and the guard is
+// exercised on both gates. The forward-slash spelling is UNC only on Windows,
+// where //server/share is a share; on POSIX //mnt/data is an ordinary path and
+// refusing it would be a false refusal.
+//
+// goos is a parameter rather than the package variable so the Windows rule is
+// testable from Linux and the POSIX rule from Windows (roadmap §8: WSL is
+// structurally blind to OS-conditional behaviour on the platform that ships).
+func uncReason(path, goos string) string {
+	if len(path) < 3 {
+		return ""
+	}
+	isSep := func(c byte) bool {
+		if goos == "windows" {
+			return c == '\\' || c == '/'
+		}
+		return c == '\\'
+	}
+	if !isSep(path[0]) || !isSep(path[1]) || isSep(path[2]) {
+		return ""
+	}
+	host := path[2:]
+	if i := strings.IndexAny(host, `\/`); i >= 0 {
+		host = host[:i]
+	}
+	if host == "" {
+		return ""
+	}
+	return "it names a share on the host " + host
+}
+
+// networkPathRefusal is what keygen prints instead of writing an issuing key to
+// a destination it can tell is on another machine, or "" when there is nothing
+// to refuse.
+//
+// WARN OR REFUSE, AND WHY THIS ONE REFUSES. A warning is only worth printing if
+// the operator can still act on it, and the test separates the two cases in this
+// tool cleanly. %APPDATA% roams at LOGOFF, so a warning arrives while the key is
+// still only on this machine and moving it is a real option — that one warns. A
+// share is written NOW: os.WriteFile returns after the bytes are on the server,
+// so any message about it is a notification of an accomplished fact. The key is
+// then in that server's storage, in its backups, and on every restore of either,
+// and an issuing key has no in-format recovery — no cross-signature, no path
+// validation, no way to tell a verifier to stop trusting it short of reaching
+// every verifier and changing what they pinned (see this file's package doc).
+// Deleting the file does not undo the copy.
+//
+// So the refusal comes before the key exists, and there is an override, because
+// a refusal with no way through pushes an operator who genuinely needs one into
+// something worse — and --allow-network-path is the same shape as --force and
+// --long-lived elsewhere in this tool: a deliberate act with a visible name.
+func networkPathRefusal(path string) string {
+	reason := networkPathReason(path)
+	if reason == "" {
+		return ""
+	}
+	return "refusing to write an issuing key to " + path + "\n\n" +
+		"That path is not on this machine — " + reason + ". A certificate authority's\n" +
+		"private key written there is on that host, in its backups, and on every restore\n" +
+		"of either. There is no in-format recovery for a stolen issuing key: the only\n" +
+		"remedy is reaching every verifier and changing what they pinned, and deleting\n" +
+		"the file afterwards does not undo the copy.\n\n" +
+		"This is a refusal and not a warning because a warning would come too late — the\n" +
+		"key is on the server the moment it is written, before anything could be printed\n" +
+		"about it.\n\n" +
+		"Write it to this machine and move it deliberately if you must:\n" +
+		"  netherchat-identity keygen --out <a path on this machine>\n\n" +
+		"Pass --allow-network-path to mean it.\n"
 }
 
 func showCmd(args []string) {
 	fs := flag.NewFlagSet("show", flag.ExitOnError)
 	key := fs.String("key", "", "issuing key file (default: the per-user issuer directory)")
-	_ = fs.Parse(args)
+	cliargs.MustParse("netherchat-identity show", fs, args, 0)
 
 	priv, path := mustLoadKey(*key)
 	pub := priv.Public().(ed25519.PublicKey)
@@ -254,7 +432,7 @@ func issueCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: netherchat-identity issue --subject SHA256:… --principal <id> --type person --role <r> [--display-name <name>] [--valid 90d]")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(args)
+	cliargs.MustParse("netherchat-identity issue", fs, args, 0)
 
 	if *subject == "" || *principal == "" || len(roles) == 0 {
 		fs.Usage()
@@ -345,7 +523,7 @@ func revokeCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: netherchat-identity revoke --statement-id <id> --number <n> --serial <s> [--serial <s>]")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(args)
+	cliargs.MustParse("netherchat-identity revoke", fs, args, 0)
 
 	if *statementID == "" || *number == 0 || len(serials) == 0 {
 		fs.Usage()

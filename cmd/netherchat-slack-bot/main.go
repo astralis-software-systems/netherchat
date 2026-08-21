@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/salehkreiner/netherchat/connector"
+	"github.com/salehkreiner/netherchat/internal/cliargs"
 	"github.com/salehkreiner/netherchat/slack"
 )
 
@@ -72,7 +73,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "\nusage:\n  netherchat-slack-bot --listen :9091 --server https://relay --source slack-bot --token <tok> --slack-signing-secret <secret>")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(os.Args[1:])
+	// No positional arguments: a stray one used to make every flag after it
+	// invisible (internal/cliargs). Refuse it rather than start on defaults.
+	cliargs.MustParse("netherchat-slack-bot", fs, os.Args[1:], 0)
 
 	cfg := loadConfig(*configPath)
 	srv := connector.FirstNonEmpty(*server, cfg.Server)

@@ -39,7 +39,7 @@ func agentCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: netherchat agent --room <room> --allow runbook.toml [--config netherchat.toml] [--json] [--server ws://...] [--name <host>]")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(args)
+	parseFlags("netherchat agent", fs, args)
 
 	if *room == "" || *allow == "" {
 		fs.Usage()

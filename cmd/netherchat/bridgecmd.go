@@ -53,7 +53,7 @@ func bridgeCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "a durable queue would re-introduce persistence. Make your receiver idempotent.")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(args)
+	parseFlags("netherchat bridge", fs, args)
 
 	if *room == "" || *post == "" {
 		fs.Usage()

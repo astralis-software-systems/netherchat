@@ -31,12 +31,12 @@ func reportCmd(args []string) {
 		fs.PrintDefaults()
 	}
 
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+	// The record path is the one positional; flags may precede or follow it.
+	path := parseFlags1("netherchat report", fs, args)
+	if path == "" {
 		fs.Usage()
 		os.Exit(2)
 	}
-	path := args[0]
-	_ = fs.Parse(args[1:])
 
 	b, err := os.ReadFile(path)
 	if err != nil {

@@ -681,18 +681,28 @@ One file is *not* fixed per directory and separate directories do not fix it:
 clients on one machine share it, last writer wins, and the first to exit removes it
 for both. It is cosmetic — nothing depends on it — but do not read it as evidence.
 
-### Flags come before the message
+### Flags may go anywhere on the line
 
-`netherchat send <room> "text" --server …` parses the room, then stops at `"text"`
-and never sees `--server`, so it silently dials the default `ws://localhost:3000`.
-Put the flags first:
+Both of these do the same thing, and either order is fine:
 
 ```bash
 netherchat send ops --server ws://192.168.0.203:3000 --name alice "the message"
+netherchat send ops "the message" --server ws://192.168.0.203:3000 --name alice
 ```
 
-`connect`, `tail` and `beacon-link` peel their leading positional argument before
-parsing and are not affected.
+This was not always true, and the note that used to be here told you to put the
+flags first. Go's `flag` package stops parsing at the first non-flag argument, so
+the second line above parsed no `--server` at all: it dialled the default
+`ws://localhost:3000` and joined the flags into the message body, which meant an
+`--invite` token typed after the message was encrypted into the room as chat text.
+Every command now parses flags wherever they appear (`internal/cliargs`).
+
+Two consequences worth knowing:
+
+- A **message word beginning with `-`** is parsed as a flag and rejected. Pass
+  `--` first to send it verbatim: `netherchat send ops -- --not-a-flag`.
+- An argument a command has no use for is **refused, not ignored** — `netherchat
+  rooms bogus --server …` exits 2 instead of quietly querying `localhost`.
 
 ---
 
@@ -718,11 +728,19 @@ location is under `%LOCALAPPDATA%` and never `%APPDATA%` (a roaming profile copi
 itself to a file server at logon), and what `0600` does and does not mean on
 Windows. **Read what it prints; this document deliberately does not restate the
 format or the paths**, because two copies of that explanation is one copy too many
-and the tool's is the one that cannot go stale. One caveat about the message
-itself: on Windows it prints whenever you run `keygen`, including when you gave an
-explicit `--out` somewhere else, so treat it as advice about the default rather than
-a statement about the path you chose. `netherchat-identity` with no arguments prints
-the full command set.
+and the tool's is the one that cannot go stale. The advisory is about the path it
+actually wrote: name an `--out` under `%APPDATA%` and it says so and tells you to
+move the file before you log off; name anything else and it says it cannot tell
+whether that location stays on this machine, because a mapped drive and a synced
+folder look no different from inside the tool.
+
+One destination it refuses outright rather than warning about: a UNC path
+(`\\server\share\…`). A warning there would arrive after `os.WriteFile` had already
+put the private key on that host and into its backups, and an issuing key has no
+in-format recovery. Write it locally and move it deliberately, or pass
+`--allow-network-path` to mean it.
+
+`netherchat-identity` with no arguments prints the full command set.
 
 Client-side identity pins live in `netherchat.toml` under `[[trust]]` and are read
 by `netherchat`, for `/whois`. **The relay never reads them** — the only consumer in

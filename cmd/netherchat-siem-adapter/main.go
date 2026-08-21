@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/salehkreiner/netherchat/connector"
+	"github.com/salehkreiner/netherchat/internal/cliargs"
 )
 
 const (
@@ -69,7 +70,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "\nusage:\n  netherchat-siem-adapter --listen :8080 --server <url> --source <name> --token <tok> --siem splunk")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(os.Args[1:])
+	// No positional arguments: a stray one used to make every flag after it
+	// invisible (internal/cliargs). Refuse it rather than start on defaults.
+	cliargs.MustParse("netherchat-siem-adapter", fs, os.Args[1:], 0)
 
 	cfg := loadConfig(*configPath)
 	siemType := strings.ToLower(connector.FirstNonEmpty(*siem, cfg.SIEM))

@@ -63,7 +63,7 @@ func engagementInit(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: netherchat engagement init --name <name> --consultant <handle> [--consultant <handle>...] [flags]")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(args)
+	parseFlags("netherchat engagement init", fs, args)
 
 	if *name == "" {
 		fmt.Fprintln(os.Stderr, "netherchat engagement init: --name is required")
@@ -107,14 +107,11 @@ func engagementClose(args []string) {
 		fs.PrintDefaults()
 	}
 
-	var dir string
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		dir = args[0]
-		_ = fs.Parse(args[1:])
-	} else {
-		_ = fs.Parse(args)
-		dir = fs.Arg(0)
-	}
+	// The engagement directory is the one positional; flags may precede or
+	// follow it. Both orders already reached the directory here, because this
+	// was the only command that consulted fs.Arg(0) after a plain parse — but
+	// only one of them reached --out.
+	dir := parseFlags1("netherchat engagement close", fs, args)
 	if dir == "" {
 		fs.Usage()
 		os.Exit(2)

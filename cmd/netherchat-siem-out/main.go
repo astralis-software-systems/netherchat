@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/salehkreiner/netherchat/connector"
+	"github.com/salehkreiner/netherchat/internal/cliargs"
 	"github.com/salehkreiner/netherchat/protocol"
 	"github.com/salehkreiner/netherchat/siemout"
 	"github.com/salehkreiner/netherchat/tui/client"
@@ -124,7 +125,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "\nusage:\n  netherchat-siem-out --room ops --siem splunk --siem-url https://splunk:8088 --siem-token <hec> --server ws://...")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(os.Args[1:])
+	// No positional arguments: a stray one used to make every flag after it
+	// invisible (internal/cliargs). Refuse it rather than start on defaults.
+	cliargs.MustParse("netherchat-siem-out", fs, os.Args[1:], 0)
 
 	cfg := loadConfig(*configPath)
 	room0 := strings.TrimPrefix(connector.FirstNonEmpty(*room, cfg.Room), "#")

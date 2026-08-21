@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/salehkreiner/netherchat/buildinfo"
+	"github.com/salehkreiner/netherchat/internal/cliargs"
 	"github.com/salehkreiner/netherchat/server"
 	"github.com/salehkreiner/netherchat/server/config"
 )
@@ -42,7 +43,13 @@ func main() {
 	torDataDir := flag.String("tor-data-dir", "", "tor state directory for a STABLE .onion address (default: ephemeral per run)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	healthcheck := flag.Bool("healthcheck", false, "probe the local /health endpoint and exit 0/1 (used by Docker HEALTHCHECK)")
-	flag.Parse()
+	// The relay takes no positional arguments, and until this line a stray one
+	// silently discarded every flag after it: `netherchat-server netherchat.toml
+	// --addr :3000` parsed neither, and started on the built-in defaults while
+	// the operator believed they had named a config and a port. That is the
+	// flags-after-positionals class (internal/cliargs), and the answer here is
+	// the same as everywhere else — refuse, never ignore.
+	cliargs.MustParse("netherchat-server", flag.CommandLine, os.Args[1:], 0)
 
 	if *showVersion {
 		fmt.Println("netherchat-server " + buildinfo.Version)

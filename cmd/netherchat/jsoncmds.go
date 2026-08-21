@@ -29,7 +29,7 @@ type versionOut struct {
 func versionCmd(args []string) {
 	fs := flag.NewFlagSet("version", flag.ExitOnError)
 	jsonMode := fs.Bool("json", false, "output JSON")
-	_ = fs.Parse(args)
+	parseFlags("netherchat version", fs, args)
 
 	if *jsonMode {
 		_ = output.WriteJSON(versionOut{
@@ -70,7 +70,7 @@ func whoamiCmd(args []string) {
 	name := fs.String("name", defaultName(), "display name")
 	identity := fs.String("identity", "", "identity key file (default: ssh-agent → ~/.ssh/id_ed25519 → generated)")
 	jsonMode := fs.Bool("json", false, "output JSON")
-	_ = fs.Parse(args)
+	parseFlags("netherchat whoami", fs, args)
 
 	fpr, source, err := client.Identify(*identity)
 	if err != nil {
@@ -108,7 +108,7 @@ func roomsCmd(args []string) {
 	fs := flag.NewFlagSet("rooms", flag.ExitOnError)
 	server := fs.String("server", "ws://localhost:3000", "server URL")
 	jsonMode := fs.Bool("json", false, "output JSON")
-	_ = fs.Parse(args)
+	parseFlags("netherchat rooms", fs, args)
 
 	base, err := httpBase(*server)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/salehkreiner/netherchat/internal/cliargs"
 	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/output"
 	"github.com/salehkreiner/netherchat/tui/record"
@@ -41,16 +42,26 @@ func runVerify(args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: netherchat verify <record.json|roster.json|receipt.json|identity.json> [--json] [--issuer <keys>] [--at <RFC3339>]")
 		fs.PrintDefaults()
 	}
-	// The record path is the first positional; flags follow it. Go's flag parser
-	// stops at the first non-flag argument, so (like send/tail) we peel the path
-	// off first and parse the rest — otherwise `verify record.json --json` would
-	// silently ignore --json.
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+	// The record path is this command's one positional, and flags may come
+	// before or after it: cliargs.Parse permutes, so `verify --json rec.json`
+	// and `verify rec.json --json` both parse --json and both find the path.
+	//
+	// This is the command the flag-drop rule was written from — --issuer and
+	// --at were parsed here and dropped on the record branch — so it uses
+	// cliargs directly rather than the exiting parseFlags1 helper: runVerify
+	// RETURNS its exit code so that argv, parsing, dispatch and rendering are
+	// all reachable from a test, and a helper that called os.Exit would put the
+	// refusal back below the surface a test starts at.
+	pos := cliargs.Parse(fs, args)
+	if err := cliargs.Unexpected("netherchat verify", pos, 1); err != nil {
+		output.WriteError(*jsonMode, err)
+		return 2
+	}
+	if len(pos) == 0 {
 		fs.Usage()
 		return 2
 	}
-	path := args[0]
-	_ = fs.Parse(args[1:])
+	path := pos[0]
 	ident := identityVerifyOpts{issuerPath: *issuer, at: *at}
 	// --at with no --issuer is an evaluation time with nothing to evaluate. The
 	// spec makes the mirror of this an error rather than a Reason — a zero At on

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/salehkreiner/netherchat/internal/cliargs"
 	"github.com/salehkreiner/netherchat/server/config"
 	"github.com/salehkreiner/netherchat/tui/sneakernet"
 )
@@ -119,7 +120,10 @@ func configFlagIn(args []string) string {
 	fs.BoolVar(&f.qr, "qr", false, "")
 	fs.StringVar(&f.attestation, "attestation", "", "")
 	fs.StringVar(&f.configPath, "config", "", "")
-	_ = fs.Parse(args)
+	// cliargs.Parse, not fs.Parse: --config typed after a positional would
+	// otherwise be invisible HERE while the real parse below saw it, and the two
+	// would disagree about which policy file is active.
+	_ = cliargs.Parse(fs, args)
 	return f.configPath
 }
 
@@ -136,7 +140,12 @@ func configFlagIn(args []string) string {
 func pairOptions(args []string, cfg config.Config) (sneakernet.Options, string, error) {
 	var f pairFlags
 	fs := newPairFlagSet(&f)
-	_ = fs.Parse(args)
+	// pairOptions RETURNS its error rather than exiting, so a test can drive the
+	// flags without a file on disk; the refusal below has to keep that property,
+	// which is why it does not go through the exiting parseFlags helper.
+	if err := cliargs.Unexpected("netherchat pair", cliargs.Parse(fs, args), 0); err != nil {
+		return sneakernet.Options{}, pairModeNone, err
+	}
 
 	// [direct] supplies the CLIENT-side Sneakernet defaults (§1.1) the flags do not
 	// carry. LAN is OR-ed, never AND-ed: --lan selects the discovery mode outright, so

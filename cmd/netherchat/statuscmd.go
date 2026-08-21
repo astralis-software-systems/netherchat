@@ -24,7 +24,7 @@ func statusCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "Empty output and exit 0 when no client is running. See docs/commands.md.")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(args)
+	parseFlags("netherchat status", fs, args)
 
 	path, err := statusline.DefaultPath()
 	if err != nil {

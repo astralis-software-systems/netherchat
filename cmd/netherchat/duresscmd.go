@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/salehkreiner/netherchat/tui/duress"
 )
@@ -44,7 +43,7 @@ func duressCmd(args []string) {
 func duressSelftest(args []string) {
 	fs := flag.NewFlagSet("duress selftest", flag.ExitOnError)
 	mode := fs.String("mode", string(duress.ModeSilentScuttle), "safe response to test: silent_scuttle | decoy_view")
-	_ = fs.Parse(args)
+	parseFlags("netherchat duress selftest", fs, args)
 
 	m, err := parseDuressMode(*mode)
 	if err != nil {
@@ -67,7 +66,7 @@ func duressBeacon(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: netherchat duress beacon [--mode silent_scuttle|decoy_view] [--context label] [--identity path] [--out file]")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(args)
+	parseFlags("netherchat duress beacon", fs, args)
 
 	m, err := parseDuressMode(*mode)
 	if err != nil {
@@ -92,11 +91,21 @@ func duressBeacon(args []string) {
 }
 
 func duressVerify(args []string) {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+	// This is the only subcommand in the tree with no flags of its own, and it
+	// still gets a flag set: without one, argv past the filename was read by
+	// nothing at all, so `duress verify a.json b.json` verified a.json and said
+	// nothing about b.json. An argument a command cannot use is refused here for
+	// the same reason a flag it cannot reach is — the operator typed it.
+	fs := flag.NewFlagSet("duress verify", flag.ExitOnError)
+	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: netherchat duress verify <beacon.json>")
+	}
+	path := parseFlags1("netherchat duress verify", fs, args)
+	if path == "" {
+		fs.Usage()
 		os.Exit(2)
 	}
-	raw, err := os.ReadFile(args[0])
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		fatal(err)
 	}
@@ -133,7 +142,7 @@ func duressCheck(args []string) {
 		fmt.Fprintln(os.Stderr, "reads three lines from stdin: <real-credential> <duress-credential> <attempt>")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(args)
+	parseFlags("netherchat duress check", fs, args)
 
 	m, err := parseDuressMode(*mode)
 	if err != nil {

@@ -35,14 +35,8 @@ func streamCmd(args []string) {
 		fs.PrintDefaults()
 	}
 
-	// The room is the leading positional; peel it before parsing flags.
-	var room string
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		room = strings.TrimPrefix(args[0], "#")
-		_ = fs.Parse(args[1:])
-	} else {
-		_ = fs.Parse(args)
-	}
+	// The room is the command.s one positional; flags may precede or follow it.
+	room := strings.TrimPrefix(parseFlags1("netherchat stream", fs, args), "#")
 	if room == "" {
 		fs.Usage()
 		os.Exit(2)

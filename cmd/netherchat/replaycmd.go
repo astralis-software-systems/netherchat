@@ -43,12 +43,12 @@ func replayCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: netherchat replay <record.json> --into <room> [--server ws://...] [--json] [--verify-only]")
 		fs.PrintDefaults()
 	}
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+	// The record path is the one positional; flags may precede or follow it.
+	path := parseFlags1("netherchat replay", fs, args)
+	if path == "" {
 		fs.Usage()
 		os.Exit(2)
 	}
-	path := args[0]
-	_ = fs.Parse(args[1:])
 
 	// --verify-only never touches the network: just run the shared verifier.
 	if *verifyOnly {
