@@ -160,7 +160,7 @@ type EvHandoff struct {
 // from a prior record during a retro (§2.7).
 type EvRecordEntry struct {
 	Seq        uint64
-	Kind       string // decision | action | note
+	Kind       string // decision | action | note | artifact | typed
 	AuthorName string
 	AuthorFpr  string
 	Actionee   string
@@ -168,6 +168,18 @@ type EvRecordEntry struct {
 	Self       bool
 	Replayed   bool
 	At         time.Time
+
+	// Schema is the entry's opaque typed-kind tag (record.Entry.Schema), carried
+	// so a consumer can tell a netherchat.identity/v1 body from any other typed
+	// body WITHOUT sniffing the body: record.IsIdentityEntry is the one place that
+	// tag is compared, and it needs both halves.
+	//
+	// THIS IS NOT A NEW WIRE FIELD. Schema has been part of the SIGNED canonical
+	// bytes of a record entry since v2 (record.Entry.canonical) and has always
+	// crossed the wire inside the entry JSON; the event dropped it, so a room view
+	// could see a "typed" entry and had no way to learn what type it was. Empty
+	// for every built-in kind, which VerifyEntry requires.
+	Schema string
 
 	// Provenance for the Two-Way Bridge (§1.6), populated only on the inbound
 	// (wire) path — a peer's entry we decrypted and verified. See EvAck for the

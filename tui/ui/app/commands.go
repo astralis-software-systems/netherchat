@@ -1007,17 +1007,31 @@ func (m *Model) runSeal(r *room, arg string) {
 // renderRecordEntry styles a sealed-record entry for the room view. Live entries
 // are marked with a 📌 and the kind; replayed entries (§2.7) are dimmed with a
 // bracketed original timestamp and cannot be marked again.
-func (m *Model) renderRecordEntry(e client.EvRecordEntry) string {
-	ts := e.At.UTC().Format("15:04")
-	if e.Replayed {
-		tail := "  [" + e.Kind + "]"
-		return m.st(m.theme.Muted).Render(fmt.Sprintf("[REPLAY %s] %s: %s%s", ts, e.AuthorName, e.Body, tail))
+//
+// An entry carrying an identity attestation goes to renderIdentityEntry, which
+// renders D-I's answer instead of the artifact's JSON. Every other kind — and
+// every typed entry of a schema this build does not interpret — is unchanged, and
+// testdata/room_record_pre3c.txt is the captured proof of that.
+func (m *Model) renderRecordEntry(l line) string {
+	if l.identity != nil {
+		return m.renderIdentityEntry(l)
 	}
-	pin := m.st(m.theme.Accent).Bold(true).Render("📌 " + e.Kind)
-	who := m.st(m.theme.Accent2).Bold(true).Render(e.AuthorName)
-	detail := ": " + e.Body
-	if e.Kind == record.KindAction && e.Actionee != "" {
-		detail = " → @" + e.Actionee + ": " + e.Body
+	ts := l.at.UTC().Format("15:04")
+	if l.replayed {
+		tail := "  [" + l.recordKind + "]"
+		return m.st(m.theme.Muted).Render(fmt.Sprintf("[REPLAY %s] %s: %s%s", ts, l.from, l.text, tail))
+	}
+	kind := l.recordKind
+	if l.recordKind == record.KindTyped && l.schema != "" {
+		// The tag, not the body: the library never interprets a consumer's schema,
+		// so the honest thing to show is which one this is.
+		kind += " " + l.schema
+	}
+	pin := m.st(m.theme.Accent).Bold(true).Render("📌 " + kind)
+	who := m.st(m.theme.Accent2).Bold(true).Render(l.from)
+	detail := ": " + l.text
+	if l.recordKind == record.KindAction && l.actionee != "" {
+		detail = " → @" + l.actionee + ": " + l.text
 	}
 	return m.st(m.theme.Muted).Render(ts+" ") + pin + " " + who + m.st(m.theme.Text).Render(detail)
 }

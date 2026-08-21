@@ -197,6 +197,14 @@ func carriedWords(d attest.IdentityDisplay, pinned bool) string {
 	if d.Reason == attest.ReasonSubjectMismatch {
 		return "◇✗ credential is about a different key"
 	}
+	if d.Reason == attest.ReasonMalformedArtifact {
+		// The other outcome reachable with NO key: the bytes did not parse. It
+		// belongs above the `pinned` branch for the same reason the subject join
+		// does — a reader who is told "not checked here" when the parse is what
+		// failed has been reassured at the exact point of the failure, and this
+		// was the only surface still doing it.
+		return "◇ the bytes carried here are not an identity artifact"
+	}
 	if !pinned {
 		return "◇ carries a credential, not checked here"
 	}

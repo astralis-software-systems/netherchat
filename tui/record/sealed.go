@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/salehkreiner/netherchat/protocol"
+	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/internal/crypto"
 )
 
@@ -342,7 +343,13 @@ func Verify(r *SealedRecord) (*VerifyResult, error) {
 	}
 	v1preimage := protocol.SealSigningBytes(r.Room, prev)
 	signers := make([]string, 0, len(r.Signatures))
-	for fpr, sigB64 := range r.Signatures {
+	// Sorted, not map order. Same defect as attest.VerifyRoster and
+	// attest.VerifyReceipt, one import away: the loop returns on the first seal
+	// signature that does not verify, so a record with two bad co-signatures named
+	// a different signer on every run. res.Reason is what `netherchat verify`
+	// prints, so the non-determinism reached an operator directly.
+	for _, fpr := range sortedMapKeys(r.Signatures) {
+		sigB64 := r.Signatures[fpr]
 		keyB64, ok := r.SignerKeys[fpr]
 		if !ok {
 			res.Reason = fmt.Sprintf("no signer key for %s (cannot verify its seal signature)", fpr)
@@ -437,7 +444,18 @@ func (r *SealedRecord) verifyArtifactApprovals() (map[string][]string, map[strin
 
 	out := make(map[string][]string)
 	roles := make(map[string][]VerifiedApprover)
-	for pid, proofs := range r.ArtifactApprovals {
+	// Sorted, not map order, and this is the worst of the three: the error returned
+	// here becomes the whole record's VerifyResult.Reason, so a record with two
+	// unsound proposals told two different stories to two runs of `netherchat
+	// verify` — about which artifact's approval is broken, which is the first thing
+	// anyone would go and look at.
+	pids := make([]string, 0, len(r.ArtifactApprovals))
+	for pid := range r.ArtifactApprovals {
+		pids = append(pids, pid)
+	}
+	sort.Strings(pids)
+	for _, pid := range pids {
+		proofs := r.ArtifactApprovals[pid]
 		m, ok := metaByProposal[pid]
 		if !ok {
 			return nil, nil, fmt.Errorf("artifact_approvals references unknown proposal %q", pid)
@@ -570,17 +588,26 @@ func RenderMinutes(r *SealedRecord) string {
 	}
 	fmt.Fprintf(&b, "Participants: %s\n", strings.Join(parts, ", "))
 
-	var decisions, actions, notes, artifacts []Entry
+	// Every entry lands in exactly one bucket, and there is no bucket that means
+	// "dropped". A minutes.md that silently omits a kind is a gap between the two
+	// views of one sealed artifact — record.json said a name was bound to a key and
+	// the human-readable half said nothing was — which is what identities and others
+	// are here to close. TestMinutesAccountForEveryEntry holds the property.
+	var decisions, actions, notes, artifacts, identities, others []Entry
 	for _, e := range r.Entries {
-		switch e.Kind {
-		case KindDecision:
+		switch {
+		case e.Kind == KindDecision:
 			decisions = append(decisions, e)
-		case KindAction:
+		case e.Kind == KindAction:
 			actions = append(actions, e)
-		case KindNote:
+		case e.Kind == KindNote:
 			notes = append(notes, e)
-		case KindArtifact:
+		case e.Kind == KindArtifact:
 			artifacts = append(artifacts, e)
+		case IsIdentityEntry(e):
+			identities = append(identities, e)
+		default:
+			others = append(others, e)
 		}
 	}
 
@@ -618,6 +645,8 @@ func RenderMinutes(r *SealedRecord) string {
 			fmt.Fprintf(&b, "- [%s] **%s**: %s\n", hhmmUTC(e.TS), e.AuthorName, e.Body)
 		}
 	}
+	b.WriteString(identityMinutes(identities))
+	b.WriteString(otherEntryMinutes(others))
 
 	fmt.Fprintf(&b, "\n---\n*Sealed by %d participant(s). Verify: netherchat verify record.json*\n", len(r.Signatures))
 	return b.String()
@@ -634,4 +663,101 @@ func shortFpr(fpr string) string {
 		return fpr
 	}
 	return fpr[:n] + "…"
+}
+
+// identityMinutes renders the issuer-signed credentials a record carries.
+//
+// WHAT IT MAY SAY, AND WHY IT IS THE CARRIED STATE AND NOTHING STRONGER.
+// RenderMinutes takes no VerifyResult and therefore cannot check an issuer
+// signature — the same constraint the artifact block above already states about an
+// approval, for the same reason. So the attribution is obtained with a nil result,
+// which is D-I's "a credential arrived and nothing checked it": the name rendered
+// is the SUBJECT FINGERPRINT, never the issuer's display name, and the mark is the
+// hollow diamond every other surface draws for the same state.
+//
+// The claim is still printed, because a reader of the minutes who is told nothing
+// cannot go and check anything. What makes that safe is the order: the mark and
+// the subject come first, the issuer's words are quoted after, and the section
+// heading says in as many words that nothing here verified them.
+func identityMinutes(entries []Entry) string {
+	if len(entries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n## Identity attestations (carried by this record; not verified here)\n")
+	for _, e := range entries {
+		d, ok := IdentityDisplayForEntry(nil, e, "")
+		if !ok {
+			continue
+		}
+		mark := attest.IdentityDisplayMark(d.State)
+		if d.Principal == "" {
+			// The bytes under the tag are not an artifact. Say that; do not print a
+			// blank row that reads as a credential naming nobody.
+			fmt.Fprintf(&b, "- %s entry %d filed by %s carries %d byte(s) that are not an identity artifact\n",
+				mark, e.Seq, e.AuthorName, len(e.Body))
+			continue
+		}
+		claim := d.Principal
+		if d.DisplayName != "" {
+			claim += " (" + d.DisplayName + ")"
+		}
+		fmt.Fprintf(&b, "- %s **%s** — about `%s`\n", mark, claim, d.Name)
+		if len(d.Roles) > 0 {
+			fmt.Fprintf(&b, "  - roles: %s\n", strings.Join(d.Roles, ", "))
+		}
+		fmt.Fprintf(&b, "  - issuer: `%s` · serial: `%s` · filed by %s\n", d.Issuer, identitySerial(e), e.AuthorName)
+	}
+	b.WriteString("\nWho FILED a credential is not a claim about it: anyone may carry anyone's, and the\n" +
+		"elected writer files every approver's. Trust comes from the issuer signature, which\n" +
+		"these minutes do not check. To check one, at a stated time:\n" +
+		"`netherchat verify record.json --issuer <key> --at <RFC3339>`\n")
+	return b.String()
+}
+
+// identitySerial is the serial an attestation entry names, or "" when its body
+// does not parse. The serial is the unit of revocation, so it is what an operator
+// takes to an issuer.
+func identitySerial(e Entry) string {
+	att, err := attest.ParseIdentity([]byte(e.Body))
+	if err != nil {
+		return ""
+	}
+	return att.Serial
+}
+
+// otherEntryMinutes accounts for typed entries whose schema this build does not
+// interpret. It names the tag and refuses to render the body: the library attaches
+// no meaning to a consumer's schema, so printing its opaque JSON would be the
+// minutes pretending to a understanding they do not have — and dropping the entry
+// would be the silence this section exists to end.
+func otherEntryMinutes(entries []Entry) string {
+	if len(entries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n## Other entries\n")
+	for _, e := range entries {
+		schema := e.Schema
+		if schema == "" {
+			schema = e.Kind
+		}
+		fmt.Fprintf(&b, "- [%s] **%s** — a `%s` entry, %d byte(s), not interpreted by these minutes\n",
+			hhmmUTC(e.TS), e.AuthorName, schema, len(e.Body))
+	}
+	return b.String()
+}
+
+// sortedMapKeys returns a fingerprint-keyed map's keys in sorted order, so a
+// verifier that returns on the first failure names the SAME one on every run. It
+// is attest.sortedKeys, duplicated rather than exported across the package
+// boundary because record must not depend on attest for a three-line sort — the
+// rule it enforces is stated at each call site.
+func sortedMapKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

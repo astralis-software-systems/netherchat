@@ -1,0 +1,26 @@
+14:30 📌 decision alice: rolled back to v2.3.1
+14:31 📌 action bob → @carol: page the on-call DBA
+14:32 📌 note carol: alice: the cache was cold
+14:33 📌 artifact alice: {"source":"requirements-agent","artifact_ref":"RFC-114 rollback plan","artifact_hash":"9f2b7c1d4e5a6b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e","approver_fpr":"SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","proposed_at":"2026-06-01T14:33:00Z","approved_at":"2026-06-01T14:33:20Z"}
+[REPLAY 14:34] bob: an earlier decision  [decision]
+14:35 📌 typed alice: {                                                                                                                                                 
+  "netherchat_identity": "v2",                                                                                                                      
+  "serial": "acme-0100",                                                                                                                            
+  "subject": "SHA256:RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",                                                                                  
+  "principal": "rosa.alvarez@acme.example",                                                                                                         
+  "display_name": "Rosa Alvarez",                                                                                                                   
+  "principal_type": "person",                                                                                                                       
+  "roles": [                                                                                                                                        
+    "incident-commander"                                                                                                                            
+  ],                                                                                                                                                
+  "issued_at": "2026-01-01T00:00:00Z",                                                                                                              
+  "expires_at": "2027-01-01T00:00:00Z",                                                                                                             
+  "algorithm": "ed25519",                                                                                                                           
+  "issuer": "SHA256:eVkCKHnc5RjanBduU2vmOecbFl3M9wOgHdk24INJytY",                                                                                   
+  "signatures": {                                                                                                                                   
+    "SHA256:eVkCKHnc5RjanBduU2vmOecbFl3M9wOgHdk24INJytY": "1yqsH++cNsy14wOZRfL/pv0P0RxMRO1WQ9UzYfLeCXY+ToANfsNrO+reppJ1UyRM0noShWESDn0iNWMoBnLZAg=="
+  },                                                                                                                                                
+  "signer_keys": {                                                                                                                                  
+    "SHA256:eVkCKHnc5RjanBduU2vmOecbFl3M9wOgHdk24INJytY": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ="                                            
+  }                                                                                                                                                 
+}                                                                                                                                                   

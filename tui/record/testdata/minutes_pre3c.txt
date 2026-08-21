@@ -1,0 +1,12 @@
+# Incident Record — inc-3f9a2b71
+Sealed: 2026-06-01T14:40:00Z
+Participants: alice (✓)
+
+## Decisions
+1. [20:26 UTC] **alice**: rolled back to v2.3.1
+
+## Actions
+- [ ] **bob**: write the post-mortem (assigned by alice)
+
+---
+*Sealed by 1 participant(s). Verify: netherchat verify record.json*

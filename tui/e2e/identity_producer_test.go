@@ -80,9 +80,21 @@ func TestIdentityAttestationTravelsTheProducerPath(t *testing.T) {
 	// Bob receiving it at all is the load-bearing half: the entry crossed the
 	// wire as an ordinary OpRecordEntry, and his AppendRemote ran VerifyEntry on
 	// a typed entry and accepted it.
-	waitMatch[client.EvRecordEntry](t, bob, func(e client.EvRecordEntry) bool {
+	//
+	// AND THE EVENT MUST CARRY THE SCHEMA TAG. Phase 3c's room view decides what a
+	// filed credential looks like by asking record.IsIdentityEntry, which needs the
+	// Kind AND the Schema. Every unit test in tui/ui/app builds its own event and
+	// would pass with the tag dropped somewhere between record.Entry and
+	// EvRecordEntry — and a peer's credential would then land in the message pane
+	// as the artifact's raw JSON, which is the exact defect 3c closed. This is the
+	// only assertion above that seam.
+	got := waitMatch[client.EvRecordEntry](t, bob, func(e client.EvRecordEntry) bool {
 		return !e.Self && e.Kind == record.KindTyped && strings.Contains(e.Body, "rosa.alvarez@acme.example")
 	}, 5*time.Second)
+	if !record.IsIdentityEntry(record.Entry{Kind: got.Kind, Schema: got.Schema}) {
+		t.Fatalf("the event bob received is kind=%q schema=%q; a room view cannot tell it from any "+
+			"other typed entry and will render its body verbatim", got.Kind, got.Schema)
+	}
 
 	aliceEntries, bobEntries := alice.RecordEntries(), bob.RecordEntries()
 	if len(aliceEntries) != 2 || len(bobEntries) != 2 {
@@ -159,11 +171,27 @@ func TestIdentityAttestationTravelsTheProducerPath(t *testing.T) {
 		t.Error("plain verification must not emit an identity surface")
 	}
 
-	// The minutes are unchanged too: RenderMinutes drops typed entries, so an
-	// attestation adds nothing to the human artifact in this phase.
+	// THE MINUTES, AND WHAT CHANGED HERE IN PHASE 3C.
+	//
+	// This block used to assert the opposite: "minutes must not render an
+	// attestation body in Phase 2". That was true of the code and it was a
+	// statement about a phase, not about a property — RenderMinutes dropped every
+	// typed entry, so a record whose chain bound a name to a key produced a
+	// human-readable half that did not mention it. Phase 3c closed the gap, so the
+	// assertion inverts: the minutes now name the credential AS A CLAIM.
+	//
+	// What must NOT change, and is asserted above rather than here, is that a
+	// verification with no pin stays byte-identical. The minutes are a rendering;
+	// the evidence is not.
 	md := record.RenderMinutes(done.Record)
-	if strings.Contains(md, "rosa.alvarez@acme.example") {
-		t.Error("minutes must not render an attestation body in Phase 2")
+	if !strings.Contains(md, "rosa.alvarez@acme.example") {
+		t.Errorf("minutes must name the credential the record carries:\n%s", md)
+	}
+	if strings.Contains(md, "netherchat_identity") {
+		t.Errorf("minutes must not render the artifact's raw JSON:\n%s", md)
+	}
+	if !strings.Contains(md, "not verified here") {
+		t.Errorf("minutes print an issuer's words without saying nobody here checked them:\n%s", md)
 	}
 	if !strings.Contains(md, "rolled back to v2.3.1 at 03:47 UTC") {
 		t.Error("minutes must still carry the decision")

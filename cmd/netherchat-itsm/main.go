@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -179,9 +180,18 @@ func attachmentFor(e client.EvSealComplete, ticketID, elapsed string) ([]byte, i
 	fpr := rec.SealedBy
 	sig := rec.Signatures[fpr]
 	if sig == "" {
-		for f, s := range rec.Signatures {
-			fpr, sig = f, s
-			break
+		// Sorted, not map order. Same class as the verifiers in tui/attest and
+		// tui/record: this picks ONE signature out of a Go map, and the fingerprint
+		// it picked went into an ITSM ticket's provenance field. Two syncs of the
+		// same record attached different fingerprints, and a provenance value that
+		// changes between runs is not provenance.
+		fprs := make([]string, 0, len(rec.Signatures))
+		for f := range rec.Signatures {
+			fprs = append(fprs, f)
+		}
+		sort.Strings(fprs)
+		if len(fprs) > 0 {
+			fpr, sig = fprs[0], rec.Signatures[fprs[0]]
 		}
 	}
 	prov := itsm.Provenance{Room: rec.Room, Fpr: fpr, Sig: sig, Ts: rec.SealedAt}

@@ -46,6 +46,10 @@ func RenderMarkdown(rec *record.SealedRecord, res *record.VerifyResult, opts Opt
 				body = fmt.Sprintf("📋 AI-drafted artifact approved — source: %s, artifact: %s, hash: %s, recorded by %s, %s",
 					m.Source, m.ArtifactRef, shortHash(m.ArtifactHash, 16), e.AuthorName, attribution)
 			}
+		default:
+			if line, ok := identityTimelineLine(res, e, false); ok {
+				body = line
+			}
 		}
 		status := "✗ unverified"
 		if res.Valid {

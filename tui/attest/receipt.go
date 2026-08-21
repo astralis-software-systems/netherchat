@@ -147,7 +147,15 @@ func VerifyReceipt(r *ScuttleReceipt) (*ReceiptResult, error) {
 	}
 	preimage := protocol.ScuttleReceiptSigningBytes(hashBytes)
 	signers := make([]string, 0, len(r.Signatures))
-	for fpr, sigB64 := range r.Signatures {
+	// Sorted, not map order — the third instance of one defect, and the same fix
+	// VerifyRoster took. The VERDICT is deterministic either way (every signature
+	// has to verify, so any failure is fatal whichever is met first), but the loop
+	// returns on the first failure, so the fingerprint named in Error was a
+	// function of Go's randomized map iteration. A receipt is what a room's
+	// destruction rests on; "which co-signature is bad" is the question an operator
+	// brings to it, and it was answered differently on every run.
+	for _, fpr := range sortedKeys(r.Signatures) {
+		sigB64 := r.Signatures[fpr]
 		keyB64, ok := r.SignerKeys[fpr]
 		if !ok {
 			res.Error = fmt.Sprintf("no signer key for %s (cannot verify its signature)", fpr)

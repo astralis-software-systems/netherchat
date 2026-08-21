@@ -314,3 +314,120 @@ func VerifiedIdentitiesOf(res *VerifyResult, subject string) []VerifiedIdentity 
 	}
 	return res.IdentityBindings[subject]
 }
+
+// IdentityDisplayForEntry renders D-I's attribution for ONE attestation entry in
+// a record, so a renderer with a record in hand does not have to reassemble the
+// decision from two structs shaped for two other jobs.
+//
+// It exists because VerifyWithIdentity deliberately surfaces bindings keyed by
+// SUBJECT and outcomes keyed by SEQ — the right shapes for a consumer asking
+// "what did the record establish about this key" — while attest.IdentityDisplayFor
+// takes a parsed artifact and an attest.IdentityResult. Every renderer that wants
+// a name and a mark had to bridge those, and the same bridge written twice is how
+// two surfaces start disagreeing about what a mark means. Phase 3b §11.4 names
+// this as the requirement a consumer must not get wrong; this is that requirement,
+// implemented once.
+//
+// # WHAT IT DOES WITH res
+//
+//   - nil, or a plain Verify() result: nothing about identity was checked, and the
+//     attribution is the CARRIED state — a claim the record carries, under the name
+//     the caller supplied. This is what every renderer that takes no issuer key must
+//     show, and it is what `netherchat report` and RenderMinutes show today.
+//   - a VerifyWithIdentity result: this entry's IdentityOutcome (matched by Seq)
+//     and, when it verified, its VerifiedIdentity (matched by subject+serial) are
+//     reassembled into the result D-I's renderer takes. A verified entry then
+//     renders as a verified entry, with the issuer-signed name.
+//
+// # THE JOIN, AND HOW IT DIFFERS FROM A ROSTER ROW
+//
+// A record entry is FILED by an author about a subject, and the two are routinely
+// different people — an approval writer files every approver's credential. So the
+// key this attribution is ABOUT is the artifact's own subject, and that is what is
+// passed to IdentityDisplayFor.
+//
+// That is NOT the join a roster row needs. A Roster renders a key that is in front
+// of you, and its join is "is this statement about THAT key" — it must pass the
+// fingerprint it is rendering, never the artifact's own, or a credential copied
+// from a public file would render an executive's name beside a stranger. Such a
+// caller wants attest.IdentityDisplayFor directly (sealedrecord re-exports it).
+//
+// A renderer using THIS function owes its reader the subject: the name it produces
+// is a statement about a fingerprint, and a surface that shows the name without the
+// fingerprint has silently turned it into a statement about whoever filed it.
+//
+// asserted is the name to render when nothing verified. Empty means "this reader
+// has no name for that key", and the artifact's subject fingerprint is used — the
+// only name a key has before an authority gives it one.
+//
+// ok is false for any entry that does not carry an attestation.
+func IdentityDisplayForEntry(res *VerifyResult, e Entry, asserted string) (attest.IdentityDisplay, bool) {
+	if !IsIdentityEntry(e) {
+		return attest.IdentityDisplay{}, false
+	}
+	att, err := attest.ParseIdentity([]byte(e.Body))
+	if err != nil {
+		// The one outcome only a carrier reaches, and the same one
+		// VerifyWithIdentity records for these bytes.
+		return attest.IdentityDisplayForBytes(asserted, "", []byte(e.Body), nil), true
+	}
+	if asserted == "" {
+		asserted = att.Subject
+	}
+	return attest.IdentityDisplayFor(asserted, att.Subject, att, identityResultForEntry(res, e, att)), true
+}
+
+// identityResultForEntry rebuilds the attest.IdentityResult that produced this
+// entry's outcome, or nil when the caller never ran the identity path.
+//
+// nil is not "it failed": it is "nobody was asked", which is the state a renderer
+// that takes no issuer key is always in, and IdentityDisplayFor renders it as the
+// carried claim rather than as a verdict about the subject.
+func identityResultForEntry(res *VerifyResult, e Entry, att *attest.IdentityAttestation) *attest.IdentityResult {
+	if res == nil {
+		return nil
+	}
+	var outcome *IdentityOutcome
+	for i := range res.IdentityOutcomes {
+		if res.IdentityOutcomes[i].Seq == e.Seq {
+			outcome = &res.IdentityOutcomes[i]
+			break
+		}
+	}
+	if outcome == nil {
+		return nil
+	}
+	out := &attest.IdentityResult{
+		Valid:       outcome.Valid,
+		Subject:     att.Subject,
+		Serial:      att.Serial,
+		Reason:      outcome.Reason,
+		ReasonClass: outcome.ReasonClass,
+		Detail:      outcome.Detail,
+	}
+	if !outcome.Valid {
+		return out
+	}
+	// A verified outcome has a binding beside it, and the binding is what carries
+	// the fields an issuer SIGNED. They are read from there rather than from the
+	// artifact, so a renderer shows the values the verifier actually stood behind.
+	for _, b := range res.IdentityBindings[outcome.Subject] {
+		if b.Serial != outcome.Serial || b.Issuer != att.Issuer {
+			continue
+		}
+		out.Principal, out.DisplayName, out.PrincipalType = b.Principal, b.DisplayName, b.PrincipalType
+		out.Roles = append([]string(nil), b.Roles...)
+		out.Issuer, out.Serial = b.Issuer, b.Serial
+		out.VerifiedBy = append([]string(nil), b.VerifiedBy...)
+		out.NotBefore, out.NotAfter = b.NotBefore, b.NotAfter
+		return out
+	}
+	// Valid with no binding to match cannot happen through VerifyWithIdentity —
+	// every valid outcome adds one — but a caller may hand us any VerifyResult,
+	// and claiming a verified row on fields nobody surfaced would be the renderer
+	// inventing the evidence. Report what the outcome said and nothing more.
+	out.Valid = false
+	out.Reason, out.ReasonClass = attest.ReasonNoPinnedIssuerVerified, attest.ClassOf(attest.ReasonNoPinnedIssuerVerified)
+	out.Detail = "this entry verified but its binding was not surfaced, so nothing here can name what verified"
+	return out
+}

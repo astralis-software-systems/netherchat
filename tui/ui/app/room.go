@@ -38,10 +38,19 @@ type line struct {
 
 	// For lineRecord: the record entry's structure, kept so the entry re-renders
 	// (and exports) from data rather than a frozen pre-rendered string. recordKind
-	// is decision|action|note; replayed marks an entry streamed in by /replay.
+	// is decision|action|note|artifact|typed; replayed marks an entry streamed in
+	// by /replay. schema is the opaque typed-kind tag, empty for the built-in kinds.
 	recordKind string
 	actionee   string
 	replayed   bool
+	schema     string
+
+	// identity is the D-I attribution for a netherchat.identity/v1 entry, decided
+	// once when the entry landed and never again — the same reason memberView
+	// holds one: obtaining it takes an evaluation time, and a view is not where a
+	// clock is read. nil on every other line, including a typed entry of some
+	// other schema, which this client does not interpret.
+	identity *recordIdentity
 }
 
 // memberView is the per-room cache of a member's display name and identity

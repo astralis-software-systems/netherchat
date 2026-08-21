@@ -729,12 +729,15 @@ func (m *Model) handleRoomEvent(name string, ev client.Event) tea.Cmd {
 
 	case client.EvRecordEntry:
 		// Store the entry's structure (not a frozen rendered string) so it restyles
-		// on /theme like a message and /export can decompose it.
-		r.appendLine(line{
-			at: e.At, kind: lineRecord, from: e.AuthorName, text: e.Body,
-			fpr: e.AuthorFpr, signed: true,
-			recordKind: e.Kind, actionee: e.Actionee, replayed: e.Replayed,
-		})
+		// on /theme like a message and /export can decompose it. appendRecordLine is
+		// the only writer, so an entry cannot land by a route that skipped the D-I
+		// decision — the same rule admitMember holds for a member.
+		//
+		// This is the third event that reads a clock (D-L §3.1 named two: a member
+		// arriving and the room tick). It is the same rule as those: the evaluation
+		// time is the instant the check ran, read HERE and passed in, never inside
+		// the decision.
+		m.appendRecordLine(r, e, time.Now().UTC())
 		if !e.Self && name != m.active {
 			r.unread++
 		}
@@ -1494,11 +1497,9 @@ func (m *Model) renderLine(r *room, l line, baseID int) (string, int) {
 		}
 		return "", 0
 	case lineRecord:
-		// Re-render from the stored entry structure (identical to append-time output).
-		return m.renderRecordEntry(client.EvRecordEntry{
-			Kind: l.recordKind, AuthorName: l.from, Actionee: l.actionee,
-			Body: l.text, Replayed: l.replayed, At: l.at,
-		}), 0
+		// Re-render from the stored entry structure (identical to append-time
+		// output), including the D-I attribution decided when the entry landed.
+		return m.renderRecordEntry(l), 0
 	case lineSystem:
 		return m.wrap(m.st(m.theme.Muted).Italic(true).Render("* " + l.text)), 0
 	case lineError:

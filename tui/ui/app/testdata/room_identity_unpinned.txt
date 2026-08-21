@@ -1,0 +1,10 @@
+14:30 📌 decision alice: rolled back to v2.3.1
+14:31 📌 action bob → @carol: page the on-call DBA
+14:32 📌 note carol: alice: the cache was cold
+14:33 📌 artifact alice: {"source":"requirements-agent","artifact_ref":"RFC-114 rollback plan","artifact_hash":"9f2b7c1d4e5a6b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e","approver_fpr":"SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","proposed_at":"2026-06-01T14:33:00Z","approved_at":"2026-06-01T14:33:20Z"}
+[REPLAY 14:34] bob: an earlier decision  [decision]
+14:35 📌 identity alice: filed a credential for rosa ◇
+        rosa.alvarez@acme.example  (Rosa Alvarez)  ·  roles: incident-commander
+        about @rosa  ·  SHA256:RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR     
+        issuer SHA256:eVkCKHnc5RjanBduU2vmOecbFl3M9wOgHdk24INJytY              
+        ◇ carries a credential, not checked here                               

@@ -121,12 +121,19 @@ test.beforeAll(async () => {
   const relay = startBg("relay", join(binDir, "netherchat-server" + exe), ["--addr", `:${RELAY_PORT}`]);
   await waitForHTTP(`${relayOrigin}/health`, relay);
 
-  // `vite dev` rather than `vite preview`: the dev server is what carries the /ws
-  // proxy and the Origin rewrite the browser handshake needs (vite.config.ts
-  // `server.proxy`). `preview` applies the clean-URL rewrites but has no proxy
-  // config, so the built bundle cannot reach a relay through it today. That is a
-  // real gap between this harness and the demo topology, and it is stated rather
-  // than papered over: what runs here is the same modules, served differently.
+  // `vite dev` rather than `vite preview`, and the reason this comment used to
+  // give was wrong.
+  //
+  // It said preview "has no proxy config, so the built bundle cannot reach a relay
+  // through it today". Vite resolves `proxy: preview?.proxy ?? server.proxy`, so an
+  // absent preview.proxy inherits the dev one whole — measured in Phase 3c against
+  // a live relay: preview upgrades ws://…/ws and proxies /beacon/<room>, and only a
+  // config with no proxy anywhere fails to. vite.config.ts now assigns one shared
+  // object to both, and vite.config.test.ts fails if they diverge.
+  //
+  // The real difference this harness has from the demo topology is smaller and
+  // stated plainly: dev serves modules from source, preview and production serve
+  // web/dist. What runs here is the same modules, served differently.
   const viteBin = join(webDir, "node_modules", "vite", "bin", "vite.js");
   const web = startBg(
     "vite",

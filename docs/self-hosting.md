@@ -263,6 +263,20 @@ curl -sS 'https://chat.example.com/beacon/ops'                        # the REST
 here. The hosted site does it with a CloudFront viewer-request function
 (`infra/cloudfront/`).
 
+**Smoke-test the built bundle before you deploy it.** `vite preview` serves
+`web/dist` — the bytes you are about to copy to the server — and it carries the
+same `/ws` and `/beacon/` proxy the dev server does, so it exercises the
+one-origin shape above without a reverse proxy in front of it:
+
+```bash
+cd web && npm run build
+NETHERCHAT_RELAY=http://localhost:3000 npm run preview   # http://localhost:4173
+```
+
+That is a check of the bundle and of your relay, not of your reverse proxy. The
+Caddy or nginx rules above are still the thing that has to be right in
+production, and the `curl` commands above are how you check them.
+
 ## Reachability without infra: Tor onion service (`--tor`)
 
 When you have nothing to host *on* — no public IP, behind CGNAT, VPN down, the

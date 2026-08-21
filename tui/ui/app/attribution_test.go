@@ -136,3 +136,42 @@ func TestDetailSurfacesUseTheSameVocabulary(t *testing.T) {
 		}
 	}
 }
+
+// A FIFTH INSTANCE OF THE REASSURANCE DEFECT, FOUND BY RENDERING THE ROOM VIEW.
+//
+// Roadmap §8: a doc comment — or a line of copy — that reassures at the point of
+// failure is a defect. carriedWords already carved ReasonSubjectMismatch out
+// above its `if !pinned` branch, because the subject join is a check this client
+// makes with NO issuer key and no clock. The parse is the other one, and it was
+// not carved out: a member whose Member frame carried bytes that are not an
+// identity artifact was reported to an unpinned operator as
+//
+//	◇ carries a credential, not checked here
+//
+// which is false twice over. Nothing arrived that is a credential, and something
+// here did check — it read the bytes and they did not parse. The pinned branches
+// were already right (ClassOf(malformed) → "checked here and did not verify"),
+// so the defect was reachable only on the client that pins nothing, which is
+// every client in the free tier and the browser.
+func TestUnparseableCredentialBytesAreNotReportedAsUnchecked(t *testing.T) {
+	m := attributionModel(t)
+	r := m.activeRoom()
+	if m.pinned() {
+		t.Fatal("this test is about the client that pins nothing")
+	}
+	m.admitMember(r, "id-d", "dave", "SHA256:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+		[]byte("{not an identity artifact"), midWindow())
+
+	for _, tc := range []struct{ name, text string }{
+		{"/verify", m.verifyStatusText()},
+		{"participants panel", m.membersView()},
+	} {
+		if strings.Contains(tc.text, "not checked here") {
+			t.Errorf("%s tells an operator nothing checked the bytes, at the exact point where "+
+				"the parse failed:\n%s", tc.name, tc.text)
+		}
+	}
+	if got := m.verifyStatusText(); !strings.Contains(got, "not an identity artifact") {
+		t.Errorf("/verify does not say what actually happened to dave's bytes:\n%s", got)
+	}
+}

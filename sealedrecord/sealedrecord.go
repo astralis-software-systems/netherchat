@@ -105,6 +105,21 @@ var (
 	IsIdentityEntry               = record.IsIdentityEntry
 	IdentityEntrySpec             = record.IdentityEntrySpec
 	VerifiedIdentitiesOf          = record.VerifiedIdentitiesOf
+
+	// IdentityDisplayForEntry is D-I's renderer with the RECORD's join in front of
+	// it: given a record entry that carries an attestation, and optionally the
+	// VerifyWithIdentity result that judged it, it returns the name to draw and the
+	// state that name is in. It is here so a consumer rendering a record's
+	// credentials does not reassemble the decision out of IdentityOutcome and
+	// VerifiedIdentity by hand — the same bridge written twice is how two surfaces
+	// start disagreeing about what a mark means.
+	//
+	// It is NOT the function a Roster row wants. A Roster renders a key that is in
+	// front of you, and its join is "is this statement about THAT key": it must
+	// call IdentityDisplayFor with the fingerprint it is rendering. See the doc
+	// comment on record.IdentityDisplayForEntry for the distinction and why it
+	// matters.
+	IdentityDisplayForEntry = record.IdentityDisplayForEntry
 )
 
 // ReasonMalformedArtifact is the identity outcome for an attestation entry whose

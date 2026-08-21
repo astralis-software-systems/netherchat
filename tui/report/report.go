@@ -234,3 +234,67 @@ func shortHash(h string, n int) string {
 func entryTime(e record.Entry) string { return time.Unix(e.TS, 0).Format("2006-01-02 15:04:05") }
 
 func esc(s string) string { return html.EscapeString(s) }
+
+// identityTimelineLine renders one identity attestation entry for a timeline, or
+// ok=false for any entry that does not carry one.
+//
+// It is the report's whole identity branch, shared by all three timelines (full
+// HTML, executive HTML, Markdown) so the three cannot drift — the drift is what
+// Phase 2 §F3 found, with each of them falling through to e.Body independently.
+//
+// The decision is not made here. record.IdentityDisplayForEntry performs the
+// record's join and hands the result to attest.IdentityDisplayFor, which is D-I,
+// which is the same function the participants panel, /whois, /whoami, the browser
+// roster and the room view call. This function chooses word order and nothing else.
+//
+// WHAT res DECIDES. `netherchat report` calls record.Verify, which surfaces no
+// bindings, so every credential in a report produced by the CLI is a carried claim
+// and renders as one. A caller that ran VerifyWithIdentity with a pinned issuer
+// gets the verified row, because the result it handed in says so. Neither branch
+// verifies anything here; a renderer that could verify would be a renderer holding
+// a trust anchor.
+//
+// executive drops the fingerprints, following the same rule the rest of the
+// executive report follows — and the qualifier stays, because a principal printed
+// in a leadership summary with nothing beside it is the one place a reader is most
+// likely to supply the missing word themselves and supply the wrong one.
+func identityTimelineLine(res *record.VerifyResult, e record.Entry, executive bool) (string, bool) {
+	d, ok := record.IdentityDisplayForEntry(res, e, "")
+	if !ok {
+		return "", false
+	}
+	mark := attest.IdentityDisplayMark(d.State)
+	verified := d.State == attest.IdentityDisplayVerifiedNamed || d.State == attest.IdentityDisplayVerifiedUnnamed
+
+	if d.Principal == "" {
+		return mark + " identity attestation — the entry body is not an identity artifact", true
+	}
+	claim := d.Principal
+	if d.DisplayName != "" {
+		claim = d.DisplayName + " (" + d.Principal + ")"
+	}
+
+	var b strings.Builder
+	b.WriteString(mark + " identity attestation — " + claim)
+	if len(d.Roles) > 0 {
+		b.WriteString(", roles " + strings.Join(d.Roles, ", "))
+	}
+	if !executive {
+		// The key the statement is ABOUT. A name without it is a name attached to
+		// whoever the reader assumes, which on this surface is the entry's author.
+		b.WriteString(", about " + d.Name)
+		if d.Issuer != "" {
+			b.WriteString(", issuer " + shortHash(d.Issuer, 24))
+		}
+		b.WriteString(", filed by " + e.AuthorName)
+	}
+	if verified {
+		b.WriteString(" — checked against an issuer key this report's caller supplied")
+	} else {
+		b.WriteString(" — carried by this record, not checked here")
+		if d.Reason != "" && d.Reason != attest.ReasonNoIssuerPinned {
+			b.WriteString(" (" + string(d.Reason) + ")")
+		}
+	}
+	return b.String(), true
+}

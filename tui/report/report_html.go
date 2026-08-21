@@ -95,6 +95,10 @@ func RenderHTML(rec *record.SealedRecord, res *record.VerifyResult, opts Options
 			body = `<b>@` + esc(e.Actionee) + `</b>: ` + body
 		case e.Kind == record.KindArtifact:
 			body = artifactBodyHTML(rec, res, e)
+		default:
+			if line, ok := identityTimelineLine(res, e, false); ok {
+				body = esc(line)
+			}
 		}
 		badge := `<span class="bad">✗ unverified</span>`
 		if res.Valid {
@@ -273,6 +277,9 @@ func executiveSection(rec *record.SealedRecord, res *record.VerifyResult) string
 		if m, ok := record.ArtifactOf(e); ok {
 			// Executive: no hash, no fingerprint — just the human-readable summary.
 			body = "AI-drafted artifact approved: " + m.ArtifactRef + " (source " + m.Source + ")"
+		}
+		if line, ok := identityTimelineLine(res, e, true); ok {
+			body = line
 		}
 		b.WriteString(`<li><span class="ts">` + entryTime(e) + `</span> ` + esc(e.AuthorName) + ` — ` + esc(body) + `</li>`)
 	}

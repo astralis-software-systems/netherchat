@@ -100,7 +100,7 @@ func (c *Client) appendSpec(spec record.EntrySpec) error {
 // our own echo (we never receive our own frame back).
 func (c *Client) emitRecordEntry(e record.Entry, self bool, sig, signBytes, raw []byte) {
 	c.emit(EvRecordEntry{
-		Seq: e.Seq, Kind: e.Kind, AuthorName: e.AuthorName, AuthorFpr: e.AuthorID,
+		Seq: e.Seq, Kind: e.Kind, Schema: e.Schema, AuthorName: e.AuthorName, AuthorFpr: e.AuthorID,
 		Actionee: e.Actionee, Body: e.Body, Self: self, Replayed: e.Replayed, At: time.Unix(e.TS, 0),
 		Sig: sig, SignBytes: signBytes, Raw: raw,
 	})

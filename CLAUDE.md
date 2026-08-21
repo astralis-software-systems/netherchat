@@ -164,3 +164,61 @@ optionally with a scope.
 - CI (build, vet, gofmt, race tests, boundary guard, shellcheck, docker) must be
   green before a change is merged.
 - When the wire format changes, update `PROTOCOL.md` in the same change.
+
+---
+
+## The `§N.N` markers in comments
+
+Comments across this tree carry cross-references of the form `§1.3`, `§2.2`,
+`§5.6`. There are **477 of them across 146 files**, and they are load-bearing in
+one specific way: `git grep "§1.3"` is the fastest way to find every site that
+implements the Two-Person Rule, and there is no other cross-file grouping of
+feature-related code in the repository.
+
+**They are not all citing the same thing, and one population has no target.**
+
+| Population | Where | Resolves? |
+|---|---|---|
+| Markers that **name their document** — `PROTOCOL.md §17`, `ARCHITECTURE_DECISION.md §8.1`, `RFC 3986 §3.5`, `docs/self-hosting.md`, `identity-v1-spec §5.6` | ~21 lines | **Yes.** Follow the name. Do not touch these. |
+| Markers under `tui/attest/`, `tui/record/identity.go` and `protocol/identity_signing.go` | ~14 lines | **Yes** — they cite `docs/identity-v1-spec-2026-08-17.md`, which exists. `§1.1` is its field-by-field section, `§2.1` the preimage, `§5.6` the two-timestamp bracket, `§9.x` its guard rules. |
+| Bare `§1.x` / `§2.x` / `§3.x` everywhere else | the remaining ~440 lines | **No document in this repository defines them.** |
+
+The third population points at a numbered product specification that is not in
+the tree and was not recovered. Grepping every `.md` here for a heading of the
+form `§1.3`, `## 1.3` or `### 1.3` in that namespace returns nothing;
+`PROTOCOL.md` uses a different, flat scheme (`## 1. Transport` … `## 17.`) and
+itself *uses* the foreign marker at `## 15. Privileged-action quorum (Two-Person
+Rule, §1.3)` without defining it.
+
+**Disposition: they stay, and this table is what they mean.** Deleting them
+would cost the cross-file grouping and buy nothing; rewriting 440 comments to
+name a document that does not exist would be worse. Treat a bare `§N.N` as a
+**stable internal feature tag**, defined here:
+
+| Tag | Feature | Strongest evidence in the tree |
+|---|---|---|
+| `§1.1` | Sneakernet / relay-less pair mode | `netherchat pair … (§1.1 Sneakernet)` |
+| `§1.2` | Status Beacon (`/beacon`, `beacon-link`, the REST API) | `beaconLinkCmd implements … (§1.2)` |
+| `§1.3` | Two-Person Rule / privileged-action quorum | `Two-Person Rule (§1.3)`, and `PROTOCOL.md §15`'s own heading |
+| `§1.4` | Sealed Record and the signed roster | `a sealed record (§1.4), a signed roster (§1.4)` |
+| `§1.5` | `/scuttle`, the scuttle receipt, and Tor reachability | `a scuttle receipt (§1.5)` |
+| `§1.6` | The Two-Way Bridge, and the dead-man's switch / auto-scuttle | `netherchat bridge (§1.6 — the Two-Way Bridge)` |
+| `§1.7` | The structured event stream (`tail --json`, `eventlog`) | `the structured, versioned, metadata-only event stream (§1.7)` |
+| `§2.1` | Desktop notifications | `NotifyConfig is the CLIENT-side desktop-notification policy (§2.1)` |
+| `§2.2` | Live log streaming (`netherchat stream`, `/stream`) | `streamCmd implements … (§2.2)` |
+| `§2.3` | **Ambiguous — two features share this tag.** Encrypted file transfer (`protocol/file.go`, `tui/client/file.go`, `server/internal/ws/transfers.go`) and the status line (`cmd/netherchat/statuscmd.go`, `tui/statusline/`). One of the two is a mis-citation and the tree cannot say which. | `relay-blind transfer (§2.3)` vs `netherchat status … (§2.3)` |
+| `§2.4` | Invite links and terminal QR codes | `also render the link as a scannable terminal QR code (§2.4)` |
+| `§2.5` | Slash-command macros | `Macro expansion happens BEFORE dispatch (§2.5)` |
+| `§2.6` | `netherchat report` — HTML / Markdown incident timelines | `reportCmd implements … (§2.6)` |
+| `§2.7` | `/replay` — streaming a prior sealed record into a retro room | `replayCmd implements … (§2.7)` |
+| `§3.1` | `netherchat doctor` | `doctorReport is the result of `netherchat doctor` … (§3.1)` |
+| `§3.2` | Relay-less quorum limits (a second party must be reachable) | `refuse rather than burn unilaterally (§3.2)` |
+| `§3.3` | v3 per-message Ed25519 signatures | `v3 adds room-bound, OPTIONAL per-message Ed25519 signatures (§3.3)` |
+
+Two caveats this table does not paper over. `§2.3` above is genuinely ambiguous
+in the surviving evidence. And `§1.5/D5` in `cmd/netherchat/main.go` and
+`config_test.go` pairs the tag with a `D`-prefixed decision id from a different
+scheme again; it is about fail-closed config loading, not about `/scuttle`.
+
+**When you add a marker:** name the document (`PROTOCOL.md §17`, `roadmap §8`,
+`identity-v1-spec §5.6`). Bare tags are inherited, not a convention to extend.

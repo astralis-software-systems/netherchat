@@ -2,10 +2,13 @@ package record
 
 import (
 	"encoding/base64"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/salehkreiner/netherchat/protocol"
+	"github.com/salehkreiner/netherchat/tui/attest"
 	"github.com/salehkreiner/netherchat/tui/internal/crypto"
 )
 
@@ -196,5 +199,170 @@ func TestParseRejectsUnknownFieldInProof(t *testing.T) {
 	}
 	if _, err := Parse([]byte(withBogus)); err == nil {
 		t.Fatal("Parse must reject an unknown field nested inside a proof (DisallowUnknownFields)")
+	}
+}
+
+// MINUTES ARE THE HUMAN-READABLE HALF OF A SEALED RECORD, AND THEY WERE SILENT
+// ABOUT A WHOLE CLASS OF ENTRY.
+//
+// RenderMinutes switched on four kinds and dropped everything else, so a record
+// carrying an issuer-signed credential produced a minutes.md that did not mention
+// it — a gap between two views of one artifact, where record.json says a name was
+// bound to a key and minutes.md says nothing was. The minutes already print
+// unauthenticated author names in the Participants line; the one place the record
+// holds a SIGNED name was the one place they were quiet.
+//
+// It also cannot verify: RenderMinutes takes no VerifyResult, exactly as the
+// artifact block already says of an approval. So what it must print is the CLAIM,
+// marked as a claim, with the key it is about — never a verdict.
+func TestMinutesSayWhatTheRecordCarries(t *testing.T) {
+	is := mkIssuer(t)
+	rec, alice, att := buildAttestedRecord(t, is)
+	md := RenderMinutes(rec)
+
+	for _, want := range []string{
+		"## Identity attestations",
+		"rosa.alvarez@acme.example",
+		att.Subject,
+		is.fpr,
+		"acme-0001",
+		"◇",
+		"netherchat verify",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("minutes.md does not carry %q — the record says it and the minutes do not:\n%s", want, md)
+		}
+	}
+	// A claim, never a verdict: nothing here checked an issuer signature.
+	for _, forbidden := range []string{"◆", "issuer-attested", "verified by"} {
+		if strings.Contains(md, forbidden) {
+			t.Errorf("minutes.md claims %q about a credential it cannot check:\n%s", forbidden, md)
+		}
+	}
+	if !strings.Contains(md, "not verified here") {
+		t.Errorf("minutes.md prints an issuer's words without saying nobody here checked them:\n%s", md)
+	}
+	// Filing is not vouching. Anyone may carry anyone's credential — the elected
+	// writer files every approver's — so a reader who takes "filed by alice" as
+	// alice's endorsement has been misled by the layout.
+	if !strings.Contains(md, "filed by alice") {
+		t.Errorf("minutes.md does not say who filed the credential:\n%s", md)
+	}
+	if !strings.Contains(md, alice.Fingerprint()) && !strings.Contains(md, "alice") {
+		t.Errorf("minutes.md does not say who filed the credential:\n%s", md)
+	}
+}
+
+// TestMinutesAccountForEveryEntry is the general form of the defect above, so the
+// minutes cannot go quiet again about a kind nobody thought of. Every entry in the
+// record must be represented; a typed entry of a schema this build does not
+// interpret is represented by saying it is there and naming its tag, which is the
+// most a library that never interprets a consumer's schema may say about it.
+func TestMinutesAccountForEveryEntry(t *testing.T) {
+	is := mkIssuer(t)
+	alice := mkIdentity(t)
+	c := NewChain()
+	if _, err := c.AppendNew(authorOf(alice, "alice"), KindDecision, "", "rolled back to v2.3.1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AppendIdentity(authorOf(alice, "alice"),
+		attestationFor(t, is, alice.Fingerprint(), "rosa.alvarez@acme.example", "acme-0001")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Append(authorOf(alice, "alice"),
+		EntrySpec{Kind: KindTyped, Schema: "acme.change-ticket/v3", Body: `{"ticket":"CHG-4471"}`}); err != nil {
+		t.Fatal(err)
+	}
+	rec := sealRecord(t, "inc-3f9a2b71", c, []*crypto.Identity{alice})
+	md := RenderMinutes(rec)
+
+	if !strings.Contains(md, "acme.change-ticket/v3") {
+		t.Errorf("a typed entry of an unknown schema is in the record and absent from the minutes:\n%s", md)
+	}
+	if strings.Contains(md, `{"ticket":"CHG-4471"}`) {
+		t.Errorf("the minutes rendered an opaque consumer body it cannot interpret:\n%s", md)
+	}
+	// The property, stated over the record rather than over a heading: every entry
+	// is represented by something a reader can tie back to it. A count in the
+	// header would have said less and would have moved the bytes of every minutes
+	// file ever produced, including those of records that carry nothing new.
+	for _, e := range rec.Entries {
+		token := e.Body
+		if IsIdentityEntry(e) {
+			att, perr := attest.ParseIdentity([]byte(e.Body))
+			if perr != nil {
+				t.Fatal(perr)
+			}
+			token = att.Subject
+		} else if e.Kind == KindTyped {
+			token = e.Schema
+		}
+		if !strings.Contains(md, token) {
+			t.Errorf("entry %d (kind %q schema %q) is in the record and unrepresented in the "+
+				"minutes; nothing identifying it (%q) appears:\n%s", e.Seq, e.Kind, e.Schema, token, md)
+		}
+	}
+}
+
+// deterministicRecord returns a record whose minutes are byte-stable: fixed room,
+// fixed seal time, fixed entry timestamps and fixed author fingerprints.
+//
+// The values are overwritten AFTER the chain is built, which is sound here and
+// nowhere else: RenderMinutes does not verify, so nothing in this fixture depends
+// on the signatures still matching the bytes. A verification test must never do
+// this, and none does.
+func deterministicRecord(t *testing.T, withIdentity bool) *SealedRecord {
+	t.Helper()
+	is := mkIssuer(t)
+	alice := mkIdentity(t)
+	c := NewChain()
+	if _, err := c.AppendNew(authorOf(alice, "alice"), KindDecision, "", "rolled back to v2.3.1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AppendNew(authorOf(alice, "alice"), KindAction, "bob", "write the post-mortem"); err != nil {
+		t.Fatal(err)
+	}
+	if withIdentity {
+		if _, err := c.AppendIdentity(authorOf(alice, "alice"),
+			attestationFor(t, is, alice.Fingerprint(), "rosa.alvarez@acme.example", "acme-0001")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := sealRecord(t, "inc-3f9a2b71", c, []*crypto.Identity{alice})
+	rec.SealedAt = "2026-06-01T14:40:00Z"
+	const fixedFpr = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	for i := range rec.Entries {
+		rec.Entries[i].TS = 1780000000 + int64(i)*60
+		rec.Entries[i].AuthorID = fixedFpr
+	}
+	sigs := map[string][]byte{}
+	for _, v := range rec.Signatures {
+		sigs[fixedFpr] = []byte(v)
+	}
+	rec.Signatures = map[string]string{fixedFpr: "x"}
+	return rec
+}
+
+// TestMinutesAreInertForARecordWithoutAnAttestation is the standalone-inert guard
+// for minutes.md, against bytes captured from a pristine `git archive 8624c11`
+// extraction rather than re-derived. A record that carries no credential produces
+// the file it produced before this change, to the byte.
+func TestMinutesAreInertForARecordWithoutAnAttestation(t *testing.T) {
+	got := RenderMinutes(deterministicRecord(t, false))
+	want, err := os.ReadFile(filepath.Join("testdata", "minutes_pre3c.txt"))
+	if err != nil {
+		t.Fatalf("golden: %v", err)
+	}
+	if got != string(want) {
+		t.Errorf("minutes.md moved for a record that carries no attestation.\n"+
+			"--- captured at 8624c11 (testdata/minutes_pre3c.txt) ---\n%s\n--- now ---\n%s", want, got)
+	}
+}
+
+// The anti-vacuity half: the same fixture with one credential in it must move,
+// or the guard above is watching a file that cannot change.
+func TestMinutesMoveWhenTheRecordCarriesACredential(t *testing.T) {
+	if RenderMinutes(deterministicRecord(t, true)) == RenderMinutes(deterministicRecord(t, false)) {
+		t.Fatal("a filed credential changed nothing in the minutes")
 	}
 }
